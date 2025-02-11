@@ -4,6 +4,8 @@ import VerticalText from './VerticalText';
 import AntennaElevationMarker from './AntennaElevationMarker';
 import VelocityVector from './VelocityVector';
 import HorizonHUD from './HorizonHUD';
+import BScan from './BScan';
+import EnemyTarget from './EnemyTarget';
 
 interface RenderProps {
   width: number;
@@ -31,6 +33,9 @@ export const renderMainFrame = ({
   const minY = startY + (radarConfig.mainBoxHeight / 4);     // 第一个刻度位置
   const maxY = startY + (radarConfig.mainBoxHeight / 4) * 3; // 第三个刻度位置
 
+  // 计算B扫描线的位置
+  const bScanX = endX - (radarConfig.mainBoxWidth / 18) * 3;
+
   return (
     <>
       {/* 主框架 */}
@@ -41,16 +46,12 @@ export const renderMainFrame = ({
         closed={true}
       />
 
-      {/* 垂直分隔线 */}
-      <Line
-        points={[
-          endX - (radarConfig.mainBoxWidth / 18) * 3,
-          startY,
-          endX - (radarConfig.mainBoxWidth / 18) * 3,
-          endY
-        ]}
-        stroke={radarConfig.gridColor}
-        strokeWidth={1}
+      {/* B型扫描线 */}
+      <BScan
+        x={bScanX}
+        startY={startY}
+        endY={endY}
+        color={radarConfig.gridColor}
       />
    
       {/* 水平分割线 */}
@@ -236,6 +237,12 @@ export const renderMainFrame = ({
         y={startY + radarConfig.mainBoxHeight * 0.4}
         color={radarConfig.gridColor}
       />
+      <EnemyTarget
+        x={startX + radarConfig.mainBoxWidth * 0.5}
+        y={startY + radarConfig.mainBoxHeight * 0.3}
+        color={radarConfig.gridColor}
+        size={8}
+      />
     </>
   );
 };
@@ -277,6 +284,7 @@ export const renderText = ({
         y={startY - 45}
         fill={radarConfig.textColor}
         fontSize={16} />
+      {/* A/A 航路点到 TDC航向和距离 */}
       <Text 
         text="345°/25.0" 
         x={startX + (radarConfig.mainBoxWidth / 18)} 
@@ -432,7 +440,7 @@ export const renderText = ({
         fill={radarConfig.textColor} 
         fontSize={16}
       />
-
+      {/* A/A 航路点到本机的方位和距离 */}
       <Text 
         text="200°/18.6" 
         x={startX + (radarConfig.mainBoxWidth / 18) * 9 -30} 
