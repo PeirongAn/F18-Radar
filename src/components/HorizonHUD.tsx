@@ -1,5 +1,5 @@
 import React from 'react';
-import { Group, Line } from 'react-konva';
+import { Line } from 'react-konva';
 
 interface HorizonHUDProps {
   x: number;
@@ -8,32 +8,52 @@ interface HorizonHUDProps {
 }
 
 const HorizonHUD: React.FC<HorizonHUDProps> = ({ x, y, color }) => {
-  const width = 180;  // 主线段长度
-  const dropLength = 8;  // 下垂线段长度
-
+  const lineLength = 60; // 每段线的长度
+  const gapWidth = 30;   // 中间空档的宽度
+  const dropLength = 8;  // 垂线长度
+  
   return (
-    <Group x={x} y={y}>
-      {/* 主水平线 */}
+    <>
+      {/* 左侧水平线 */}
       <Line
-        points={[-width/2, 0, width/2, 0]}
+        points={[
+          x - lineLength - gapWidth/2, y,  // 起点
+          x - gapWidth/2, y               // 终点
+        ]}
         stroke={color}
         strokeWidth={1}
       />
       
-      {/* 左侧下垂线 */}
+      {/* 右侧水平线 */}
       <Line
-        points={[-width/2, 0, -width/2, dropLength]}
+        points={[
+          x + gapWidth/2, y,             // 起点
+          x + lineLength + gapWidth/2, y  // 终点
+        ]}
         stroke={color}
         strokeWidth={1}
       />
-      
-      {/* 右侧下垂线 */}
+
+      {/* 左侧垂线 */}
       <Line
-        points={[width/2, 0, width/2, dropLength]}
+        points={[
+          x - lineLength - gapWidth/2, y,     // 起点
+          x - lineLength - gapWidth/2, y + dropLength  // 终点
+        ]}
         stroke={color}
         strokeWidth={1}
       />
-    </Group>
+
+      {/* 右侧垂线 */}
+      <Line
+        points={[
+          x + lineLength + gapWidth/2, y,     // 起点
+          x + lineLength + gapWidth/2, y + dropLength  // 终点
+        ]}
+        stroke={color}
+        strokeWidth={1}
+      />
+    </>
   );
 };
 

@@ -2,10 +2,8 @@ import { Line, Text, Group, Circle } from 'react-konva';
 import TDC from './TDC';
 import VerticalText from './VerticalText';
 import AntennaElevationMarker from './AntennaElevationMarker';
-import VelocityVector from './VelocityVector';
-import HorizonHUD from './HorizonHUD';
-import BScan from './BScan';
-import EnemyTarget from './EnemyTarget';
+
+
 
 interface RenderProps {
   width: number;
@@ -18,16 +16,38 @@ interface RenderProps {
     endY: number;
   };
   tdcPosition?: { x: number; y: number };
+  scanAngle?: number; // 添加扫描角度参数
+  centerOffset?: number; // 添加扫描中心位置的偏移量参数
+  onTDCPositionSet?: (offset: number) => void; // 添加TDC位置设置回调函数
+  range?: number; // 添加雷达范围值参数
+  scanCount?: number; // 当前扫描计数
+  maxScanCount?: number; // 最大扫描计数
+  displayMode?: 'AUTO' | 'HI' | 'MED'; // 扫描模式显示
+  hiMedToggle?: 'HI' | 'MED'; // HI/MED切换状态
 }
   // 抽取刻度线相关的常量
 const scaleLineLength = 20;  // 刻度线长度
-const topScaleOffset = 30;   // 顶部水平分割线的Y偏移
+
 export const renderMainFrame = ({ 
   radarConfig, 
   framePositions,
-  tdcPosition 
+  tdcPosition,
+  scanAngle = 60, // 默认扫描角度为60
+  centerOffset = 0, // 默认中心偏移为0
+  onTDCPositionSet, // TDC位置设置回调函数
+  scanCount = 0, // 当前扫描计数
+  maxScanCount = 4, // 最大扫描计数
+  displayMode = 'AUTO', // 默认为AUTO模式
+  hiMedToggle = 'HI' // 默认为HI
 }: RenderProps) => {
   const { startX, startY, endX, endY } = framePositions;
+  
+  // 计算中心位置
+  const centerX = startX + radarConfig.mainBoxWidth / 2;
+  const centerY = startY + radarConfig.mainBoxHeight / 2;
+
+  // 计算扫描中心位置（应用偏移量）
+  const scanCenterX = centerX + centerOffset;
 
   // 计算俯仰角标记的可移动范围
   const minY = startY + (radarConfig.mainBoxHeight / 4);     // 第一个刻度位置
@@ -35,6 +55,26 @@ export const renderMainFrame = ({
 
   // 计算B扫描线的位置
   const bScanX = endX - (radarConfig.mainBoxWidth / 18) * 3;
+
+  // 计算4分位位置 - 根据scanAngle动态调整
+  let quarterX1, quarterX2;
+  
+  if (scanAngle === 60) {
+    // 当扫描角度为60时，四分位线为整个雷达区域
+    quarterX1 = startX;
+    quarterX2 = endX;
+  } else if (scanAngle === 30) {
+    // 当扫描角度为30时，四分位线为中心区域的1/2
+    quarterX1 = scanCenterX - radarConfig.mainBoxWidth / 4;
+    quarterX2 = scanCenterX + radarConfig.mainBoxWidth / 4;
+  } else {
+    // 当扫描角度为15时，四分位线为中心区域的1/4
+    quarterX1 = scanCenterX - radarConfig.mainBoxWidth / 8;
+    quarterX2 = scanCenterX + radarConfig.mainBoxWidth / 8;
+  }
+
+  // 提取当前的最大扫描计数作为 "4BR" 中的数字
+  const brValue = maxScanCount;
 
   return (
     <>
@@ -46,30 +86,32 @@ export const renderMainFrame = ({
         closed={true}
       />
 
-      {/* B型扫描线 */}
-      <BScan
-        x={bScanX}
-        startY={startY}
-        endY={endY}
-        color={radarConfig.gridColor}
-      />
-   
-      {/* 水平分割线 */}
-      <Line
-        points={[startX, startY + topScaleOffset, endX, startY + topScaleOffset]}
+      {/* 添加4分位竖线 */}
+      {scanAngle !== 60 && <Line
+        points={[quarterX1, startY, quarterX1, endY]}
         stroke={radarConfig.gridColor}
         strokeWidth={1}
+        dash={[5, 5]} // 使用虚线样式，类似参考图片
+      />}
+      
+      <Line
+        points={[quarterX2, startY, quarterX2, endY]}
+        stroke={radarConfig.gridColor}
+        strokeWidth={1}
+        dash={[5, 5]} // 使用虚线样式，类似参考图片
       />
 
+ 
+
       {/* 顶部刻度线 */}
-      {[1, 5, 9, 13, 17].map((i) => (
+      {[3, 6, 9, 12, 15].map((i) => (
         <Line
           key={`top-${i}`}
           points={[
             startX + (radarConfig.mainBoxWidth / 18) * i,
-            startY + topScaleOffset,
+            startY,
             startX + (radarConfig.mainBoxWidth / 18) * i,
-            startY + topScaleOffset + scaleLineLength
+            startY + scaleLineLength
           ]}
           stroke={radarConfig.gridColor}
           strokeWidth={1}
@@ -77,7 +119,7 @@ export const renderMainFrame = ({
       ))}
 
       {/* 底部刻度线 */}
-      {[1, 5, 9, 13, 17].map((i) => (
+      {[3, 6, 9, 12, 15].map((i) => (
         <Line
           key={`bottom-${i}`}
           points={[
@@ -130,22 +172,6 @@ export const renderMainFrame = ({
         maxY={maxY}
       />
 
-      {/* 目标符号 */}
-      <Group
-        x={startX + radarConfig.mainBoxWidth * 0.7}
-        y={startY + radarConfig.mainBoxHeight * 0.6}
-      >
-        <Line
-          points={[-5, -5, 5, 5]}
-          stroke={radarConfig.gridColor}
-          strokeWidth={1}
-        />
-        <Line
-          points={[-5, 5, 5, -5]}
-          stroke={radarConfig.gridColor}
-          strokeWidth={1}
-        />
-      </Group>
 
       {/* TDC载获游标 */}
       {tdcPosition && (
@@ -153,31 +179,17 @@ export const renderMainFrame = ({
           x={tdcPosition.x}
           y={tdcPosition.y}
           color={radarConfig.gridColor}
-          upperValue="23"
-          lowerValue="16"
+          upperValue="15"
+          lowerValue="-3"
+          centerX={centerX} // 传递中心X坐标
+          onPositionSet={onTDCPositionSet} // 传递回调函数
         />
       )}
 
-      {/* 右上角菱形标记 */}
-      <Group x={endX + 20} y={startY - 20}>
-        {/* 菱形轮廓 */}
-        <Line
-          points={[0, -8, 8, 0, 0, 8, -8, 0]}
-          stroke={radarConfig.gridColor}
-          strokeWidth={1}
-          closed={true}
-        />
-        {/* 中心圆点 */}
-        <Circle
-          x={0}
-          y={0}
-          radius={1}
-          fill={radarConfig.gridColor}
-        />
-      </Group>
+
 
       {/* 右侧向上箭头 - 第一个刻度线附近 */}
-      <Group x={endX + 40} y={startY + 40}>
+      <Group x={endX + 80} y={startY }>
         <Line
           points={[
             0, 10,     // 箭头底部中心点（增加拖尾长度）
@@ -188,13 +200,13 @@ export const renderMainFrame = ({
             0, -10,    // 回到顶点
             0, 10      // 延长拖尾
           ]}
-          stroke={radarConfig.gridColor}
+          stroke={radarConfig.textColor}
           strokeWidth={1}
         />
       </Group>
 
       {/* 右侧向下箭头 - 第二个刻度线附近 */}
-      <Group x={endX + 40} y={startY + (radarConfig.mainBoxHeight / 4) + 20}>
+      <Group x={endX + 80} y={startY + (radarConfig.mainBoxHeight / 4)}>
         <Line
           points={[
             0, -10,    // 箭头顶部中心点（增加拖尾长度）
@@ -205,43 +217,41 @@ export const renderMainFrame = ({
             0, 10,     // 回到底点
             0, -10     // 延长拖尾
           ]}
-          stroke={radarConfig.gridColor}
+          stroke={radarConfig.textColor}
           strokeWidth={1}
         />
       </Group>
 
-      {/* 右上角数字40 */}
-      <Text 
-        text="40" 
-        x={endX + 10} 
-        y={startY - 5} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
 
-      {/* 右下角数字0 */}
-      <Text 
-        text="0" 
-        x={endX + 10} 
-        y={endY - 5} 
-        fill={radarConfig.textColor} 
+  
+
+      {/* 注：中心位置的倒三角形标记已移至UnknownTarget组件中实现 */}
+
+      {/* 渲染 "4BR" 文本，其中4是maxScanCount */}
+      <VerticalText
+        text={`${brValue}BR`}
+        x={startX - 80}  // 位于左侧按钮和雷达面板之间
+        y={endY - 20}   // 底部位置
+        fontSize={16}
+        color={radarConfig.textColor}
+      />
+      
+      {/* 渲染当前扫描计数 */}
+      <Text
+        text={`${scanCount + 1}`}
+        x={startX + 10}
+        y={endY - 20}  // 底部位置
+        fill={radarConfig.textColor}
         fontSize={16}
       />
-      <VelocityVector
-        x={startX + radarConfig.mainBoxWidth * 0.3}
-        y={startY + radarConfig.mainBoxHeight * 0.4}
-        color={radarConfig.gridColor}
-      />
-      <HorizonHUD
-        x={startX + radarConfig.mainBoxWidth * 0.3}
-        y={startY + radarConfig.mainBoxHeight * 0.4}
-        color={radarConfig.gridColor}
-      />
-      <EnemyTarget
-        x={startX + radarConfig.mainBoxWidth * 0.5}
-        y={startY + radarConfig.mainBoxHeight * 0.3}
-        color={radarConfig.gridColor}
-        size={8}
+      
+      {/* 渲染HI/MED，根据显示模式决定 */}
+      <Text
+        text={displayMode === 'AUTO' ? hiMedToggle : displayMode}
+        x={startX + 40}
+        y={endY - 20}  // 底部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
       />
     </>
   );
@@ -251,230 +261,142 @@ export const renderText = ({
   width, 
   height, 
   radarConfig, 
-  framePositions 
-}: RenderProps) => {
+  framePositions,
+  heading,  // 添加航向参数
+  scanAngle = 60,  // 添加扫描角度参数，默认为60
+  range = 40,  // 添加范围值参数，默认为40
+  displayMode = 'AUTO' // 默认显示模式为AUTO
+}: RenderProps & { heading?: number, scanAngle?: number, range?: number }) => {  // 扩展Props类型
   const { startX, startY, endX, endY } = framePositions;
 
   return (
     <>
-      {/* 顶部文本 - OPR和C11 */}
-      <Text 
-        text="OPR" 
-        x={startX - 25} 
-        y={startY - 30} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-        align="right"
-      />
-      <Text 
-        text="C11" 
-        x={startX - 25} 
-        y={startY - 15} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-        align="right"
-      />
-
-      {/* 其他顶部文本 */}
-      <Text text="4B 1" x={startX + (radarConfig.mainBoxWidth / 18)}  y={startY - 45}  fill={radarConfig.textColor} fontSize={16} />
-      <Text text="SIL" x={startX + (radarConfig.mainBoxWidth / 18) * 5} y={startY - 45} fill={radarConfig.textColor} fontSize={16} />
-      <Text 
-        text="ERASE" 
-        x={startX + radarConfig.mainBoxWidth/2 - 20} 
-        y={startY - 45}
-        fill={radarConfig.textColor}
-        fontSize={16} />
-      {/* A/A 航路点到 TDC航向和距离 */}
-      <Text 
-        text="345°/25.0" 
-        x={startX + (radarConfig.mainBoxWidth / 18)} 
-        y={startY - 15} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-        align="center"
-      />
-      <Text 
-        text="057°" 
-        x={startX + radarConfig.mainBoxWidth/2 - 10} 
-        y={startY - 15} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-        align="center"
-      />
-
-      <Text 
-        text="7M 0" 
-        x={endY - 40} 
-        y={startY - 15} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-        align="center"
-      />
-
-      {/* 左侧文本 */}
-      <Text text="RWS" x={5} y={startY + topScaleOffset + 10 } fill={radarConfig.textColor} fontSize={16} />
-
-      {/* SURF竖直排列 */}
+      {/* 左侧竖排文字，自下向上排列 */}
+      
       <VerticalText
-        text="SURF"
-        x={5}
-        y={startY + radarConfig.mainBoxHeight/2 - 20}
-        fontSize={16}
-        color={radarConfig.textColor}
-      />
-
-      {/* PRI竖直排列 */}
-      <VerticalText
-        text="PRI"
-        x={startX - 15}
-        y={startY + (radarConfig.mainBoxHeight / 4) * 3 - 40}
-        fontSize={16}
-        color={radarConfig.textColor}
-      />
-
-      {/* RDR竖直排列 */}
-      <VerticalText
-        text="RDR"
-        x={startX - 35}
-        y={startY + (radarConfig.mainBoxHeight / 4) * 3 - 40}
-        fontSize={16}
-        color={radarConfig.textColor}
-      />
-
-      {/* MED和INTL文本 - 放在左侧最后一个刻度线附近 */}
-      <Text 
-        text="MED" 
-        x={startX - 45} 
-        y={startY + (radarConfig.mainBoxHeight / 8) * 7} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-      <Text 
-        text="INTL" 
-        x={startX - 45} 
-        y={startY + (radarConfig.mainBoxHeight / 8) * 7 + 15} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-
-      {/* 右侧文本 */}
-      <VerticalText
-        text="SET"
-        x={endX + 35}
-        y={startY + (radarConfig.mainBoxHeight / 4) * 2 - 20}
-        fontSize={16}
-        color={radarConfig.textColor}
-      />
-
-      {/* RSET文本 */}
-      <VerticalText
-        text="RSET"
-        x={endX + 35}
-        y={startY + (radarConfig.mainBoxHeight / 4) * 3 - 40}
+        text="NOR"
+        x={startX - 80}
+        y={endY  - 20  - 120}  // 中间位置
         fontSize={16}
         color={radarConfig.textColor}
       />
       
-      {/* NCTR文本和外框 */}
-      <Group x={endX + 35} y={startY + radarConfig.mainBoxHeight - 80}>
-        {/* 外框 */}
+      <Text
+        text={scanAngle.toString()} // 使用传入的扫描角度值
+        x={startX - 80}
+        y={endY  - 20  - 220}  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+      <Text
+        text={displayMode} // 显示当前模式
+        x={endX + 40}
+        y={endY}  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+      <Text
+        text={range.toString()} // 使用传入的范围值
+        x={endX + 70}
+        y={startY + 60 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+      <Text
+        text={heading ? Math.round(heading).toString() : "278"}  // 使用实时航向
+        x={startX}
+        y={endY + 10 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+     
+      <Text
+        text="040"
+        x={startX + 230}
+        y={endY + 10 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+      <Text
+        text="05980"
+        x={endX - 10}
+        y={endY + 10 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+      <Text
+        text="TWS"
+        x={startX - 45}
+        y={startY - 40 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+      <Text
+        text="CNTL"
+        x={endX }
+        y={startY - 40 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+        {/* STBY文本带删除线 */}
+      <Group x={startX + 220} y={startY -40}>
+        <Text 
+          text="STBY" 
+          fill={radarConfig.textColor}
+          fontSize={16}
+        />
+        {/* 斜向删除线 */}
         <Line
-          points={[
-            -2, -2,  // 左上
-            22, -2,  // 右上
-            22, 62,  // 右下
-            -2, 62,  // 左下
-            -2, -2   // 回到左上，闭合
-          ]}
-          stroke={radarConfig.gridColor}
+          points={[-5, -2, 40, 15]}  // 从左上到右下的斜线
+          stroke={radarConfig.textColor}
+          strokeWidth={1}
+        />
+      </Group>
+      {/* IFF文本带边框 */}
+      <Group x={startX + 290} y={startY - 40}>
+        {/* 文本边框 */}
+        <Line
+          points={[-5, -5, 30, -5, 30, 20, -5, 20, -5, -5]}  // 矩形
+          stroke={radarConfig.textColor}
           strokeWidth={1}
           closed={true}
         />
-        {/* NCTR文本 */}
-        <VerticalText
-          text="NCTR"
+        <Text 
+          text="IFF" 
+          fill={radarConfig.textColor}
+          fontSize={16}
           x={0}
           y={0}
+        />
+      </Group>
+   
+      <Text
+        text="SIL"
+        x={startX + 350}
+        y={startY - 40 }  // 顶部位置
+        fill={radarConfig.textColor}
+        fontSize={16}
+      />
+
+
+
+      {/* SIL文本带删除线 */}
+      <Group x={startX + 350} y={startY - 40}>
+        <Text 
+          text="SIL" 
+          fill={radarConfig.textColor}
           fontSize={16}
-          color={radarConfig.textColor}
+        />
+        {/* 斜向删除线 */}
+        <Line
+          points={[-5, -2, 25, 15]}  // 从左上到右下的斜线
+          stroke={radarConfig.textColor}
+          strokeWidth={1}
         />
       </Group>
 
-      {/* 底部文本 */}
-      <Text 
-        text="451" 
-        x={startX + 5} 
-        y={endY} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-      <Text 
-        text="0.78" 
-        x={startX + 5} 
-        y={endY + 10} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-      <Text 
-        text="MODE" 
-        x={startX} 
-        y={endY + 30} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-      <Text text="BRA" x={startX + (radarConfig.mainBoxWidth / 18) - 5} y={endY - 35} fill={radarConfig.textColor} fontSize={16} />
-      <Text text="322°/36.6" x={startX + (radarConfig.mainBoxWidth / 18) * 5 - 45} y={endY - 35} fill={radarConfig.textColor} fontSize={16} />
-      
-      <Text 
-        text="140°" 
-        x={startX + (radarConfig.mainBoxWidth / 18) * 5 -15} 
-        y={endY + 30} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-
-      <Text 
-        text="2805" 
-        x={startX + (radarConfig.mainBoxWidth / 18) * 9 -15} 
-        y={endY + 25} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-      {/* A/A 航路点到本机的方位和距离 */}
-      <Text 
-        text="200°/18.6" 
-        x={startX + (radarConfig.mainBoxWidth / 18) * 9 -30} 
-        y={endY + 5} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-
-      <Text 
-        text="CHAN" 
-        x={startX + (radarConfig.mainBoxWidth / 18) * 13 -20} 
-        y={endY + 30} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-       <Text 
-        text="DATA" 
-        x={startX + (radarConfig.mainBoxWidth / 18) * 17  -20} 
-        y={endY + 30} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-
-      <Text 
-        text="7870" 
-        x={startX + (radarConfig.mainBoxWidth / 18) * 17  -20} 
-        y={endY + 5} 
-        fill={radarConfig.textColor} 
-        fontSize={16}
-      />
-
-
     
-      
+
     </>
   );
 }; 
