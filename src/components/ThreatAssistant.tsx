@@ -97,7 +97,7 @@ const ThreatAssistant: React.FC<ThreatAssistantProps> = ({ selectedTarget }) => 
   // 获取威胁类型的中文描述
   const getThreatTypeText = (type: string): string => {
     switch (type) {
-      case 'missile_lock': return '敌方导弹锁定';
+      case 'missile_lock': return '导弹来袭';
       case 'friendly_lock': return '友方导弹锁定';
       case 'radar_lock': return '敌方雷达锁定';
       case 'proximity': return '敌方靠近';
@@ -113,6 +113,14 @@ const ThreatAssistant: React.FC<ThreatAssistantProps> = ({ selectedTarget }) => 
       case 'low': return 'bg-blue-700';
       default: return 'bg-gray-700';
     }
+  };
+
+  // 获取威胁源的中文描述
+  const getThreatSourceText = (source: string): string => {
+    if (source.includes('导弹')) {
+      return source;
+    }
+    return source;
   };
 
   return (
@@ -159,7 +167,7 @@ const ThreatAssistant: React.FC<ThreatAssistantProps> = ({ selectedTarget }) => 
               <div className={`w-3 h-3 rounded-full ${getPriorityColorClass(threat.priority)}`}></div>
             </div>
             <div className="w-32 text-white">{getThreatTypeText(threat.type)}</div>
-            <div className="w-24 text-yellow-400">{threat.source}</div>
+            <div className="w-24 text-yellow-400">{getThreatSourceText(threat.source)}</div>
             <div className="w-24 text-blue-300">{threat.distance.toFixed(1)}nm/{threat.heading}°</div>
             <div className="w-24 text-gray-500">{threat.timestamp.toLocaleTimeString()}</div>
           </div>

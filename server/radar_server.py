@@ -3,6 +3,14 @@ import websockets
 import json
 import numpy as np
 import time
+import sqlite3
+import os
+from datetime import datetime
+import queue
+import threading
+from contextlib import contextmanager
+import atexit
+import random
 
 # 用于存储目标信息的全局变量
 unknown_targets = []
@@ -11,67 +19,177 @@ radar_azimuth = 0  # 固定的雷达方位角值
 radar_range = 80   # 雷达范围 (海里)
 scan_angle = 60    # 扫描角度 (度)
 
+# 任务ID计数器
+task_counter = 0
+
+# 当前会话状态
+current_session = {
+    'task_id': None,
+    'stage': 'init',  # 'init', 'antenna_adjustment', 'target_identification'
+    'target_elevation': None,
+    'operations': []
+}
+
+# 数据库连接池
+class ConnectionPool:
+    def __init__(self, max_connections=5):
+        self.max_connections = max_connections
+        self.pool = queue.Queue(maxsize=max_connections)
+        self.lock = threading.Lock()
+        
+        # 初始化连接池
+        for _ in range(max_connections):
+            conn = sqlite3.connect('radar_operations.db', check_same_thread=False)
+            self.pool.put(conn)
+    
+    def get_connection(self):
+        with self.lock:
+            return self.pool.get()
+    
+    def return_connection(self, conn):
+        with self.lock:
+            self.pool.put(conn)
+    
+    def close_all(self):
+        with self.lock:
+            while not self.pool.empty():
+                conn = self.pool.get()
+                conn.close()
+
+# 创建全局连接池
+db_pool = ConnectionPool()
+
+@contextmanager
+def get_db_connection():
+    conn = db_pool.get_connection()
+    try:
+        yield conn
+    finally:
+        db_pool.return_connection(conn)
+
+# 记录操作到数据库
+def record_operation_to_db(operation):
+    max_retries = 3
+    retry_delay = 0.1  # 100ms
+    
+    for attempt in range(max_retries):
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 开始事务
+                cursor.execute('BEGIN TRANSACTION')
+                
+                # 插入操作记录
+                cursor.execute('''
+                INSERT INTO user_operations (
+                    task_id, 
+                    operation_type, 
+                    timestamp, 
+                    receive_timestamp,
+                    is_active, 
+                    parameters, 
+                    user_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    operation.get('task_id', current_session.get('task_id', 0)),
+                    operation.get('operationType', ''),
+                    operation.get('timestamp', int(time.time() * 1000)),
+                    operation.get('receive_timestamp'),  # 从客户端消息中获取接收时间戳
+                    1 if operation.get('isActive', False) else 0,
+                    json.dumps(operation.get('parameters', {})),
+                    operation.get('user_id', '')
+                ))
+                
+                # 提交事务
+                conn.commit()
+                print(f"已记录操作到数据库: {operation.get('operationType')}")
+                return True
+                
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                print(f"数据库锁定，等待重试 ({attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+                continue
+            else:
+                print(f"记录操作到数据库时出错: {e}")
+                return False
+        except Exception as e:
+            print(f"记录操作到数据库时出错: {e}")
+            return False
+
+# 在程序退出时关闭所有连接
+def cleanup():
+    db_pool.close_all()
+
+# 注册清理函数
+atexit.register(cleanup)
+
+# 生成新的任务ID
+def generate_task_id():
+    global task_counter
+    task_id = task_counter
+    task_counter += 1
+    return task_id
+
 # 初始化未知目标数据，使用与mockUnknownTargets.ts相同的数据结构
 def initialize_targets():
     global unknown_targets
     
-    # 偏移值，用于设置目标的初始位置
-    offsets = [
-        [-60, 40],   # 目标1偏移 - 左上方高处（友机）
-        [60, 30],    # 目标2偏移 - 右上方高处（友机）
-        [10, -30],   # 目标3偏移 - 低处中央偏右（敌机）
-        [-40, 20],   # 目标4偏移 - 中左位置（友机）
-        [70, -20]    # 目标5偏移 - 右侧低处（敌机）
-    ]
+    # 定义雷达显示区域的边界（可以根据实际显示区域调整）
+    min_x, max_x = -100, 100
+    min_y, max_y = -100, 100
     
-    # 屏幕中心位置（将在前端计算实际显示位置）
-    center_x = 0
-    center_y = 0
+    # 创建空的目标列表
+    unknown_targets = []
     
-    # 创建目标数据 - 按照图示2个敌机，3个友机
-    unknown_targets = [
-        {
-            "id": "target-1",
-            "position": {"x": center_x + offsets[0][0], "y": center_y + offsets[0][1]},
+    # 生成3个友机
+    for i in range(3):
+        # 随机生成位置
+        x = random.uniform(min_x, max_x)
+        y = random.uniform(min_y, max_y)
+        
+        # 随机生成速度（友机速度较慢）
+        speed = random.uniform(3, 6)
+        
+        # 随机生成方向
+        direction = random.uniform(0, 2 * np.pi)
+        
+        unknown_targets.append({
+            "id": f"friend-{i+1}",
+            "position": {"x": x, "y": y},
             "history": [],
-            "speed": 5,
-            "direction": np.pi * 3 / 4,  # 向左下方移动（远离）
-            "type": "friend"  # 友机1 - 高处左侧，远离
-        },
-        {
-            "id": "target-2",
-            "position": {"x": center_x + offsets[1][0], "y": center_y + offsets[1][1]},
+            "speed": speed,
+            "direction": direction,
+            "type": "friend"
+        })
+    
+    # 生成2个敌机
+    for i in range(2):
+        # 随机生成位置
+        x = random.uniform(min_x, max_x)
+        y = random.uniform(min_y, max_y)
+        
+        # 随机生成速度（敌机速度较快）
+        speed = random.uniform(8, 12)
+        
+        # 随机生成方向
+        direction = random.uniform(0, 2 * np.pi)
+        
+        unknown_targets.append({
+            "id": f"enemy-{i+1}",
+            "position": {"x": x, "y": y},
             "history": [],
-            "speed": 4,
-            "direction": np.pi,  # 向左水平移动（平行）
-            "type": "friend"  # 友机2 - 高处右侧，平行移动
-        },
-        {
-            "id": "target-3",
-            "position": {"x": center_x + offsets[2][0], "y": center_y + offsets[2][1]},
-            "history": [],
-            "speed": 9,  # 速度更快
-            "direction": -np.pi * 3 / 4,  # 向右上方移动（接近）
-            "type": "army"  # 敌机1 - 低处中央，向上接近
-        },
-        {
-            "id": "target-4",
-            "position": {"x": center_x + offsets[3][0], "y": center_y + offsets[3][1]},
-            "history": [],
-            "speed": 3,
-            "direction": np.pi / 2,  # 向下移动（平行）
-            "type": "friend"  # 友机3 - 左侧中间位置，平行移动
-        },
-        {
-            "id": "target-5",
-            "position": {"x": center_x + offsets[4][0], "y": center_y + offsets[4][1]},
-            "history": [],
-            "speed": 10,
-            "direction": np.pi * 3 / 4,  # 向左下移动（接近）
-            "type": "army"  # 敌机2 - 右侧低处，向左接近
-        }
-    ]
+            "speed": speed,
+            "direction": direction,
+            "type": "army"
+        })
+    
     print(f"已初始化 {len(unknown_targets)} 个未知目标")
+    # 打印目标信息用于调试
+    for target in unknown_targets:
+        print(f"目标 {target['id']}: 位置({target['position']['x']:.1f}, {target['position']['y']:.1f}), "
+              f"速度 {target['speed']:.1f}, 类型 {target['type']}")
 
 # 获取要发送给前端的数据
 def get_radar_data(include_targets=False):
@@ -142,27 +260,38 @@ def get_radar_data(include_targets=False):
         }
 
 # 检查是否满足发送目标数据的条件
-def should_include_targets():
+def should_include_targets(message=None):
     global scan_angle, radar_range
     
     print("\n【调试】===== 条件检查开始 =====")
-    # 打印当前的值
-    print(f"【调试】当前状态: scan_angle={scan_angle} (类型: {type(scan_angle)}), radar_range={radar_range} (类型: {type(radar_range)})")
+    
+    # 如果没有传入消息，使用全局变量
+    if message is None:
+        print("【调试】使用全局变量进行检查")
+        scan_angle_value = scan_angle
+        radar_range_value = radar_range
+    else:
+        print("【调试】使用消息中的参数进行检查")
+        scan_angle_value = message.get('scanAngle')
+        radar_range_value = message.get('range')
+    
+    print(f"【调试】当前参数: scan_angle={scan_angle_value} (类型: {type(scan_angle_value)}), radar_range={radar_range_value} (类型: {type(radar_range_value)})")
     
     # 使用更宽松的条件检查
     try:
-        scan_angle_float = float(scan_angle)
-        radar_range_float = float(radar_range)
+        scan_angle_float = float(scan_angle_value)
+        radar_range_float = float(radar_range_value)
         
-        # 放宽条件: 扫描角度在29.5到30.5之间，范围在79.5到80.5之间
-        scan_angle_condition = 29.5 <= scan_angle_float <= 30.5
-        range_condition = 79.5 <= radar_range_float <= 80.5
+        # 计算与设定值的差异百分比
+        scan_angle_diff = abs(scan_angle_float - 30) / 30 * 100  # 30是设定值
+        range_diff = abs(radar_range_float - 80) / 80 * 100     # 80是设定值
         
-        # 如果要特别放宽条件以便测试，可以取消下面的注释
-        # scan_angle_condition = True
-        # range_condition = True
+        # 允许20%的误差
+        scan_angle_condition = scan_angle_diff <= 2
+        range_condition = range_diff <= 2
         
-        print(f"【调试】条件值: scan_angle={scan_angle_float}, range={radar_range_float}")
+        print(f"【调试】参数值: scan_angle={scan_angle_float}, range={radar_range_float}")
+        print(f"【调试】差异百分比: scan_angle={scan_angle_diff:.2f}%, range={range_diff:.2f}%")
         print(f"【调试】条件判断: scan_angle条件={scan_angle_condition}, range条件={range_condition}")
         
         result = scan_angle_condition and range_condition
@@ -181,9 +310,134 @@ def should_include_targets():
     print("【调试】===== 条件检查结束 =====\n")
     return result
 
+# 生成随机天线高度指令
+def generate_antenna_adjustment():
+    # 随机选择上移或下移3格
+    direction = random.choice([-3, 3])
+    target_elevation = direction
+    
+    # 更新当前会话状态
+    global current_session
+    current_session['target_elevation'] = target_elevation
+    current_session['stage'] = 'antenna_adjustment'
+    
+    return {
+        "type": "adjust_antenna",
+        "targetElevation": target_elevation,
+        "message": f"请将天线高度{'上移' if direction > 0 else '下移'} {abs(target_elevation)}格"
+    }
+
+# 处理天线高度调整确认
+def handle_antenna_adjustment(message):
+    # 获取客户端设置的高度
+    client_elevation = message.get('elevation')
+    
+    # 检查是否在预期范围内（允许±2°的误差）
+    global current_session
+    target_elevation = current_session.get('target_elevation')
+    
+    if target_elevation is None:
+        return {
+            "type": "settings_validation",
+            "status": "error",
+            "message": "未找到目标天线高度设置，请重新初始化系统"
+        }, False
+    
+    if abs(client_elevation - target_elevation) <= 0.1:
+        # 高度设置正确
+        current_session['stage'] = 'target_identification'
+        print('【调试】天线高度设置正确，开始发送目标数据')
+        return {
+            "type": "settings_validation",
+            "status": "success",
+            "message": "天线高度设置正确，开始发送目标数据"
+        }, True
+    else:
+        # 高度设置不正确
+        return {
+            "type": "settings_validation",
+            "status": "error",
+            "message": f"天线高度设置不正确，目标为{target_elevation}°，当前为{client_elevation}°"
+        }, False
+
+# 生成SA页面威胁数组
+SA_ICON_TYPES = [
+    'PrimaryAir',
+    'SecondaryAir',
+    'PrimaryAntiAircraftArtillery',
+    'SecondaryAntiAircraftArtillery',
+    'PrimaryNaval',
+    'SecondaryNaval',
+]
+SA_LABELS = {
+    'PrimaryAir': ['J-11', 'F-16', 'Su-27', 'F-15'],
+    'SecondaryAir': ['MiG-29', 'F-5', 'F-7', 'Su-30'],
+    'PrimaryAntiAircraftArtillery': ['SA-10', 'HQ-9', 'S-300'],
+    'SecondaryAntiAircraftArtillery': ['SA-6', 'HQ-7', 'S-75'],
+    'PrimaryNaval': ['052D', '054A', '055', 'Kirov'],
+    'SecondaryNaval': ['056', '053H3', 'Frigate', 'Corvette'],
+}
+def generate_sa_threats(n=4):
+    threats = []
+    # 只从secondary类型中选取
+    secondary_types = [t for t in SA_ICON_TYPES if t.startswith('Secondary')]
+    chosen_types = random.sample(secondary_types, k=min(n, len(secondary_types)))
+    for t in chosen_types:
+        label = random.choice(SA_LABELS[t])
+        threats.append({
+            'id': f'{t}-{random.randint(1000,9999)}',
+            'type': t,
+            'label': label
+        })
+    return threats
+
+def generate_sa_emergency(threats):
+    # 随机选择事件类型
+    event_type = random.choice(['upgrade', 'missile'])
+    if event_type == 'upgrade':
+        # 找到所有secondary威胁
+        secondary = [t for t in threats if t['type'].startswith('Secondary')]
+        if secondary:
+            to_upgrade = random.choice(secondary)
+            # 升级为primary
+            primary_type = to_upgrade['type'].replace('Secondary', 'Primary')
+            to_upgrade['type'] = primary_type
+            to_upgrade['label'] = random.choice(SA_LABELS[primary_type])
+        return {
+            'type': 'SAEmergency',
+            'event': 'upgrade',
+            'saThreats': threats
+        }
+    else:
+        missile_type = random.choice(['MissileUp', 'MissileDown'])
+        return {
+            'type': 'SAEmergency',
+            'event': 'missile',
+            'missileType': missile_type,
+            'saThreats': threats
+        }
+
+async def auto_send_sa_emergency(websocket, threats):
+    await asyncio.sleep(random.uniform(2, 3))
+    emergency_msg = generate_sa_emergency(threats)
+    await send_message(websocket, emergency_msg)
+    print(f"[自动] 已发送SAEmergency事件: {emergency_msg['event']}")
+    # 记录临机事件日志
+    try:
+        record_operation_to_db({
+            'task_id': current_session.get('task_id'),
+            'operationType': 'sa_emergency',
+            'timestamp': int(time.time() * 1000),
+            'isActive': False,
+            'parameters': emergency_msg,
+            'user_id': ''
+        })
+    except Exception as e:
+        print(f"记录SAEmergency日志失败: {e}")
+
 # 处理从客户端接收的消息
-async def handle_client_message(message_str):
-    global radar_range, scan_angle, unknown_targets
+async def handle_client_message(message_str, websocket=None):
+    global radar_range, scan_angle, unknown_targets, current_session
     
     try:
         print("\n===== 接收到客户端消息 =====")
@@ -194,40 +448,196 @@ async def handle_client_message(message_str):
         print(f"解析后的消息: {message}")
         
         # 检查消息类型
-        if message.get('type') == 'settings_update':
+        message_type = message.get('type', '')
+        
+        # 处理任务启动消息
+        if message_type == 'task_start':
+            print("消息类型: task_start", message.get('user_id', ''))
+            
+            # 生成新任务ID
+            task_id = generate_task_id()
+            current_session['task_id'] = task_id
+            current_session['stage'] = 'init'
+            
+            # 记录操作
+            record_operation_to_db({
+                'task_id': task_id,
+                'operationType': 'task_start',
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True,
+                'parameters': {},
+                'user_id': message.get('user_id', '')
+            })
+            
+            # 返回任务ID分配消息
+            response = {
+                "type": "task_id_assigned",
+                "task_id": task_id,
+                "timestamp": time.time() * 1000
+            }
+            
+            # 同时发送初始设置参数
+            init_settings = {
+                "type": "init_settings",
+                "settings": {
+                    "range": 80,  # 初始雷达范围
+                    "scanAngle": 30  # 初始扫描角度
+                },
+                "timestamp": time.time() * 1000
+            }
+            
+            # 发送两条消息
+            return [response, init_settings]
+        
+        # 处理设置更新消息
+        elif message_type == 'settings_update':
             print("消息类型: settings_update")
             
-            # 记录设置更新前的条件状态
-            prev_should_include = should_include_targets()
-            print(f"更新前是否应包含目标: {prev_should_include}")
-            
-            # 更新设置
-            if 'range' in message:
-                old_range = radar_range
-                try:
-                    radar_range = float(message['range'])
-                    print(f"已更新雷达范围: {old_range} -> {radar_range} 海里")
-                except (ValueError, TypeError) as e:
-                    print(f"解析range值出错: {e}, 原始值: {message['range']}")
-                
-            if 'scanAngle' in message:
-                old_angle = scan_angle
-                try:
-                    scan_angle = float(message['scanAngle'])
-                    print(f"已更新扫描角度: {old_angle} -> {scan_angle} 度")
-                except (ValueError, TypeError) as e:
-                    print(f"解析scanAngle值出错: {e}, 原始值: {message['scanAngle']}")
+            # 记录操作
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': 'settings_update',
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
+                'isActive': True,
+                'parameters': message,
+                'user_id': message.get('user_id', '')
+            })
             
             # 检查更新后是否满足条件
-            current_should_include = should_include_targets()
-            print(f"更新后是否应包含目标: {current_should_include}")
+            if should_include_targets(message):
+                # 如果设置正确，发送成功消息和天线调整指令
+                validation_response = {
+                    "type": "settings_validation",
+                    "status": "success",
+                    "message": "雷达参数设置正确，请继续进行天线高度调整"
+                }
+                
+                # 生成天线高度调整指令
+                antenna_command = generate_antenna_adjustment()
+                
+                # 返回两条消息
+                return [validation_response, antenna_command]
+            else:
+                # 如果设置不正确，返回验证失败消息
+                validation_response = {
+                    "type": "settings_validation",
+                    "status": "error",
+                    "message": "雷达参数设置不正确，请调整参数"
+                }
+                return [validation_response]
+        
+        # 处理天线高度调整确认
+        elif message_type == 'antenna_adjusted':
+            print("消息类型: antenna_adjusted")
             
-            # 返回是否需要包含目标数据的标志
-            print("===== 客户端消息处理完成 =====\n")
-            return True, current_should_include
+            # 记录操作
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': 'antenna_adjusted',
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
+                'isActive': True,
+                'parameters': {'elevation': message.get('elevation')},
+                'user_id': message.get('user_id', '')
+            })
+            
+            # 处理天线高度调整
+            validation_response, is_valid = handle_antenna_adjustment(message)
+            
+            if is_valid:
+                # 如果设置正确，初始化并返回目标数据
+                validation_response = {
+                    "type": "settings_validation",
+                    "status": "success",
+                    "message": "雷达参数设置正确，请进行目标识别与锁定"
+                }
+                return validation_response, True
+            else:
+                # 如果设置不正确，仅返回验证结果
+                return [validation_response]
+        
+        # 新增SwitchSA处理
+        elif message_type == 'SwitchSA':
+            print('收到SwitchSA事件，生成SA威胁数组')
+            threats = generate_sa_threats(n=random.randint(3, 6))
+            response = {
+                'type': 'SAThreats',
+                'saThreats': threats
+            }
+            if websocket:
+                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+            return [response]
+        
+        # 新增ResetSA处理
+        elif message_type == 'ResetSA':
+            print('收到ResetSA事件，重新生成SA威胁数组')
+            threats = generate_sa_threats(n=random.randint(3, 6))
+            response = {
+                'type': 'SAThreats',
+                'saThreats': threats
+            }
+            if websocket:
+                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+            return [response]
+        
+        # 处理目标选择消息
+        elif message_type == 'target_selected':
+            print("消息类型: target_selected")
+            target_id = message.get('target_id')
+            iff_mode = message.get('iff_mode', False)  # 获取IFF模式状态
+            
+            # 检查目标是否为敌机
+            is_enemy = False
+            for target in unknown_targets:
+                if target['id'] == target_id and target['type'] == 'army':
+                    is_enemy = True
+                    break
+            
+            # 记录操作
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': 'target_selected',
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
+                'isActive': not iff_mode,  # 如果IFF开启，则isActive为False
+                'parameters': {
+                    'target_id': target_id,
+                    'action': message.get('action', 'select'),
+                    'iff_mode': iff_mode,
+                    'is_enemy': is_enemy
+                },
+                'user_id': message.get('user_id', '')
+            })
+            
+            # 不需要返回消息
+            return []
+        
+        # 处理单个操作记录
+        elif message_type == 'record_operation':
+            print("消息类型: record_operation")
+            operation = message.get('operation', {})
+            
+            # 记录到数据库
+            # record_operation_to_db(operation)
+            
+            # 不需要回复
+            return []
+        
+        # 处理批量操作记录
+        elif message_type == 'record_bulk_operations':
+            print("消息类型: record_bulk_operations")
+            operations = message.get('operations', [])
+            
+            # 批量记录到数据库
+            for operation in operations:
+                record_operation_to_db(operation)
+            
+            # 不需要回复
+            return []
         
         # 处理重置目标的消息
-        elif message.get('type') == 'reset_targets':
+        elif message_type == 'reset_targets':
             print("消息类型: reset_targets")
             print("重置所有目标数据")
             
@@ -236,7 +646,31 @@ async def handle_client_message(message_str):
             
             # 返回标志，表明应该立即返回不包含目标的数据
             return True, False
-            
+        
+        # 处理前端点击最具威胁项的消息
+        elif message_type == 'threat_clicked':
+            print("消息类型: threat_clicked")
+            # 记录点击日志
+            try:
+                record_operation_to_db({
+                    'task_id': current_session.get('task_id'),
+                    'operationType': 'threat_clicked',
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'isActive': True,
+                    'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
+                    'parameters': {
+                        'threat_id': message.get('threat_id'),
+                        'label': message.get('label'),
+                        'priority': message.get('priority'),
+                        'extra': message.get('extra', {})
+                    },
+                    'user_id': message.get('user_id', '')
+                })
+                print("已记录threat_clicked日志")
+            except Exception as e:
+                print(f"记录threat_clicked日志失败: {e}")
+            return []
+        
     except json.JSONDecodeError as e:
         print(f"解析JSON时出错: {e}")
     except Exception as e:
@@ -244,6 +678,17 @@ async def handle_client_message(message_str):
     
     print("===== 客户端消息处理失败 =====\n")
     return False, False
+
+# 单独方法发送消息到客户端
+async def send_message(websocket, message):
+    try:
+        json_str = json.dumps(message)
+        await websocket.send(json_str)
+        print(f"发送消息: {message['type']}")
+        return True
+    except Exception as e:
+        print(f"发送消息失败: {e}")
+        return False
 
 # WebSocket处理函数
 async def radar_server(websocket):
@@ -255,49 +700,51 @@ async def radar_server(websocket):
         await websocket.send(initial_json)
         print(f"【服务器】已发送基础数据（不含目标），长度: {len(initial_json)}")
         
+        # 初始化SA威胁并发送
+        threats = generate_sa_threats(n=random.randint(3, 6))
+        sa_msg = {'type': 'SAThreats', 'saThreats': threats}
+        await send_message(websocket, sa_msg)
+        print("【服务器】已发送初始SA威胁数组")
+
+        # 2~3秒后自动推送一次SAEmergency
+        asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+
         # 接收并处理客户端消息
         while True:
             try:
                 # 等待消息，但设置超时以保持连接活跃
                 message = await asyncio.wait_for(websocket.recv(), timeout=60)
                 print(f"【服务器】接收到消息: {message[:50]}..." if len(message) > 50 else message)
-                
                 # 处理消息
-                settings_updated, include_targets = await handle_client_message(message)
-                
-                # 如果设置被更新，发送新的数据
-                if settings_updated:
-                    # 根据条件决定是否包含目标数据
-                    data = get_radar_data(include_targets=include_targets)
-                    
-                    # 添加一个时间戳确保每次发送的数据不同
-                    data["_timestamp"] = time.time()
-                    
-                    # 发送前检查数据格式
-                    data_json = json.dumps(data)
-                    
-                    # 记录发送的内容
-                    if include_targets:
-                        print(f"【服务器】正在发送包含目标的数据，JSON长度: {len(data_json)}")
-                        print(f"【服务器】数据键: {list(data.keys())}")
-                        if 'externalTargets' in data:
-                            print(f"【服务器】externalTargets长度: {len(data['externalTargets'])}")
-                    else:
-                        print(f"【服务器】正在发送不含目标的数据，JSON长度: {len(data_json)}")
-                    
-                    # 发送数据
-                    await websocket.send(data_json)
-                    
-                    # 确认数据已发送
-                    if include_targets:
-                        print("【服务器】✅ 已发送更新后的数据（包含目标）")
-                    else:
-                        print("【服务器】✅ 已发送更新后的数据（不含目标）")
+                result = await handle_client_message(message, websocket)
+                # 检查返回结果类型
+                if isinstance(result, list):
+                    for msg in result:
+                        await send_message(websocket, msg)
+                elif isinstance(result, tuple) and len(result) == 2:
+                    settings_updated, include_targets = result
+                    if settings_updated:
+                        data = get_radar_data(include_targets=include_targets)
+                        data["_timestamp"] = time.time()
+                        data_json = json.dumps(data)
+                        if include_targets:
+                            print(f"【服务器】正在发送包含目标的数据，JSON长度: {len(data_json)}")
+                            print(f"【服务器】数据键: {list(data.keys())}")
+                            if 'externalTargets' in data:
+                                print(f"【服务器】externalTargets长度: {len(data['externalTargets'])}")
+                        else:
+                            print(f"【服务器】正在发送不含目标的数据，JSON长度: {len(data_json)}")
+                        await websocket.send(data_json)
+                        if 'type' in settings_updated and settings_updated['type'] == 'settings_validation':
+                            print(f"【服务器】发送验证结果: {settings_updated}") 
+                            await websocket.send(json.dumps(settings_updated))
+                        if include_targets:
+                            print("【服务器】✅ 已发送更新后的数据（包含目标）")
+                        else:
+                            print("【服务器】✅ 已发送更新后的数据（不含目标）")
             except asyncio.TimeoutError:
-                # 超时，只是用来保持连接活跃
                 pass
             except websockets.exceptions.ConnectionClosed:
-                # 连接已关闭
                 print("【服务器】客户端连接已关闭")
                 break
     except websockets.exceptions.ConnectionClosed:
@@ -309,6 +756,54 @@ async def radar_server(websocket):
 async def main():
     # 初始化目标
     initialize_targets()
+    
+    # 初始化数据库
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 检查 user_operations 表是否存在
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='user_operations'
+            """)
+            
+            if not cursor.fetchone():
+                print("user_operations 表不存在，正在创建...")
+                # 创建 user_operations 表
+                cursor.execute("""
+                    CREATE TABLE user_operations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        task_id INTEGER,
+                        operation_type TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        receive_timestamp INTEGER,
+                        is_active INTEGER NOT NULL,
+                        parameters TEXT,
+                        user_id TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
+                print("user_operations 表创建成功")
+            else:
+                # 检查 receive_timestamp 列是否存在
+                cursor.execute("PRAGMA table_info(user_operations)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'receive_timestamp' not in columns:
+                    print("正在添加 receive_timestamp 列...")
+                    cursor.execute("""
+                        ALTER TABLE user_operations 
+                        ADD COLUMN receive_timestamp INTEGER
+                    """)
+                    conn.commit()
+                    print("receive_timestamp 列添加成功")
+                else:
+                    print("user_operations 表已存在，且包含 receive_timestamp 列")
+                
+        print("数据库初始化成功")
+    except Exception as e:
+        print(f"数据库初始化失败: {e}")
     
     # 启动服务器
     async with websockets.serve(radar_server, "0.0.0.0", 8765):

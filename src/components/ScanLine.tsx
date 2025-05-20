@@ -15,6 +15,7 @@ interface ScanLineProps {
   scanMode?: ScanModeType; // 扫描模式配置
   scanControl?: ScanControlParams; // 扫描控制参数
   onScanCycleComplete?: () => void; // 添加扫描完成一次循环的回调函数
+  isStarted?: boolean; // 添加系统是否已启动的标志
 }
 
 const ScanLine: React.FC<ScanLineProps> = ({ 
@@ -27,7 +28,8 @@ const ScanLine: React.FC<ScanLineProps> = ({
     scanSpeed: 1.0, 
     useSineMapping: true 
   }, // 默认扫描控制参数
-  onScanCycleComplete
+  onScanCycleComplete,
+  isStarted = false // 默认未启动
 }) => {
   // 设置基准扫描速度（每毫秒移动的像素数）
   const BASE_SPEED = 0.1; // 像素/毫秒
@@ -167,6 +169,12 @@ const ScanLine: React.FC<ScanLineProps> = ({
   
   // 修改重置cycleCompleted标记的位置，确保扫描线开始新方向的移动时才重置
   const startAnimation = useCallback(() => {
+    // 如果系统未启动，不启动动画
+    if (!isStarted) {
+      console.log("系统未启动，不启动扫描动画");
+      return;
+    }
+    
     // 确保先停止已有动画
     if (animRef.current.requestId !== null) {
       cancelAnimationFrame(animRef.current.requestId);
@@ -178,14 +186,12 @@ const ScanLine: React.FC<ScanLineProps> = ({
     // 启动新动画
     animRef.current.requestId = requestAnimationFrame(animate);
     
-    console.log("动画已启动");
-  }, [animate]);
+  }, [animate, isStarted]);
   
   const stopAnimation = useCallback(() => {
     if (animRef.current.requestId !== null) {
       cancelAnimationFrame(animRef.current.requestId);
       animRef.current.requestId = null;
-      console.log("动画已停止");
     }
   }, []);
   
@@ -198,7 +204,6 @@ const ScanLine: React.FC<ScanLineProps> = ({
   
   // 监听扫描角度变化
   useEffect(() => {
-    console.log(`扫描角度变化: ${scanMode.scanAngle}`);
     stopAnimation();
     updateScanRange();
     startAnimation();
@@ -214,6 +219,18 @@ const ScanLine: React.FC<ScanLineProps> = ({
     
     return () => stopAnimation();
   }, [scanSpeed, startAnimation, stopAnimation]);
+  
+  // 监听系统启动状态变化
+  useEffect(() => {
+    console.log(`系统启动状态变化: ${isStarted ? '已启动' : '未启动'}`);
+    if (isStarted) {
+      startAnimation();
+    } else {
+      stopAnimation();
+    }
+    
+    return () => stopAnimation();
+  }, [isStarted, startAnimation, stopAnimation]);
   
   // T字型标识参数
   const tHeight = 15; // T字型的垂直线高度

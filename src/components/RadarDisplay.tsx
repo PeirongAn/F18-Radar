@@ -8,6 +8,8 @@ import VelocityVector from './VelocityVector';
 import HorizonHUD from './HorizonHUD';
 import { UnknownTargetManager } from './UnknownTargetManager';
 import { UnknownTargetData } from './UnknownTarget';
+import { globalWS } from '../hooks/useRadarData';
+import radarStore from '../stores/RadarStore';  // 添加 radarStore 导入
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -20,11 +22,12 @@ export interface ScanControlParams {
 }
 
 // 雷达扫描模式类型
-export type ScanModeType = {
+export interface ScanModeType {
   name: string;
   scanAngle: number; // 扫描角度范围，如60或15
   scanFraction: number; // 扫描区域占比，如1.0表示全区域，0.25表示1/4
   centerOffset?: number; // 扫描中心位置的偏移量，默认为0（即中心位置）
+  elevationLevel?: 'low' | 'medium' | 'high'; // 添加天线高度级别
 }
 
 // 定义组件属性接口
@@ -51,6 +54,8 @@ export interface RadarDisplayProps {
   maxScanCount?: number; // 添加扫描计数上限属性
   displayMode?: 'AUTO' | 'HI' | 'MED'; // 添加显示模式属性，用于外部控制
   onModeDisplayChange?: (mode: 'AUTO' | 'HI' | 'MED') => void; // 添加显示模式变更回调
+  isSilent?: boolean; // 添加雷达静默模式属性
+  isStarted?: boolean; // 添加系统启动状态属性
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = ({ 
@@ -74,7 +79,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   showUnknownTargets = true, // 默认显示未知目标
   maxScanCount = 4, // 默认值为4
   displayMode, // 从props接收显示模式
-  onModeDisplayChange // 显示模式变更回调
+  onModeDisplayChange, // 显示模式变更回调
+  isSilent = false, // 默认不处于静默模式
+  isStarted = false // 默认未启动状态
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   const { connected, radarData, error } = useRadarData(wsUrl);
@@ -89,8 +96,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   
   // 添加IFF模式状态
   const [iffMode, setIffMode] = React.useState(false);
-  
-
+  const [externalTargetsTimestamp, setExternalTargetsTimestamp] = React.useState<number | null>(null);
+  const [radarAzimuth, setRadarAzimuth] = React.useState<number>(0);
+  const [ownHeading, setOwnHeading] = React.useState<number>(0);
   
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
@@ -99,8 +107,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   const centerX = (framePositions.startX + framePositions.endX) / 2;
   const centerY = (framePositions.startY + framePositions.endY) / 2;
   
-  // 计算缩放因子将海里换算到像素坐标
-  const scale = ((framePositions.endX - framePositions.startX) / 2 - radarConfig.padding) / 80; // 假设80海里是最大范围
   
   // 添加useEffect来监控radarData的变化并更新本地状态
   React.useEffect(() => {
@@ -116,7 +122,14 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
         setLocalExternalTargets(radarData.externalTargets);
         // 强制更新计数器增加，确保组件重新渲染
         setUpdateCounter(prev => prev + 1);
+        setExternalTargetsTimestamp(Date.now());  // 更新时间戳
       }
+      
+      // 更新雷达扫描角度
+      setRadarAzimuth(radarData.radar_azimuth);
+      
+      // 更新自机航向
+      setOwnHeading(radarData.own_heading);
     }
   }, [radarData]); // 移除updateCounter以避免循环依赖
   
@@ -128,7 +141,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   }, [localExternalTargets, centerX, centerY]);
   
   // 添加一些额外的调试信息
-  console.log('RadarDisplay - 渲染运行，updateCounter:', updateCounter);
   
   // 从本地状态获取externalTargets并处理坐标
   const processedExternalTargets = React.useMemo(() => {
@@ -188,6 +200,20 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
         if (onTargetSelect) {
           onTargetSelect(closestTarget.id);
         }
+
+        // 发送目标选择消息
+        const targetSelectMessage = {
+          type: 'target_selected',
+          timestamp: Date.now(),
+          receive_timestamp: externalTargetsTimestamp,  // 使用收到 external_targets 的时间戳
+          target_id: closestTarget.id,
+          action: 'select',
+          iff_mode: iffMode,
+          user_id: radarStore.userId // 添加用户ID
+        };
+        
+        console.log('发送目标选择消息:', targetSelectMessage);
+        globalWS.sendMessage(targetSelectMessage);
       } else {
         console.log('没有找到靠近TDC的目标');
         // 如果没有找到目标，清除选中状态
@@ -195,19 +221,19 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
         setVerticalLineX(undefined);
       }
     }
-  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect]);
+  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, externalTargetsTimestamp]);
   
-  // 添加IFF按钮点击处理函数
-  const handleIFFClick = React.useCallback(() => {
-    console.log(`IFF模式：${!iffMode ? '启用' : '关闭'}`);
-    setIffMode(!iffMode); // 切换IFF模式
-  }, [iffMode]);
+  // 处理IFF模式切换
+  const handleIFFModeToggle = () => {
+    setIffMode(prev => prev = !prev);
+  };
   
   // 自定义渲染函数，添加IFF按钮的点击事件
   const renderCustomText = (props: any) => {
     const originalElements = renderText({
       ...props,
-      displayMode // 传递当前显示模式
+      displayMode, // 传递当前显示模式
+      isSilent     // 传递静默状态
     });
     
     // 为IFF文本元素添加点击处理
@@ -217,10 +243,10 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
       <Group key="iff-click-area" x={props.framePositions.startX + 290} y={props.framePositions.startY - 40}>
         <Line
           points={[-5, -5, 30, -5, 30, 20, -5, 20, -5, -5]}
-          fill={iffMode ? 'rgba(0, 255, 0, 0.2)' : 'transparent'} // IFF模式启用时有轻微绿色背景
+          fill={iffMode ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)'}
           closed={true}
-          onClick={handleIFFClick}
-          onTap={handleIFFClick}
+          onClick={handleIFFModeToggle}
+          onTap={handleIFFModeToggle}
         />
       </Group>
     ]);
@@ -257,7 +283,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
     console.log("扫描完成一次循环，更新计数");
   };
   
-  
+
+
   return (
     <div className="radar-container bg-black" style={{ 
       borderRadius: '4px',
@@ -280,6 +307,28 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
         }}
       />
       
+      {/* 未启动提示 */}
+      {!isStarted && (
+        <div 
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            color: '#00ff00',
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            padding: '15px 25px',
+            borderRadius: '5px',
+            zIndex: 5,
+            border: '1px solid #00ff00',
+            fontSize: '18px',
+            fontFamily: 'monospace'
+          }}
+        >
+          等待系统启动...
+        </div>
+      )}
+      
       <Stage width={width} height={height}>
         <Layer>
           {/* 渲染雷达背景、网格和文本 - 使用renderMainFrame函数而不是RadarRenderers组件 */}
@@ -296,7 +345,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
             scanCount,
             maxScanCount,
             displayMode, // 传递显示模式
-            hiMedToggle // 传递HI/MED切换状态
+            hiMedToggle, // 传递HI/MED切换状态
+            isSilent,    // 传递静默状态
+            isStarted    // 传递系统启动状态
           })}
           
           {/* 渲染文本和状态信息，使用自定义渲染函数 */}
@@ -310,11 +361,15 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
             // 传递当前扫描角度
             scanAngle: scanMode.scanAngle,
             // 传递当前范围值
-            range: range
+            range: range,
+            // 传递静默状态
+            isSilent: isSilent,
+            // 传递系统启动状态
+            isStarted: isStarted
           })}
           
-          {/* 渲染雷达扫描线 - 传递当前的扫描模式和控制参数 */}
-          {radarData && (
+          {/* 渲染雷达扫描线 - 只在非静默模式下且系统已启动时显示 */}
+          {radarData && !isSilent && isStarted && (
             <ScanLine 
               azimuth={radarData.radar_azimuth} 
               radarConfig={radarConfig} 
@@ -322,6 +377,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
               scanMode={scanMode} // 传递扫描模式
               scanControl={scanControl} // 传递扫描控制参数
               onScanCycleComplete={handleScanCycleComplete} // 传递扫描完成事件处理函数
+              isStarted={isStarted} // 传递系统启动状态
             />
           )}
           
@@ -343,14 +399,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
           
           {/* 渲染未知目标 - 使用UnknownTargetManager */}
           <UnknownTargetManager
-            showTargets={showUnknownTargets}
+            showTargets={showUnknownTargets && !isSilent} // 在静默模式下不显示目标
             color={radarConfig.recColor}
             externalTargets={processedExternalTargets} // 传递处理后的目标数据
             selectedTargetId={selectedTargetId} // 传递选中的目标ID
-            verticalLineX={verticalLineX} // 传递垂直线的X坐标
-            framePositions={framePositions} // 传递雷达显示区域边界
-            iffMode={iffMode} // 传递IFF模式状态
+            verticalLineX={verticalLineX} // 传递垂直线位置
+            framePositions={framePositions} // 传递显示区域边界
+            iffMode={iffMode} // 启用IFF模式
           />
+          
+          {/* IFF模式指示器 */}
+         
         </Layer>
       </Stage>
     </div>

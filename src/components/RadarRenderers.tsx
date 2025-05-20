@@ -24,6 +24,8 @@ interface RenderProps {
   maxScanCount?: number; // 最大扫描计数
   displayMode?: 'AUTO' | 'HI' | 'MED'; // 扫描模式显示
   hiMedToggle?: 'HI' | 'MED'; // HI/MED切换状态
+  isSilent?: boolean; // 雷达静默模式状态
+  isStarted?: boolean; // 雷达启动状态
 }
   // 抽取刻度线相关的常量
 const scaleLineLength = 20;  // 刻度线长度
@@ -38,7 +40,9 @@ export const renderMainFrame = ({
   scanCount = 0, // 当前扫描计数
   maxScanCount = 4, // 最大扫描计数
   displayMode = 'AUTO', // 默认为AUTO模式
-  hiMedToggle = 'HI' // 默认为HI
+  hiMedToggle = 'HI', // 默认为HI
+  isSilent = false, // 默认非静默模式
+  isStarted = true // 默认启动状态
 }: RenderProps) => {
   const { startX, startY, endX, endY } = framePositions;
   
@@ -55,6 +59,10 @@ export const renderMainFrame = ({
 
   // 计算B扫描线的位置
   const bScanX = endX - (radarConfig.mainBoxWidth / 18) * 3;
+
+  // 根据静默模式和系统启动状态调整颜色
+  const mainColor = isSilent ? '#555555' : !isStarted ? '#222222' : radarConfig.gridColor;
+  const textColor = isSilent ? '#555555' : !isStarted ? '#222222' : radarConfig.textColor;
 
   // 计算4分位位置 - 根据scanAngle动态调整
   let quarterX1, quarterX2;
@@ -81,22 +89,34 @@ export const renderMainFrame = ({
       {/* 主框架 */}
       <Line
         points={[startX, startY, endX, startY, endX, endY, startX, endY, startX, startY]}
-        stroke={radarConfig.gridColor}
+        stroke={mainColor}
         strokeWidth={1}
         closed={true}
       />
 
+      {/* 添加静默模式指示 */}
+      {isSilent && (
+        <Text
+          text="SILENT"
+          x={centerX - 30}
+          y={centerY - 10}
+          fill="#FF0000"
+          fontSize={18}
+          fontStyle="bold"
+        />
+      )}
+
       {/* 添加4分位竖线 */}
       {scanAngle !== 60 && <Line
         points={[quarterX1, startY, quarterX1, endY]}
-        stroke={radarConfig.gridColor}
+        stroke={mainColor}
         strokeWidth={1}
         dash={[5, 5]} // 使用虚线样式，类似参考图片
       />}
       
       <Line
         points={[quarterX2, startY, quarterX2, endY]}
-        stroke={radarConfig.gridColor}
+        stroke={mainColor}
         strokeWidth={1}
         dash={[5, 5]} // 使用虚线样式，类似参考图片
       />
@@ -113,7 +133,7 @@ export const renderMainFrame = ({
             startX + (radarConfig.mainBoxWidth / 18) * i,
             startY + scaleLineLength
           ]}
-          stroke={radarConfig.gridColor}
+          stroke={mainColor}
           strokeWidth={1}
         />
       ))}
@@ -128,7 +148,7 @@ export const renderMainFrame = ({
             startX + (radarConfig.mainBoxWidth / 18) * i,
             endY - scaleLineLength,
           ]}
-          stroke={radarConfig.gridColor}
+          stroke={mainColor}
           strokeWidth={1}
         />
       ))}
@@ -143,7 +163,7 @@ export const renderMainFrame = ({
             endX,
             startY + (radarConfig.mainBoxHeight / 4) * i
           ]}
-          stroke={radarConfig.gridColor}
+          stroke={mainColor}
           strokeWidth={1}
         />
       ))}
@@ -158,7 +178,7 @@ export const renderMainFrame = ({
             startX + scaleLineLength,
             startY + (radarConfig.mainBoxHeight / 4) * i
           ]}
-          stroke={radarConfig.gridColor}
+          stroke={mainColor}
           strokeWidth={1}
         />
       ))}
@@ -167,7 +187,7 @@ export const renderMainFrame = ({
       <AntennaElevationMarker
         x={startX + 20}  // 向左偏移，使其位于左侧刻度线外
         y={minY + (maxY - minY) / 2} // 初始位置在中间
-        color={radarConfig.gridColor}
+        color={mainColor}
         minY={minY}
         maxY={maxY}
       />
@@ -178,7 +198,7 @@ export const renderMainFrame = ({
         <TDC
           x={tdcPosition.x}
           y={tdcPosition.y}
-          color={radarConfig.gridColor}
+          color={mainColor}
           upperValue="15"
           lowerValue="-3"
           centerX={centerX} // 传递中心X坐标
@@ -200,7 +220,7 @@ export const renderMainFrame = ({
             0, -10,    // 回到顶点
             0, 10      // 延长拖尾
           ]}
-          stroke={radarConfig.textColor}
+          stroke={textColor}
           strokeWidth={1}
         />
       </Group>
@@ -217,7 +237,7 @@ export const renderMainFrame = ({
             0, 10,     // 回到底点
             0, -10     // 延长拖尾
           ]}
-          stroke={radarConfig.textColor}
+          stroke={textColor}
           strokeWidth={1}
         />
       </Group>
@@ -233,7 +253,7 @@ export const renderMainFrame = ({
         x={startX - 80}  // 位于左侧按钮和雷达面板之间
         y={endY - 20}   // 底部位置
         fontSize={16}
-        color={radarConfig.textColor}
+        color={textColor}
       />
       
       {/* 渲染当前扫描计数 */}
@@ -241,7 +261,7 @@ export const renderMainFrame = ({
         text={`${scanCount + 1}`}
         x={startX + 10}
         y={endY - 20}  // 底部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       
@@ -250,7 +270,7 @@ export const renderMainFrame = ({
         text={displayMode === 'AUTO' ? hiMedToggle : displayMode}
         x={startX + 40}
         y={endY - 20}  // 底部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
     </>
@@ -265,9 +285,14 @@ export const renderText = ({
   heading,  // 添加航向参数
   scanAngle = 60,  // 添加扫描角度参数，默认为60
   range = 40,  // 添加范围值参数，默认为40
-  displayMode = 'AUTO' // 默认显示模式为AUTO
+  displayMode = 'AUTO', // 默认显示模式为AUTO
+  isSilent = false, // 默认非静默模式
+  isStarted = true // 默认启动状态
 }: RenderProps & { heading?: number, scanAngle?: number, range?: number }) => {  // 扩展Props类型
   const { startX, startY, endX, endY } = framePositions;
+  
+  // 根据静默模式和系统启动状态调整文本颜色
+  const textColor = isSilent ? '#555555' : !isStarted ? '#222222' : radarConfig.textColor;
 
   return (
     <>
@@ -278,35 +303,35 @@ export const renderText = ({
         x={startX - 80}
         y={endY  - 20  - 120}  // 中间位置
         fontSize={16}
-        color={radarConfig.textColor}
+        color={textColor}
       />
       
       <Text
         text={scanAngle.toString()} // 使用传入的扫描角度值
         x={startX - 80}
         y={endY  - 20  - 220}  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       <Text
         text={displayMode} // 显示当前模式
         x={endX + 40}
         y={endY}  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       <Text
         text={range.toString()} // 使用传入的范围值
         x={endX + 70}
         y={startY + 60 }  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       <Text
         text={heading ? Math.round(heading).toString() : "278"}  // 使用实时航向
         x={startX}
         y={endY + 10 }  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
      
@@ -314,41 +339,59 @@ export const renderText = ({
         text="040"
         x={startX + 230}
         y={endY + 10 }  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       <Text
         text="05980"
         x={endX - 10}
         y={endY + 10 }  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       <Text
         text="TWS"
         x={startX - 45}
         y={startY - 40 }  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
       <Text
         text="CNTL"
         x={endX }
         y={startY - 40 }  // 顶部位置
-        fill={radarConfig.textColor}
+        fill={textColor}
         fontSize={16}
       />
-        {/* STBY文本带删除线 */}
+
+      {/* 添加静默状态文本 */}
+      <Group x={startX + 180} y={startY - 40}>
+        <Text 
+          text="SIL" 
+          fill={isSilent ? '#FF0000' : textColor} // 在静默模式下使用红色
+          fontSize={16}
+        />
+        {/* 斜向删除线 - 只在非静默模式下显示 */}
+        {!isSilent && (
+          <Line
+            points={[-5, -2, 25, 15]}  // 从左上到右下的斜线
+            stroke={textColor}
+            strokeWidth={1}
+          />
+        )}
+      </Group>
+
+      {/* STBY文本带删除线 */}
       <Group x={startX + 220} y={startY -40}>
         <Text 
           text="STBY" 
-          fill={radarConfig.textColor}
+          fill={textColor}
           fontSize={16}
         />
         {/* 斜向删除线 */}
         <Line
           points={[-5, -2, 40, 15]}  // 从左上到右下的斜线
-          stroke={radarConfig.textColor}
+          stroke={textColor}
           strokeWidth={1}
         />
       </Group>
@@ -357,46 +400,19 @@ export const renderText = ({
         {/* 文本边框 */}
         <Line
           points={[-5, -5, 30, -5, 30, 20, -5, 20, -5, -5]}  // 矩形
-          stroke={radarConfig.textColor}
+          stroke={textColor}
           strokeWidth={1}
           closed={true}
         />
         <Text 
           text="IFF" 
-          fill={radarConfig.textColor}
+          fill={textColor}
           fontSize={16}
           x={0}
           y={0}
         />
       </Group>
    
-      <Text
-        text="SIL"
-        x={startX + 350}
-        y={startY - 40 }  // 顶部位置
-        fill={radarConfig.textColor}
-        fontSize={16}
-      />
-
-
-
-      {/* SIL文本带删除线 */}
-      <Group x={startX + 350} y={startY - 40}>
-        <Text 
-          text="SIL" 
-          fill={radarConfig.textColor}
-          fontSize={16}
-        />
-        {/* 斜向删除线 */}
-        <Line
-          points={[-5, -2, 25, 15]}  // 从左上到右下的斜线
-          stroke={radarConfig.textColor}
-          strokeWidth={1}
-        />
-      </Group>
-
-    
-
     </>
   );
 }; 

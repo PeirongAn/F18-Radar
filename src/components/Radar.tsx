@@ -3,6 +3,8 @@ import RadarButtons from './RadarButtons';
 import RadarDisplay, { ScanModeType, ScanControlParams } from './RadarDisplay';
 import { useKeyboardControl } from '../hooks/useKeyboardControl';
 import useRadarData from '../hooks/useRadarData';
+import { observer } from 'mobx-react-lite';
+import { useStore } from '../stores/StoreProvider';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -11,15 +13,29 @@ export interface RadarProps {
   width?: number;
   height?: number;
   onTargetSelect?: (targetId: string) => void;
+  isStarted?: boolean; // 添加系统是否已启动的属性
+  onRadarParamsUpdate?: (range: number, scanAngle: number) => void; // 添加参数更新回调
 }
 
 const Radar: React.FC<RadarProps> = ({
   width = 600,
   height = 600,
   onTargetSelect,
+  isStarted = false, // 默认为未启动状态
+  onRadarParamsUpdate,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
-  const { sendMessage, resetTargets } = useRadarData();
+  const { 
+    sendMessage, 
+    resetTargets, 
+    initializeSystem, 
+    taskId,
+    submitSettings,
+    antennaAdjustmentRequired
+  } = useRadarData();
+  
+  // 使用MobX Store
+  const { radarStore } = useStore();
 
   // 定义扫描模式状态
   const [scanMode, setScanMode] = useState<ScanModeType>({
@@ -44,6 +60,9 @@ const Radar: React.FC<RadarProps> = ({
   
   // 添加显示模式状态
   const [displayMode, setDisplayMode] = useState<'AUTO' | 'HI' | 'MED'>('AUTO');
+  
+  // 添加雷达静默状态
+  const [isSilent, setIsSilent] = useState(false);
 
   // 定义扫描控制参数状态
   const [scanControl, setScanControl] = useState<ScanControlParams>({
@@ -87,28 +106,28 @@ const Radar: React.FC<RadarProps> = ({
 
   // 当rangeIndex或scanMode变化时发送消息到服务器
   useEffect(() => {
+    // 如果雷达处于静默模式，则不进行任何操作
+    if (isSilent) {
+      console.log('雷达处于静默模式，不发送扫描信号');
+      return;
+    }
+    
     // 记录当前参数
-    console.log('当前雷达参数:', {
+    const currentRange = RADAR_RANGES[rangeIndex];
+    const currentAngle = scanMode.scanAngle;
+    
+    console.log('当前雷达参数已更新:', {
       rangeIndex,
-      range: RADAR_RANGES[rangeIndex],
-      scanAngle: scanMode.scanAngle,
+      range: currentRange,
+      scanAngle: currentAngle,
       scanMode: scanMode.name
     });
     
-    // 准备要发送的数据
-    const messageData = {
-      type: 'settings_update',
-      range: RADAR_RANGES[rangeIndex],
-      scanAngle: scanMode.scanAngle
-    };
-    
-    console.log('发送设置更新:', messageData);
-    
-    // 如果WebSocket已连接，发送消息
-    if (sendMessage) {
-      sendMessage(messageData);
+    // 通知父组件参数已更新
+    if (onRadarParamsUpdate) {
+      onRadarParamsUpdate(currentRange, currentAngle);
     }
-  }, [rangeIndex, scanMode.scanAngle, sendMessage]);
+  }, [rangeIndex, scanMode.scanAngle, isSilent, onRadarParamsUpdate]);
 
   // 添加目标选择处理函数
   const handleTargetSelection = (targetId: string) => {
@@ -120,6 +139,9 @@ const Radar: React.FC<RadarProps> = ({
   // 处理按钮点击事件
   const handleButtonClick = (position: string, buttonIndex: number) => {
     console.log(`${position} button ${buttonIndex} clicked`);
+    
+    // 使用MobX store中的系统状态
+    const isSystemReady = radarStore.isStarted ;
     
     // 根据不同位置和按钮索引设置不同的扫描模式或控制
     if (position === 'left' && buttonIndex === 3) {
@@ -146,28 +168,19 @@ const Radar: React.FC<RadarProps> = ({
         scanFraction: newScanFraction,
         centerOffset: scanMode.centerOffset // 保持原有的中心偏移量
       });
-    }
-    // 添加左侧第2个按钮的功能，用于调整扫描中心位置
-    else if (position === 'left' && buttonIndex === 2) {
-      // 循环切换扫描中心位置：左偏 -> 中心 -> 右偏 -> 左偏...
-      let newCenterOffset: number;
-      
-      if (scanMode.centerOffset === undefined || scanMode.centerOffset === 0) {
-        // 如果当前是中心，切换到右偏
-        newCenterOffset = 100; // 向右偏移100像素
-      } else if (scanMode.centerOffset > 0) {
-        // 如果当前是右偏，切换到左偏
-        newCenterOffset = -100; // 向左偏移100像素
-      } else {
-        // 如果当前是左偏，切换到中心
-        newCenterOffset = 0;
+       // 如果系统已准备就绪，向服务器发送雷达范围更新
+      if (isStarted) {
+        submitSettings({
+          range: RADAR_RANGES[rangeIndex],
+          scanAngle: newScanAngle
+        });
       }
       
-      // 更新扫描模式
-      setScanMode({
-        ...scanMode,
-        centerOffset: newCenterOffset
-      });
+     
+    }
+    // 添加左侧第2个按钮的功能，用于调整天线高度
+    else if (position === 'left' && buttonIndex === 2) {
+     
     }
     else if (position === 'left' && buttonIndex === 5) {
       // 左侧第5个按钮循环切换BR计数上限：1 -> 2 -> 4 -> 1
@@ -177,14 +190,41 @@ const Radar: React.FC<RadarProps> = ({
         return 1; // 如果是4或其他值，回到1
       });
       console.log("BR计数上限已更新:", maxScanCount);
+      
+      // 如果系统已准备就绪，向服务器发送BR计数上限更新
+      if (isSystemReady && sendMessage) {
+        const newValue = maxScanCount === 1 ? 2 : maxScanCount === 2 ? 4 : 1;
+        sendMessage({
+          type: 'scan_count_update',
+          maxScanCount: newValue
+        });
+      }
     }
     else if (position === 'right' && buttonIndex === 1) {
       // 增加范围索引，实现循环
-      setRangeIndex((prevIndex) => (prevIndex + 1) % RADAR_RANGES.length);
+      const newIndex = (rangeIndex + 1) % RADAR_RANGES.length;
+      setRangeIndex(newIndex);
+      
+      // 如果系统已准备就绪，向服务器发送雷达范围更新
+      if (isStarted) {
+        submitSettings({
+          range: RADAR_RANGES[newIndex],
+          scanAngle: scanMode.scanAngle
+        });
+      }
     }
     else if (position === 'right' && buttonIndex === 2) {
       // 减少范围索引，确保不小于0
-      setRangeIndex((prevIndex) => (prevIndex > 0 ? prevIndex - 1 : RADAR_RANGES.length - 1));
+      const newIndex = rangeIndex > 0 ? rangeIndex - 1 : RADAR_RANGES.length - 1;
+      setRangeIndex(newIndex);
+      
+      // 如果系统已准备就绪，向服务器发送雷达范围更新
+      if (isStarted) {
+        submitSettings({
+          range: RADAR_RANGES[newIndex],
+          scanAngle: scanMode.scanAngle
+        });
+      }
     }
     else if (position === 'right' && buttonIndex === 3) {
       // 切换VelocityVector和HorizonHUD的显示状态
@@ -201,6 +241,26 @@ const Radar: React.FC<RadarProps> = ({
       else setDisplayMode('AUTO');
       console.log(`显示模式已切换为: ${displayMode === 'AUTO' ? 'HI' : displayMode === 'HI' ? 'MED' : 'AUTO'}`);
     }
+    else if (position === 'right' && buttonIndex === 6) {
+      // 切换雷达静默模式
+      const newSilentState = !isSilent;
+      setIsSilent(newSilentState);
+      console.log(`雷达静默模式已${newSilentState ? '启用' : '禁用'}`);
+      
+      // 通知服务器雷达静默状态变化
+      if (sendMessage) {
+        sendMessage({
+          type: 'silent_mode',
+          enabled: newSilentState
+        });
+      }
+    }
+    
+    // 如果系统处于初始化等待状态，且任务需要开始，通过MobX store自动启动初始化
+  
+    
+    // 如果系统正在等待设置参数，且特定按钮被点击，通过MobX store自动提交当前设置
+  
   };
 
   // 处理TDC位置设置
@@ -213,39 +273,6 @@ const Radar: React.FC<RadarProps> = ({
     console.log(`扫描中心已设置，偏移量: ${offset}px`);
   };
 
-  // 添加一个设置特定状态的函数
-  const setSpecialCondition = () => {
-    console.log('====== 设置特殊条件 ======');
-    console.log('设置特殊条件: scan_angle=30, range=80海里');
-    
-    // 设置扫描角度为精确的30度
-    const newScanMode = {
-      name: 'medium',
-      scanAngle: 30,
-      scanFraction: 0.5,
-      centerOffset: scanMode.centerOffset // 保持原有的中心偏移量
-    };
-    
-    console.log('设置新的扫描模式:', newScanMode);
-    setScanMode(newScanMode);
-    
-    // 设置范围为精确的80海里 (索引3)
-    console.log('设置雷达范围为:', RADAR_RANGES[3], '海里 (索引:', 3, ')');
-    setRangeIndex(3); // RADAR_RANGES[3] = 80
-    
-    // 手动发送更新消息以确保服务器接收
-    setTimeout(() => {
-      const messageData = {
-        type: 'settings_update',
-        range: RADAR_RANGES[3],
-        scanAngle: 30
-      };
-      
-      console.log('手动发送精确的设置更新:', messageData);
-      sendMessage(messageData);
-      console.log('====== 特殊条件设置完成 ======');
-    }, 100); // 短暂延迟确保状态已更新
-  };
 
   // 添加系统重置功能
   const handleReset = () => {
@@ -314,6 +341,8 @@ const Radar: React.FC<RadarProps> = ({
           maxScanCount={maxScanCount} // 传递BR计数上限
           displayMode={displayMode} // 传递显示模式
           onModeDisplayChange={setDisplayMode} // 传递显示模式变更回调
+          isSilent={isSilent} // 传递雷达静默状态
+          isStarted={isStarted} // 传递系统启动状态
         />
         
         {/* 右侧按钮 */}
@@ -349,4 +378,5 @@ const Radar: React.FC<RadarProps> = ({
   );
 };
 
-export default Radar; 
+// 使用MobX的observer包装组件
+export default observer(Radar); 

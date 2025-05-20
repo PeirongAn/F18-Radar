@@ -39,7 +39,17 @@ export const useKeyboardControl = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
+      // 检查目标元素是否是输入元素
+      const target = e.target as HTMLElement;
+      const isInputElement = 
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.isContentEditable;
+      
+      // 如果不是输入元素，则阻止默认行为
+      if (!isInputElement) {
+        e.preventDefault();
+      }
       
       setPosition(prev => {
         const newPos = { ...prev };

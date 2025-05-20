@@ -12,6 +12,7 @@ interface SAButtonsProps {
   radarConfig: any;
   stageWidth: number; // 添加舞台宽度属性
   stageHeight: number; // 添加舞台高度属性
+  onResetSA?: () => void; // 新增重置回调
 }
 
 const SAButtons: React.FC<SAButtonsProps> = ({ 
@@ -19,7 +20,8 @@ const SAButtons: React.FC<SAButtonsProps> = ({
   framePositions, 
   radarConfig,
   stageWidth, 
-  stageHeight
+  stageHeight,
+  onResetSA
 }) => {
   const { textColor = '#00ff00' } = radarConfig;
   
@@ -101,8 +103,15 @@ const SAButtons: React.FC<SAButtonsProps> = ({
       {buttons.map(({ label, index }) => {
         const { x, y } = getButtonPosition(index);
         
+        // 左侧第2个按钮（L2）点击时触发onResetSA
+        const handleClick = () => {
+          if (position === 'left' && index === 1 && onResetSA) {
+            onResetSA();
+          }
+        };
+        
         return (
-          <Group key={`${position}-btn-${index}`}>
+          <Group key={`${position}-btn-${index}`} onClick={handleClick}>
             <Rect
               x={x}
               y={y}

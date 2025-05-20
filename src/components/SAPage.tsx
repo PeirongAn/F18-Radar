@@ -1,9 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Stage, Layer, Circle, Line, Group, Text, Rect } from 'react-konva';
+import PrimaryAirIcon from '../icons/PrimaryAirIcon';
+import SecondaryAirIcon from '../icons/SecondaryNavalIcon';
+import PrimaryAntiAircraftArtilleryIcon from '../icons/PrimaryAntiAircraftArtilleryIcon';
+import SecondaryAntiAircraftArtilleryIcon from '../icons/SecondaryAntiAircraftArtilleryIcon';
+import PrimaryNavalIcon from '../icons/PrimaryNavalIcon';
+import SecondaryNavalIcon from '../icons/SecondaryAirIcon';
+import MissileUpIcon from '../icons/MissileUpIcon';
+import MissileDownIcon from '../icons/MissileDownIcon';
+import useRadarData from '../hooks/useRadarData';
+import { MessageType } from './CommunicationLog';
+// import SAButtons from './SAButtons';
 
 interface SAPageProps {
   width?: number;
   height?: number;
+  onAddMessage?: (type: MessageType, content: string) => void;
+  userId?: string;
 }
 
 // 添加威胁数据接口
@@ -14,6 +27,15 @@ interface ThreatData {
   distance: number;
   heading: number;
   priority: 'high' | 'medium' | 'low';
+  label: string;
+}
+
+// 添加导弹数据接口
+interface MissileData {
+  id: string;
+  type: 'MissileUp' | 'MissileDown';
+  x: number;
+  y: number;
 }
 
 // 按钮组件 - 使用普通DOM元素而非Konva
@@ -33,34 +55,43 @@ const Button: React.FC<ButtonProps> = ({ label, onClick }) => {
   );
 };
 
-const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
-  // 模拟威胁数据
-  const [threats] = useState<ThreatData[]>([
-    {
-      id: 'threat-1',
-      type: 'xxx',
-      source: 'MiG-29',
-      distance: 28.5,
-      heading: 315,
-      priority: 'high'
-    },
-    {
-      id: 'threat-2',
-      type: 'xxx',
-      source: 'SA-10',
-      distance: 42.3,
-      heading: 45,
-      priority: 'medium'
-    },
-    {
-      id: 'threat-3',
-      type: 'xxx',
-      source: 'Su-27',
-      distance: 15.7,
-      heading: 270,
-      priority: 'low'
+const ICON_SIZE = 48;
+const ICON_MAP = {
+  PrimaryAir: PrimaryAirIcon,
+  SecondaryAir: SecondaryAirIcon,
+  PrimaryAntiAircraftArtillery: PrimaryAntiAircraftArtilleryIcon,
+  SecondaryAntiAircraftArtillery: SecondaryAntiAircraftArtilleryIcon,
+  PrimaryNaval: PrimaryNavalIcon,
+  SecondaryNaval: SecondaryNavalIcon,
+};
+const iconColors = [
+  '#ff0000', // PrimaryAirIcon
+  '#ffff00', // SecondaryAirIcon
+  '#ff0000', // PrimaryAntiAircraftArtilleryIcon
+  '#ffff00', // SecondaryAntiAircraftArtilleryIcon
+  '#ff0000', // PrimaryNavalIcon
+  '#ffff00', // SecondaryNavalIcon
+];
+
+// 添加音频管理器
+const AudioManager = {
+  missileUp: new Audio('/sounds/MissileLaunch.wav'),
+  missileDown: new Audio('/sounds/MissileLaunch.wav'),
+  threatUpgrade: new Audio('/sounds/Lock.wav'),
+  saInit: new Audio('/sounds/Tracking.wav'),
+  
+  play(type: 'missileUp' | 'missileDown' | 'threatUpgrade' | 'saInit') {
+    const audio = this[type];
+    if (audio) {
+      audio.currentTime = 0; // 重置音频播放位置
+      audio.play().catch(err => console.error('播放音频失败:', err));
     }
-  ]);
+  }
+};
+
+const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900, onAddMessage, userId: originalUserId}) => {
+  // 删除本地 mock threats
+  // const [threats] = useState<ThreatData[]>([ ... ]);
 
   // 获取优先级对应的颜色
   const getPriorityColor = (priority: string): string => {
@@ -71,7 +102,13 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
       default: return '#ffffff';
     }
   };
+  const [userId, setUserId] = useState(originalUserId);
 
+  useEffect(() => {
+    if (originalUserId) {
+      setUserId(originalUserId);
+    }
+  }, [originalUserId]);
   // 配置
   const config = {
     backgroundColor: '#000000',
@@ -88,72 +125,51 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
   // 计算第二个圆的半径，使其与底部白线相切
   // 底部线的位置约在stageHeight减去一定边距，这里设置为高度的90%
   const bottomLineY = height * 0.9;
-  const radius2 = bottomLineY - config.centerY + 50; // 使第二个圆与底部线相切
-  const radius3 = radius2 * 1.6; // 第三个圆的半径，原来是1.5倍，现在增大到1.6倍
+  const radius2 = bottomLineY - config.centerY; // 使第二个圆与底部线相切
+  const radius3 = radius2 * 1.7; // 第三个圆的半径，原来是1.5倍，现在增大到1.6倍
   
   // 计算弧线角度
   const arcStartAngle = 210; // 开始角度 (210度)
   const arcEndAngle = 330;   // 结束角度 (330度)
   
-  // 转换为弧度
-  const startRad = (arcStartAngle * Math.PI) / 180;
-  const endRad = (arcEndAngle * Math.PI) / 180;
-  
-  // 计算弧线端点
-  const arcStartX = config.centerX + radius3 * Math.cos(startRad);
-  const arcStartY = config.centerY + radius3 * Math.sin(startRad);
-  const arcEndX = config.centerX + radius3 * Math.cos(endRad);
-  const arcEndY = config.centerY + radius3 * Math.sin(endRad);
 
-  // 计算主显示区域的边界位置
-  const framePositions = {
-    startX: config.centerX - radius3,
-    startY: config.centerY - radius3,
-    endX: config.centerX + radius3,
-    endY: config.centerY + radius3
-  };
 
-  // 方向标记位置
-  const directions = [
-    { label: 'N', angle: 270 },
+
+  // 随机旋转角度（0~360度）
+  const [rotation] = React.useState(() => Math.random() * 360);
+
+  // 方向字母和短线（E S W N，顺时针，带出头短线）
+  const directionLabels = [
     { label: 'E', angle: 0 },
     { label: 'S', angle: 90 },
-    { label: 'W', angle: 180 }
+    { label: 'W', angle: 180 },
+    { label: 'N', angle: 270 },
   ];
-
-  // 第一个圆上的方向标记
-  const circleMarkers = [
-    { label: 'W', angle: 30 },
-    { label: 'N', angle: 120 },
-    { label: 'E', angle: 210 },
-    { label: 'S', angle: 320 }
-  ];
-
-  // 计算第一个圆上标记的位置和短线
-  const circleMarkerLines = circleMarkers.map(({ label, angle }) => {
-    const rad = (angle * Math.PI) / 180;
+  const shortLen = 18; // 短线总长度
+  const markerLines = directionLabels.map(({ label, angle }) => {
+    const rad = ((angle + rotation) * Math.PI) / 180;
     const centerX = config.centerX;
-    const centerY = config.centerY - 50; // 第一个圆的Y坐标
-    
-    // 短线的内外端点
-    const innerX = centerX + (radius1 - 10) * Math.cos(rad);
-    const innerY = centerY + (radius1 - 10) * Math.sin(rad);
-    const outerX = centerX + (radius1 + 10) * Math.cos(rad);
-    const outerY = centerY + (radius1 + 10) * Math.sin(rad);
-    
-    // 文本位置 - 在短线外侧
-    const textX = centerX + (radius1 + 20) * Math.cos(rad);
-    const textY = centerY + (radius1 + 20) * Math.sin(rad);
-    
+    const centerY = config.centerY - 50;
+    const r1 = radius1 - shortLen * 0.6;
+    const r2 = radius1 + shortLen * 0.5;
+    // 短线起点
+    const x1 = centerX + r1 * Math.cos(rad);
+    const y1 = centerY + r1 * Math.sin(rad);
+    // 短线终点
+    const x2 = centerX + r2 * Math.cos(rad);
+    const y2 = centerY + r2 * Math.sin(rad);
+    // 字母位置
+    const textX = centerX + (r2 + 10) * Math.cos(rad);
+    const textY = centerY + (r2 + 10) * Math.sin(rad);
     return {
       label,
-      line: [innerX, innerY, outerX, outerY],
+      line: [x1, y1, x2, y2],
       textX,
       textY
     };
   });
 
-  // 第三段圆弧刻度线 - 11等分
+  // 第三个圆弧刻度线 - 11等分
   const arcScaleLines = [];
   // 弧线总角度
   const totalArcAngle = 100; // 修改为100度，与Arc组件的angle值保持一致
@@ -194,7 +210,7 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
 
   // 方向标记渲染函数
   const renderDirectionMarkers = () => {
-    return directions.map(({ label, angle }) => {
+    return directionLabels.map(({ label, angle }) => {
       // 只渲染在弧线范围内的方向标记
       if (angle >= arcStartAngle - 360 && angle <= arcEndAngle - 360) {
         const rad = (angle * Math.PI) / 180;
@@ -233,6 +249,216 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
   const topContainerWidth = width; // 使顶部容器宽度与雷达宽度相同
   const sideContainerHeight = height * 0.8; // 侧边容器高度与雷达高度的80%相同
 
+  // 随机分布icon
+  const { radarData, sendResetSA, sendMessage } = useRadarData();
+ 
+  
+  const [saThreats, setSaThreats] = useState(radarData?.saThreats ?? []);
+  const [missiles, setMissiles] = useState<MissileData[]>([]);
+  const [threatList, setThreatList] = useState<ThreatData[]>([]);
+  
+  // 添加refs控制日志写入
+  const hasInitLogRef = useRef(false);
+  const lastEmergencyRef = useRef<string | undefined>(undefined);
+  const lastThreatsLengthRef = useRef<number>(0);
+  // 记录最近一次SAEmergency的接收时间戳
+  const lastEmergencyReceiveTimestampRef = useRef<number | null>(null);
+
+  // 处理重置SA
+  const handleResetSA = useCallback(() => {
+    sendResetSA();
+    setMissiles([]);
+    setThreatList([]);
+    hasInitLogRef.current = false;
+    lastThreatsLengthRef.current = 0;
+    if (typeof onAddMessage === 'function') {
+      onAddMessage('sa_init', 'SA系统已重置，导弹状态已清空');
+    }
+  }, [sendResetSA, onAddMessage]);
+
+  // 主动同步saThreats
+  useEffect(() => {
+    console.log('【SAPage】radarData?.saThreats changed:', radarData?.saThreats);
+    if (radarData?.saThreats) {
+      setSaThreats(radarData.saThreats);
+    }
+  }, [radarData?.saThreats]);
+
+  // saThreats变化时，重置威胁列表，优先级为中等
+  useEffect(() => {
+    console.log('【SAPage】saThreats changed:', saThreats);
+    if (saThreats.length > 0) {
+      setThreatList(saThreats.map(t => ({
+        id: t.id,
+        type: t.type,
+        label: t.label,
+        source: t.label,
+        distance: 0,
+        heading: 0,
+        priority: 'medium',
+      })));
+      
+      // 修改日志写入逻辑：确保初始化日志写入
+      if (!hasInitLogRef.current && onAddMessage) {
+        console.log('【SAPage】Writing SA init log...'); // 调试日志
+        onAddMessage('sa_init', `SA系统初始化完成，当前威胁数量：${saThreats.length}`);
+        AudioManager.play('saInit');
+        hasInitLogRef.current = true;
+      }
+    }
+  }, [saThreats, onAddMessage]);
+
+  // 监听 emergency 变化，自动处理（防止死循环）
+  useEffect(() => {
+    if (radarData?.emergency) {
+      const eventId = JSON.stringify(radarData.emergency);
+      if (lastEmergencyRef.current !== eventId) {
+        const data = radarData.emergency;
+        // 记录前端接收SAEmergency的本地时间戳
+        const receiveTimestamp = Date.now();
+        lastEmergencyReceiveTimestampRef.current = receiveTimestamp;
+        // 上报日志到后端
+        sendMessage && sendMessage({
+          type: 'sa_emergency_received',
+          receive_timestamp: receiveTimestamp,
+          event: data.event,
+          missileType: data.missileType,
+          saThreats: data.saThreats
+        });
+        if (data.event === 'missile') {
+          AudioManager.play(data.missileType === 'MissileUp' ? 'missileUp' : 'missileDown');
+          const angle = Math.random() * Math.PI * 2;
+          const r = radius2 + Math.random() * (radius3 - radius2);
+          const x = config.centerX + r * Math.cos(angle);
+          const y = config.centerY + r * Math.sin(angle);
+          const missileType: 'MissileUp' | 'MissileDown' = data.missileType === 'MissileUp' ? 'MissileUp' : 'MissileDown';
+          const newMissile: MissileData = {
+            id: Date.now().toString(),
+            type: missileType,
+            x,
+            y
+          };
+          setMissiles(prev => [...prev, newMissile]);
+          setThreatList(prev => [{
+            id: newMissile.id,
+            type: 'missile_lock',
+            label: data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
+            source: data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
+            distance: Math.floor(r / 100),
+            heading: Math.floor((angle * 180 / Math.PI + 90) % 360),
+            priority: 'high',
+          }, ...prev]);
+          if (onAddMessage) {
+            console.log('Writing missile warning log...');
+            onAddMessage('sa_missile', `警告！导弹来袭！类型：${data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹'}`);
+          }
+        } else if (data.event === 'upgrade' && data.saThreats) {
+          AudioManager.play('threatUpgrade');
+          setSaThreats(data.saThreats);
+          if (onAddMessage) {
+            console.log('Writing threat upgrade log...');
+            onAddMessage('sa_emergency', '收到临机事件：威胁升级，已有威胁提升为一级');
+          }
+        }
+        lastEmergencyRef.current = eventId;
+      }
+    }
+  }, [radarData?.emergency, radius2, radius3, config.centerX, config.centerY, onAddMessage, sendMessage]);
+
+
+
+  // iconPositions 依赖 saThreats
+  const iconPositions = React.useMemo(() => {
+    return saThreats.map((threat) => {
+      let angle;
+      let r;
+      if (threat.type.startsWith('Primary')) {
+        // Primary类型仍然在radius2附近随机分布
+        angle = Math.random() * 2 * Math.PI;
+        r = radius2 + Math.random() * 20;
+      } else {
+        // 其余类型分布在radius3的上方弧线（-140°到-40°）
+        // 转为弧度
+        const minDeg = -140;
+        const maxDeg = -40;
+        angle = (minDeg + Math.random() * (maxDeg - minDeg)) * Math.PI / 180;
+        r = radius2 + Math.random() * (radius3 - radius2);
+      }
+      const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
+      const y = config.centerY + r * Math.sin(angle) - ICON_SIZE / 2;
+      return { x, y };
+    });
+  }, [config.centerX, config.centerY, radius2, radius3, saThreats]);
+
+  // 英文类型转中文
+  const TYPE_MAP: Record<string, string> = {
+    PrimaryAir: '一级空中威胁',
+    SecondaryAir: '二级空中威胁',
+    PrimaryAntiAircraftArtillery: '一级防空炮',
+    SecondaryAntiAircraftArtillery: '二级防空炮',
+    PrimaryNaval: '一级水面威胁',
+    SecondaryNaval: '二级水面威胁',
+  };
+
+  // 点击icon将其加入威胁列表首位且优先级为高
+  const handleThreatIconClick = useCallback((threat: any) => {
+    setThreatList(prev => {
+      const idx = prev.findIndex(t => t.id === threat.id);
+      let newList = [...prev];
+      if (idx !== -1) {
+        newList.splice(idx, 1);
+      }
+      newList.unshift({
+        id: threat.id,
+        type: threat.type,
+        label: threat.label,
+        source: threat.label,
+        distance: 0,
+        heading: 0,
+        priority: 'high',
+      });
+      return newList;
+    });
+    // 确保威胁处理日志写入
+    if (onAddMessage) {
+      onAddMessage('sa_threat', `处理威胁：${threat.label || '导弹'}，已设为高优先级`);
+    }
+    // 上报点击日志到后端，带上最近一次receive_timestamp
+    sendMessage && sendMessage({
+      type: 'threat_clicked',
+      threat_id: threat.id,
+      label: threat.label,
+      priority: 'high',
+      timestamp: Date.now(),
+      receive_timestamp: lastEmergencyReceiveTimestampRef.current,
+      user_id: userId,
+    });
+  }, [onAddMessage, sendMessage]);
+
+  // 渲染导弹
+  const renderMissiles = () => {
+    return missiles.map(missile => {
+      const Icon = missile.type === 'MissileUp' ? MissileUpIcon : MissileDownIcon;
+      return (
+        <Group key={missile.id} onClick={() => handleThreatIconClick(missile)}>
+          <Icon
+            x={missile.x}
+            y={missile.y}
+            size={30}
+            color="#ff0000"
+            strokeWidth={3}
+          />
+        </Group>
+      );
+    });
+  };
+
+  // 最内侧圆心扰动（±10像素）
+  const [centerPerturb] = React.useState(() => ({
+    dx: (Math.random() - 0.5) * 20, // -10~+10
+    dy: (Math.random() - 0.5) * 20  // -10~+10
+  }));
+
   return (
     <div className="flex flex-col items-center justify-center">
       <div className="flex flex-col items-center">
@@ -252,8 +478,12 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
             className="flex flex-col justify-between mr-4 mt-12" 
             style={{ height: sideContainerHeight }}
           >
-            {leftButtons.map(label => (
-              <Button key={label} label={label} onClick={() => handleButtonClick(label)} />
+            {leftButtons.map((label, idx) => (
+              <Button
+                key={label}
+                label={label}
+                onClick={idx === 1 ? handleResetSA : () => handleButtonClick(label)}
+              />
             ))}
           </div>
           
@@ -263,31 +493,30 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
               <Layer>
                 {/* 第一个圆（中心圆） */}
                 <Circle
-                  x={config.centerX}
-                  y={config.centerY - 50}
+                  x={config.centerX + centerPerturb.dx}
+                  y={config.centerY - 50 + centerPerturb.dy}
                   radius={radius1}
                   stroke={config.lineColor}
                   strokeWidth={1}
                 />
-                
-                {/* 第一个圆上的标记 */}
-                {circleMarkerLines && circleMarkerLines.map((marker, i) => (
-                  <React.Fragment key={`circle-marker-${i}`}>
+                {/* 四个方向短线和字母 */}
+                {markerLines.map((marker, i) => (
+                  <React.Fragment key={marker.label}>
                     <Line
                       points={marker.line}
                       stroke={config.lineColor}
-                      strokeWidth={1}
+                      strokeWidth={2}
                     />
                     <Text
-                      text={marker.label}
                       x={marker.textX}
                       y={marker.textY}
+                      text={marker.label}
                       fill={config.lineColor}
-                      fontSize={14}
+                      fontSize={18}
                       align="center"
                       verticalAlign="middle"
-                      offsetX={7}
-                      offsetY={7}
+                      offsetX={8}
+                      offsetY={8}
                     />
                   </React.Fragment>
                 ))}
@@ -354,6 +583,27 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
                   strokeWidth={2}
                   dash={[5, 5]}
                 /> */}
+
+                {/* 随机分布的icon */}
+                {saThreats.map((threat, idx) => {
+                  const IconComp = ICON_MAP[threat.type as keyof typeof ICON_MAP];
+                  if (!IconComp) return null;
+                  return (
+                    <Group key={threat.id} onClick={() => handleThreatIconClick(threat)}>
+                      <IconComp
+                        x={iconPositions[idx].x}
+                        y={iconPositions[idx].y - 100}
+                        size={ICON_SIZE}
+                        color={iconColors[Object.keys(ICON_MAP).indexOf(threat.type as keyof typeof ICON_MAP)]}
+                        label={threat.label}
+                      />
+                    </Group>
+                  );
+                })}
+
+                {/* 渲染导弹 */}
+                {renderMissiles()}
+
               </Layer>
             </Stage>
           </div>
@@ -384,7 +634,7 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
           <div className="w-24">优先级</div>
         </div>
         
-        {threats.map((threat, index) => (
+        {threatList.map((threat, index) => (
           <div 
             key={threat.id} 
             className={`p-2 border-b border-gray-800 font-mono text-sm flex items-center ${
@@ -392,17 +642,15 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900}) => {
             }`}
           >
             <div className="w-8 text-center text-gray-400">{index + 1}</div>
-            <div className="w-32 text-green-400">{threat.type}</div>
-            <div className="w-32 text-yellow-400">{threat.source}</div>
-            <div className="w-48 text-blue-300">{threat.distance.toFixed(1)}nm/{threat.heading}°</div>
+            <div className="w-32 text-green-400">{TYPE_MAP[threat.type] || threat.type}</div>
+            <div className="w-32 text-yellow-400">{threat.label}</div>
+            <div className="w-48 text-blue-300">--</div>
             <div className="w-24 flex items-center">
               <span 
                 className="w-3 h-3 rounded-full mr-2" 
-                style={{ backgroundColor: getPriorityColor(threat.priority) }}
+                style={{ backgroundColor: threat.priority === 'high' ? '#ff0000' : threat.priority === 'medium' ? '#ffff00' : '#00ffff' }}
               ></span>
-              <span className="text-white">
-                {threat.priority === 'high' ? '高' : threat.priority === 'medium' ? '中' : '低'}
-              </span>
+              <span className="text-white">{threat.priority === 'high' ? '高' : threat.priority === 'medium' ? '中' : '低'}</span>
             </div>
           </div>
         ))}
