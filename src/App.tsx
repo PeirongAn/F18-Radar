@@ -7,11 +7,19 @@ import CommunicationLog, { LogMessage, MessageType } from './components/Communic
 import useRadarData from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
+import radarStore from './stores/RadarStore';
+import agentStore from './stores/AgentStore';
 
 // 日志类型声明，需与CommunicationLog保持一致
 
+interface TargetSelectParams {
+  targetId: string | undefined;
+  lockX?: number;
+  iffMode?: boolean;
+  externalTargetsTimestamp?: number | null;
+}
 
-const App: React.FC = () => {
+const App: React.FC = observer(() => {
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation'>('radar');
   const [showInitialForm, setShowInitialForm] = useState<boolean>(true);
@@ -47,13 +55,13 @@ const App: React.FC = () => {
     setMessages(prev => [
       ...prev,
       {
-        id: ++messageIdRef.current,
+        id: `msg_${Date.now()}_${++messageIdRef.current}`,
         type,
         content,
         timestamp: new Date()
       }
     ]);
-  }, []); // 空依赖数组，因为只使用了ref和setState
+  }, []);
   
   // 同步 userId 到 radarStore
   useEffect(() => {
@@ -82,9 +90,46 @@ const App: React.FC = () => {
   }, [isStarted, connected, error, radarStore]);
   
   // 处理目标选择
-  const handleTargetSelect = (targetId: string) => {
-    setSelectedTarget(targetId);
-  };
+  const handleTargetSelect = useCallback((params: TargetSelectParams) => {
+    const { targetId, lockX, iffMode, externalTargetsTimestamp } = params;
+
+    // currentOperationOwner 应该由调用方 (Radar.tsx 或 RadarDisplay.tsx) 提前设置
+    // agentStore.setOperationOwner(lockX === undefined && targetId ? 'manual' : agentStore.currentOperationOwner);
+
+    radarStore.setLockedTargetId(targetId);
+    if (targetId && lockX !== undefined) { // 确保 lockX 有效值才设置
+      radarStore.setLockScreenX(lockX);
+    } else if (!targetId) {
+      radarStore.setLockScreenX(undefined); // 清除锁定
+    }
+
+    if (targetId) {
+      const messagePayload: any = {
+        type: 'target_selected',
+        timestamp: Date.now(),
+        target_id: targetId,
+        action: 'select',
+      };
+      // 只有当这些值有效时才添加到消息中
+      if (iffMode !== undefined) {
+        messagePayload.iff_mode = iffMode;
+      }
+      if (externalTargetsTimestamp !== undefined && externalTargetsTimestamp !== null) {
+        messagePayload.receive_timestamp = externalTargetsTimestamp;
+      }
+      
+      console.log('[App.tsx] Sending target_selected:', messagePayload, 'with owner:', agentStore.currentOperationOwner);
+      if (sendMessage) {
+        sendMessage(messagePayload);
+      } else {
+        console.error('[App.tsx] sendMessage function is not available from useRadarData');
+      }
+    } else {
+      // 如果是取消选择，可能也需要发送一个消息，或者由后端逻辑处理
+      console.log('[App.tsx] Target deselected / no target selected.');
+    }
+    // AI 的操作所有者恢复应该由 AI 的控制逻辑自行处理
+  }, [sendMessage]);
   
   // 处理初始表单提交
   const handleStartApp = (id: string, withAI: boolean) => {
@@ -160,7 +205,7 @@ const App: React.FC = () => {
               />
             ) : (
               <div className='flex justify-center'>
-                <SAPage onAddMessage={addMessage} />
+                <SAPage onAddMessage={addMessage} userId={userId}/>
               </div>
             )}
           </div>
@@ -199,7 +244,6 @@ const App: React.FC = () => {
       </div>
     </div>
   );
-};
+});
 
-// 使用MobX观察者包装组件
-export default observer(App); 
+export default App; 

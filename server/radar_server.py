@@ -89,8 +89,9 @@ def record_operation_to_db(operation):
                     receive_timestamp,
                     is_active, 
                     parameters, 
-                    user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    user_id,
+                    event_owner
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     operation.get('task_id', current_session.get('task_id', 0)),
                     operation.get('operationType', ''),
@@ -98,7 +99,8 @@ def record_operation_to_db(operation):
                     operation.get('receive_timestamp'),  # 从客户端消息中获取接收时间戳
                     1 if operation.get('isActive', False) else 0,
                     json.dumps(operation.get('parameters', {})),
-                    operation.get('user_id', '')
+                    operation.get('user_id', ''),
+                    operation.get('event_owner', '')
                 ))
                 
                 # 提交事务
@@ -430,7 +432,8 @@ async def auto_send_sa_emergency(websocket, threats):
             'timestamp': int(time.time() * 1000),
             'isActive': False,
             'parameters': emergency_msg,
-            'user_id': ''
+            'user_id': '',
+            'event_owner': ''
         })
     except Exception as e:
         print(f"记录SAEmergency日志失败: {e}")
@@ -443,241 +446,197 @@ async def handle_client_message(message_str, websocket=None):
         print("\n===== 接收到客户端消息 =====")
         print(f"原始消息: {message_str}")
         
-        # 解析消息
         message = json.loads(message_str)
         print(f"解析后的消息: {message}")
         
-        # 检查消息类型
         message_type = message.get('type', '')
+        client_event_owner = message.get('event_owner', '') # Get event_owner from the message
         
-        # 处理任务启动消息
         if message_type == 'task_start':
             print("消息类型: task_start", message.get('user_id', ''))
-            
-            # 生成新任务ID
             task_id = generate_task_id()
             current_session['task_id'] = task_id
             current_session['stage'] = 'init'
-            
-            # 记录操作
             record_operation_to_db({
                 'task_id': task_id,
                 'operationType': 'task_start',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True,
                 'parameters': {},
-                'user_id': message.get('user_id', '')
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner # Pass event_owner
             })
-            
-            # 返回任务ID分配消息
-            response = {
-                "type": "task_id_assigned",
-                "task_id": task_id,
-                "timestamp": time.time() * 1000
-            }
-            
-            # 同时发送初始设置参数
+            response = {"type": "task_id_assigned", "task_id": task_id, "timestamp": time.time() * 1000}
             init_settings = {
                 "type": "init_settings",
-                "settings": {
-                    "range": 80,  # 初始雷达范围
-                    "scanAngle": 30  # 初始扫描角度
-                },
+                "settings": {"range": 80, "scanAngle": 30},
                 "timestamp": time.time() * 1000
             }
-            
-            # 发送两条消息
             return [response, init_settings]
         
-        # 处理设置更新消息
         elif message_type == 'settings_update':
             print("消息类型: settings_update")
-            
-            # 记录操作
             record_operation_to_db({
                 'task_id': current_session.get('task_id'),
                 'operationType': 'settings_update',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
+                'receive_timestamp': message.get('receive_timestamp'),
                 'isActive': True,
-                'parameters': message,
-                'user_id': message.get('user_id', '')
+                'parameters': message, # Entire message as parameters for now
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner # Pass event_owner
             })
-            
-            # 检查更新后是否满足条件
             if should_include_targets(message):
-                # 如果设置正确，发送成功消息和天线调整指令
-                validation_response = {
-                    "type": "settings_validation",
-                    "status": "success",
-                    "message": "雷达参数设置正确，请继续进行天线高度调整"
-                }
-                
-                # 生成天线高度调整指令
+                validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
                 antenna_command = generate_antenna_adjustment()
-                
-                # 返回两条消息
                 return [validation_response, antenna_command]
             else:
-                # 如果设置不正确，返回验证失败消息
-                validation_response = {
-                    "type": "settings_validation",
-                    "status": "error",
-                    "message": "雷达参数设置不正确，请调整参数"
-                }
+                validation_response = {"type": "settings_validation", "status": "error", "message": "雷达参数设置不正确，请调整参数"}
                 return [validation_response]
         
-        # 处理天线高度调整确认
         elif message_type == 'antenna_adjusted':
             print("消息类型: antenna_adjusted")
-            
-            # 记录操作
             record_operation_to_db({
                 'task_id': current_session.get('task_id'),
                 'operationType': 'antenna_adjusted',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
+                'receive_timestamp': message.get('receive_timestamp'),
                 'isActive': True,
                 'parameters': {'elevation': message.get('elevation')},
-                'user_id': message.get('user_id', '')
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner # Pass event_owner
             })
-            
-            # 处理天线高度调整
             validation_response, is_valid = handle_antenna_adjustment(message)
-            
             if is_valid:
-                # 如果设置正确，初始化并返回目标数据
-                validation_response = {
-                    "type": "settings_validation",
-                    "status": "success",
-                    "message": "雷达参数设置正确，请进行目标识别与锁定"
-                }
-                return validation_response, True
+                # If settings are correct, initialize and return target data
+                # This response might be redundant if settings_validation is already sent by handle_antenna_adjustment
+                # For now, we follow the logic that a successful antenna adjustment leads to target identification phase
+                # The actual data sending is handled by the main loop based on 'is_valid'
+                # We might want to send a specific message here indicating success, or rely on the main loop.
+                # For now, let's assume `is_valid` being True is enough to trigger data sending in the main loop.
+                return validation_response, True # Signal to send data with targets
             else:
-                # 如果设置不正确，仅返回验证结果
-                return [validation_response]
-        
-        # 新增SwitchSA处理
-        elif message_type == 'SwitchSA':
-            print('收到SwitchSA事件，生成SA威胁数组')
-            threats = generate_sa_threats(n=random.randint(3, 6))
-            response = {
-                'type': 'SAThreats',
-                'saThreats': threats
-            }
-            if websocket:
-                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
-            return [response]
-        
-        # 新增ResetSA处理
-        elif message_type == 'ResetSA':
-            print('收到ResetSA事件，重新生成SA威胁数组')
-            threats = generate_sa_threats(n=random.randint(3, 6))
-            response = {
-                'type': 'SAThreats',
-                'saThreats': threats
-            }
-            if websocket:
-                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
-            return [response]
-        
-        # 处理目标选择消息
+                return [validation_response] # Only send validation error
+
         elif message_type == 'target_selected':
             print("消息类型: target_selected")
             target_id = message.get('target_id')
-            iff_mode = message.get('iff_mode', False)  # 获取IFF模式状态
-            
-            # 检查目标是否为敌机
-            is_enemy = False
-            for target in unknown_targets:
-                if target['id'] == target_id and target['type'] == 'army':
-                    is_enemy = True
-                    break
-            
-            # 记录操作
+            iff_mode = message.get('iff_mode', False)
+            is_enemy = any(target['id'] == target_id and target['type'] == 'army' for target in unknown_targets)
             record_operation_to_db({
                 'task_id': current_session.get('task_id'),
                 'operationType': 'target_selected',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
-                'isActive': not iff_mode,  # 如果IFF开启，则isActive为False
+                'receive_timestamp': message.get('receive_timestamp'),
+                'isActive': not iff_mode,
                 'parameters': {
                     'target_id': target_id,
                     'action': message.get('action', 'select'),
                     'iff_mode': iff_mode,
                     'is_enemy': is_enemy
                 },
-                'user_id': message.get('user_id', '')
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner # Pass event_owner
             })
-            
-            # 不需要返回消息
+            return []
+
+        elif message_type == 'threat_clicked':
+            print("消息类型: threat_clicked")
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': 'threat_clicked',
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True,
+                'receive_timestamp': message.get('receive_timestamp'),
+                'parameters': {
+                    'threat_id': message.get('threat_id'),
+                    'label': message.get('label'),
+                    'priority': message.get('priority'),
+                    'extra': message.get('extra', {})
+                },
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner # Pass event_owner
+            })
             return []
         
-        # 处理单个操作记录
+        # For record_operation and record_bulk_operations, event_owner should be part of each 'operation' item
         elif message_type == 'record_operation':
             print("消息类型: record_operation")
             operation = message.get('operation', {})
-            
-            # 记录到数据库
-            # record_operation_to_db(operation)
-            
-            # 不需要回复
+            # Ensure event_owner from the outer message is also considered if not in operation itself
+            if 'event_owner' not in operation:
+                operation['event_owner'] = client_event_owner
+            record_operation_to_db(operation)
             return []
         
-        # 处理批量操作记录
         elif message_type == 'record_bulk_operations':
             print("消息类型: record_bulk_operations")
             operations = message.get('operations', [])
-            
-            # 批量记录到数据库
             for operation in operations:
+                if 'event_owner' not in operation:
+                    operation['event_owner'] = client_event_owner
                 record_operation_to_db(operation)
-            
-            # 不需要回复
             return []
+
+        # ... (other message types like SwitchSA, ResetSA, reset_targets)
+        # These might not have a direct client-side event_owner in the same way, 
+        # or they are server-initiated in some contexts.
+        # For SA related, if there's an owner, it should be in the message.
+        elif message_type == 'SwitchSA':
+            print('收到SwitchSA事件，生成SA威胁数组')
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': message_type,
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True, 
+                'parameters': {}, 
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner
+            })
+            threats = generate_sa_threats(n=random.randint(3, 6))
+            response = {'type': 'SAThreats', 'saThreats': threats}
+            if websocket:
+                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+            return [response]
         
-        # 处理重置目标的消息
+        elif message_type == 'ResetSA':
+            print('收到ResetSA事件，重新生成SA威胁数组')
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': message_type,
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True, 
+                'parameters': {}, 
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner
+            })
+            threats = generate_sa_threats(n=random.randint(3, 6))
+            response = {'type': 'SAThreats', 'saThreats': threats}
+            if websocket:
+                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+            return [response]
+
         elif message_type == 'reset_targets':
             print("消息类型: reset_targets")
-            print("重置所有目标数据")
-            
-            # 重新初始化目标数据
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': message_type,
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True, 
+                'parameters': {}, 
+                'user_id': message.get('user_id', ''),
+                'event_owner': client_event_owner 
+            })
             initialize_targets()
-            
-            # 返回标志，表明应该立即返回不包含目标的数据
-            return True, False
-        
-        # 处理前端点击最具威胁项的消息
-        elif message_type == 'threat_clicked':
-            print("消息类型: threat_clicked")
-            # 记录点击日志
-            try:
-                record_operation_to_db({
-                    'task_id': current_session.get('task_id'),
-                    'operationType': 'threat_clicked',
-                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                    'isActive': True,
-                    'receive_timestamp': message.get('receive_timestamp'),  # 从客户端消息中获取
-                    'parameters': {
-                        'threat_id': message.get('threat_id'),
-                        'label': message.get('label'),
-                        'priority': message.get('priority'),
-                        'extra': message.get('extra', {})
-                    },
-                    'user_id': message.get('user_id', '')
-                })
-                print("已记录threat_clicked日志")
-            except Exception as e:
-                print(f"记录threat_clicked日志失败: {e}")
-            return []
-        
+            return True, False # Signal to send data, but no targets initially
+
     except json.JSONDecodeError as e:
         print(f"解析JSON时出错: {e}")
     except Exception as e:
         print(f"处理客户端消息时出错: {e}")
     
     print("===== 客户端消息处理失败 =====\n")
-    return False, False
+    return False, False # Default return for unhandled or error cases
 
 # 单独方法发送消息到客户端
 async def send_message(websocket, message):
@@ -781,12 +740,14 @@ async def main():
                         is_active INTEGER NOT NULL,
                         parameters TEXT,
                         user_id TEXT,
+                        event_owner TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
                 conn.commit()
                 print("user_operations 表创建成功")
             else:
+                print("user_operations 表已存在，检查列...")
                 # 检查 receive_timestamp 列是否存在
                 cursor.execute("PRAGMA table_info(user_operations)")
                 columns = [column[1] for column in cursor.fetchall()]
@@ -799,7 +760,19 @@ async def main():
                     conn.commit()
                     print("receive_timestamp 列添加成功")
                 else:
-                    print("user_operations 表已存在，且包含 receive_timestamp 列")
+                    print("receive_timestamp 列已存在")
+                
+                # 检查 event_owner 列是否存在
+                if 'event_owner' not in columns:
+                    print("正在添加 event_owner 列...")
+                    cursor.execute("""
+                        ALTER TABLE user_operations
+                        ADD COLUMN event_owner TEXT
+                    """)
+                    conn.commit()
+                    print("event_owner 列添加成功")
+                else:
+                    print("event_owner 列已存在")
                 
         print("数据库初始化成功")
     except Exception as e:

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 
 interface Position {
   x: number;
@@ -13,13 +13,12 @@ interface Boundaries {
 }
 
 interface UseKeyboardControlProps {
-  initialPosition: { x: number; y: number };
   moveStep: number;
   boundaries: {
-    minX: number;
-    maxX: number;
     minY: number;
     maxY: number;
+    minX?: number;
+    maxX?: number;
   };
   controls?: {
     up?: string;
@@ -27,56 +26,55 @@ interface UseKeyboardControlProps {
     left?: string;
     right?: string;
   };
+  onKeyAction: (action: 'up' | 'down' | 'left' | 'right') => void;
 }
 
 export const useKeyboardControl = ({ 
-  initialPosition, 
   moveStep, 
   boundaries, 
-  controls 
+  controls, 
+  onKeyAction 
 }: UseKeyboardControlProps) => {
-  const [position, setPosition] = useState<Position>(initialPosition);
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 检查目标元素是否是输入元素
       const target = e.target as HTMLElement;
       const isInputElement = 
         target.tagName === 'INPUT' || 
         target.tagName === 'TEXTAREA' || 
         target.isContentEditable;
       
-      // 如果不是输入元素，则阻止默认行为
-      if (!isInputElement) {
+      if (isInputElement) {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      let actionHandled = false;
+        
+      switch (key) {
+        case controls?.up?.toLowerCase() || 'arrowup':
+          onKeyAction('up');
+          actionHandled = true;
+          break;
+        case controls?.down?.toLowerCase() || 'arrowdown':
+          onKeyAction('down');
+          actionHandled = true;
+          break;
+        case controls?.left?.toLowerCase() || 'arrowleft':
+          onKeyAction('left');
+          actionHandled = true;
+          break;
+        case controls?.right?.toLowerCase() || 'arrowright':
+          onKeyAction('right');
+          actionHandled = true;
+          break;
+      }
+
+      if (actionHandled) {
         e.preventDefault();
       }
-      
-      setPosition(prev => {
-        const newPos = { ...prev };
-        const key = e.key.toLowerCase();
-        
-        switch (key) {
-          case controls?.up || 'arrowup':
-            newPos.y = Math.max(boundaries.minY, prev.y - moveStep);
-            break;
-          case controls?.down || 'arrowdown':
-            newPos.y = Math.min(boundaries.maxY, prev.y + moveStep);
-            break;
-          case controls?.left || 'arrowleft':
-            newPos.x = Math.max(boundaries.minX, prev.x - moveStep);
-            break;
-          case controls?.right || 'arrowright':
-            newPos.x = Math.min(boundaries.maxX, prev.x + moveStep);
-            break;
-        }
-        
-        return newPos;
-      });
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [moveStep, boundaries, controls]);
-
-  return position;
+  }, [controls, onKeyAction]);
 }; 

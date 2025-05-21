@@ -1,5 +1,5 @@
 import React from 'react';
-import { Group, Rect, Line, Text } from 'react-konva';
+import { Group, Rect, Text } from 'react-konva';
 
 interface SecondaryNavalIconProps {
   x: number;

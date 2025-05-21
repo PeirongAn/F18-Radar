@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Group, Line, Text } from 'react-konva';
+import radarStore from '../stores/RadarStore'; // <--- 导入 RadarStore
 
 // 定义未知目标数据接口
 export interface UnknownTargetData {
@@ -39,6 +40,18 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     x: position.x + offset.x,
     y: position.y + offset.y
   };
+  
+  // 当 displayPosition 更新时，将其报告给 RadarStore
+  useEffect(() => {
+    radarStore.setTargetDisplayPosition(id, displayPosition);
+    // console.log(`[UnknownTarget ${id}] Reported displayPosition:`, displayPosition);
+
+    // 组件卸载时，从 Store 中移除该目标的位置信息
+    return () => {
+      radarStore.removeTargetDisplayPosition(id);
+      // console.log(`[UnknownTarget ${id}] Removed displayPosition from store.`);
+    };
+  }, [id, displayPosition.x, displayPosition.y]); // 依赖项包含 displayPosition 的变化
   
   // 判断目标是否在显示区域内
   const isInDisplayArea = () => {
@@ -152,8 +165,8 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     const vectorLength = Math.sqrt(directionX * directionX + directionY * directionY);
     
     // 归一化方向向量
-    const normalizedDirX = directionX / vectorLength;
-    const normalizedDirY = directionY / vectorLength;
+    const normalizedDirX = vectorLength === 0 ? 0 : directionX / vectorLength; // Handle zero vectorLength
+    const normalizedDirY = vectorLength === 0 ? 0 : directionY / vectorLength; // Handle zero vectorLength
     
     // 计算拖尾终点，沿着三角形中轴线的延长线
     const tailEndX = rotatedTipX + normalizedDirX * tailLength;
@@ -175,7 +188,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     
     // 记录开始时间
     let startTime = Date.now();
-    console.log(`目标 ${id} 开始移动: 方向=${directionDegrees.toFixed(1)}°, 速度=${speed}`);
+    // console.log(`[UnknownTarget ${id}] Animation started: dir=${directionDegrees.toFixed(1)}°, speed=${speed}`);
     
     // 移动动画函数
     const moveTarget = () => {
@@ -203,9 +216,9 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
       }));
       
       // 每10帧输出一次位置信息
-      if (Math.random() < 0.1) {
-        console.log(`目标 ${id} 移动: 位置=(${displayPosition.x.toFixed(1)},${displayPosition.y.toFixed(1)}), 移动=(${dx.toFixed(1)},${dy.toFixed(1)})`);
-      }
+      // if (Math.random() < 0.1) {
+      //   console.log(`目标 ${id} 移动: 位置=(${displayPosition.x.toFixed(1)},${displayPosition.y.toFixed(1)}), 移动=(${dx.toFixed(1)},${dy.toFixed(1)})`);
+      // }
       
       // 继续下一帧动画
       animationFrameId.current = requestAnimationFrame(moveTarget);
@@ -219,6 +232,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
       if (animationFrameId.current) {
         cancelAnimationFrame(animationFrameId.current);
         animationFrameId.current = null;
+        // console.log(`[UnknownTarget ${id}] Animation cancelled.`);
       }
     };
   }, [id, direction, speed]); // 当这些值变化时重启动画
@@ -226,8 +240,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
   // 当原始位置变化时，重置偏移量
   useEffect(() => {
     // 注意：只有当position确实发生变化时才重置
-    console.log(`目标 ${id} 位置重置检查: ${JSON.stringify(position)}`);
-    // 重置累积的偏移量
+    // console.log(`[UnknownTarget ${id}] Position prop changed: ${JSON.stringify(position)}. Resetting offset.`);
     setOffset({ x: 0, y: 0 });
   }, [position.x, position.y, id]); // 只在原始位置变化时触发
   
@@ -249,7 +262,17 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
         stroke={color}
         strokeWidth={2}
         fill={selected ? color : undefined}
+        listening={false} // Typically targets are not interactive themselves for clicks
       />
+      {/* Optional: Display target ID or other info for debugging */}
+      {/* 
+      <Text 
+        text={`ID: ${id}`}
+        fontSize={10}
+        fill="white"
+        y={-20} // Adjust position relative to target center
+      />
+      */}
     </Group>
   );
 };

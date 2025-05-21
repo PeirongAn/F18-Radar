@@ -10,6 +10,9 @@ import MissileUpIcon from '../icons/MissileUpIcon';
 import MissileDownIcon from '../icons/MissileDownIcon';
 import useRadarData from '../hooks/useRadarData';
 import { MessageType } from './CommunicationLog';
+import { useAIAgent } from '../hooks/useAIAgent';
+// import agentStore from '../stores/AgentStore';
+import { observer } from 'mobx-react-lite';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -89,7 +92,7 @@ const AudioManager = {
   }
 };
 
-const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900, onAddMessage, userId: originalUserId}) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, userId: originalUserId}) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
 
@@ -459,6 +462,21 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900, onAddMessage
     dy: (Math.random() - 0.5) * 20  // -10~+10
   }));
 
+  const [isAIAgentActive, setIsAIAgentActive] = useState(true);
+
+  // 智能体自动处理临机事件
+  useAIAgent({
+    isActive: isAIAgentActive,
+    emergency: radarData?.emergency,
+    onHandleEmergency: (threat) => {
+      // 自动处理：优先点击最具威胁项（高优先级）
+      if (threatList.length > 0) {
+        handleThreatIconClick(threatList[0]);
+      }
+    },
+    getBestThreat: () => threatList[0]
+  });
+
   return (
     <div className="flex flex-col items-center justify-center">
       <div className="flex flex-col items-center">
@@ -655,9 +673,21 @@ const SAPage: React.FC<SAPageProps> = ({ width = 900, height = 900, onAddMessage
           </div>
         ))}
       </div>
+
+      {/* AI/人工接管切换按钮 */}
+      <div className="mb-2">
+        <button
+          className={`px-4 py-1 rounded font-mono mr-2 ${isAIAgentActive ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}
+          onClick={() => setIsAIAgentActive(false)}
+          disabled={!isAIAgentActive}
+        >
+          人工接管
+        </button>
+        <span className="text-xs text-gray-400">当前模式：{isAIAgentActive ? '智能体自动' : '人工'}</span>
+      </div>
     </div>
   );
-};
+});
 
 // 自定义弧线组件
 interface ArcProps {

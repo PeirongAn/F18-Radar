@@ -1,0 +1,23 @@
+[
+  {
+    "level": "L0",
+    "desc": "低级智能体，延时最长，自动处理最慢",
+    "sa_emergency_delay_ms": 2000,
+    "threat_select_delay_ms": 1500,
+    "tdc_move_delay_ms": 1000
+  },
+  {
+    "level": "L1",
+    "desc": "中级智能体，延时适中",
+    "sa_emergency_delay_ms": 1200,
+    "threat_select_delay_ms": 800,
+    "tdc_move_delay_ms": 500
+  },
+  {
+    "level": "L2",
+    "desc": "高级智能体，延时最短，自动处理最快",
+    "sa_emergency_delay_ms": 600,
+    "threat_select_delay_ms": 400,
+    "tdc_move_delay_ms": 200
+  }
+]

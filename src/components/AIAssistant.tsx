@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { observer } from 'mobx-react-lite'; // Import observer
+import agentStore from '../stores/AgentStore'; // Import agentStore
 
 interface AIAssistantProps {
   selectedTarget: string | null;
@@ -11,78 +13,69 @@ interface LogEntry {
   type: 'info' | 'warning' | 'success' | 'error';
 }
 
-const AIAssistant: React.FC<AIAssistantProps> = ({ selectedTarget }) => {
-  const [isActive, setIsActive] = useState(false);
+const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) => {
+  // const [isActive, setIsActive] = useState(false); // Removed: Use agentStore.isAIActive
   const [logs, setLogs] = useState<LogEntry[]>([
     {
-      id: 1,
+      id: Date.now(), // Ensure unique initial ID
       message: '智能辅助系统已初始化',
       timestamp: new Date(),
       type: 'info'
     }
   ]);
 
-  // 当选择目标变化时，添加日志
+  const logIdCounter = useRef(Date.now());
+
   useEffect(() => {
     if (selectedTarget) {
       addLog(`已检测到目标 ${selectedTarget}，开始分析`, 'info');
-      
-      // 模拟分析过程
       setTimeout(() => {
         addLog(`目标 ${selectedTarget} 分析完成：敌方战斗机，距离35海里，高度23,000英尺`, 'success');
       }, 1500);
     }
   }, [selectedTarget]);
 
-  // 当激活状态变化时，添加日志
+  // Effect reacts to global AI active state change
   useEffect(() => {
-    if (isActive) {
+    if (agentStore.isAIActive) {
       addLog('智能辅助系统已激活，开始自动分析雷达数据', 'success');
     } else {
       addLog('智能辅助系统已停用，切换到手动控制模式', 'warning');
-      setTimeout(() => {
-        addLog('建议将扫描宽度设置为30度，扫描高度设置为80海里，以获得最佳探测效果', 'warning');
-      }, 10);
+      // setTimeout(() => { // This specific suggestion might be better handled elsewhere or removed
+      //   addLog('建议将扫描宽度设置为30度，扫描高度设置为80海里，以获得最佳探测效果', 'warning');
+      // }, 10);
     }
-  }, [isActive]);
+  }, [agentStore.isAIActive]); // Depend on global state
 
   const addLog = (message: string, type: 'info' | 'warning' | 'success' | 'error') => {
     const newLog: LogEntry = {
-      id: Date.now(),
+      id: ++logIdCounter.current,
       message,
       timestamp: new Date(),
       type
     };
-    
     setLogs(prev => [...prev, newLog]);
   };
 
-  const handleTakeControl = () => {
-    if (isActive) {
-      // 停用智能辅助
-      setIsActive(false);
-    } else {
-      // 激活智能辅助
-      setIsActive(true);
-      
-      // 模拟自动操作
-      setTimeout(() => {
-        addLog('开始扫描空域...', 'info');
-      }, 1000);
-      
-      setTimeout(() => {
-        addLog('检测到3个潜在目标', 'info');
-      }, 3000);
-      
-      setTimeout(() => {
-        addLog('建议切换到TWS模式以同时跟踪多个目标', 'warning');
-      }, 5000);
-      
-      
+  const handleToggleAI = () => {
+    const currentAIState = agentStore.isAIActive;
+    agentStore.setAIActive(!currentAIState);
+
+    // Logs are now handled by the useEffect listening to agentStore.isAIActive
+    // Additional immediate logs if needed:
+    if (!currentAIState) { // If AI was off and is now being turned ON
+      // setTimeout(() => {
+      //   addLog('开始扫描空域...', 'info');
+      // }, 1000);
+      // setTimeout(() => {
+      //   addLog('检测到3个潜在目标', 'info');
+      // }, 3000);
+      // setTimeout(() => {
+      //   addLog('建议切换到TWS模式以同时跟踪多个目标', 'warning');
+      // }, 5000);
     }
   };
 
-  // 根据日志类型返回对应的颜色类
   const getLogTypeClass = (type: string) => {
     switch (type) {
       case 'info': return 'text-blue-300';
@@ -95,13 +88,12 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ selectedTarget }) => {
 
   return (
     <div className="flex flex-col h-[600px] bg-gray-900 rounded-lg overflow-hidden">
-      {/* 状态区域 */}
       <div className="bg-gray-800 p-4 border-b border-gray-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${isActive ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <div className={`w-3 h-3 rounded-full ${agentStore.isAIActive ? 'bg-green-500' : 'bg-red-500'}`}></div>
             <span className="text-white font-mono text-lg">
-              智能辅助系统: {isActive ? 'ACTIVE' : 'STANDBY'}
+              智能辅助系统: {agentStore.isAIActive ? 'ACTIVE' : 'STANDBY (人工接管)'}
             </span>
           </div>
           <div className="text-gray-400 font-mono">
@@ -110,7 +102,6 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ selectedTarget }) => {
         </div>
       </div>
       
-      {/* 日志区域 */}
       <div className="flex-1 overflow-y-auto p-4 font-mono bg-black bg-opacity-50">
         {logs.map(log => (
           <div key={log.id} className="mb-2">
@@ -120,28 +111,27 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ selectedTarget }) => {
         ))}
       </div>
       
-      {/* 控制区域 */}
       <div className="p-4 bg-gray-800 border-t border-gray-700">
         <div className="flex justify-between items-center">
           <div className="text-gray-400">
-            {isActive 
-              ? '系统当前处于自动模式，点击按钮切换到手动控制' 
-              : '系统当前处于手动模式，点击按钮激活智能辅助'}
+            {agentStore.isAIActive 
+              ? '系统当前由AI辅助操作，点击按钮切换到人工接管' 
+              : '系统当前为人工操作模式，点击按钮激活AI辅助'}
           </div>
           <button
-            onClick={handleTakeControl}
+            onClick={handleToggleAI} // Use the new handler
             className={`px-6 py-3 rounded-lg font-bold transition-colors ${
-              isActive 
-                ? 'bg-red-600 hover:bg-red-700 text-white' 
-                : 'bg-green-600 hover:bg-green-700 text-white'
+              agentStore.isAIActive 
+                ? 'bg-red-600 hover:bg-red-700 text-white' // Button to deactivate AI (Manual Override)
+                : 'bg-green-600 hover:bg-green-700 text-white' // Button to activate AI
             }`}
           >
-            {isActive ? '停用智能辅助' : '激活智能辅助'}
+            {agentStore.isAIActive ? '人工接管 (停用AI)' : '激活AI辅助'}
           </button>
         </div>
       </div>
     </div>
   );
-};
+});
 
 export default AIAssistant; 

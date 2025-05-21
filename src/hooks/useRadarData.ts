@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { UnknownTargetData } from '../components/UnknownTarget';
 import radarStore from '../stores/RadarStore';
+import agentStore, { ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
 
 export interface TargetHistory {
   x: number;
@@ -40,6 +41,8 @@ export interface RadarData {
       label: string;
     }>;
   };
+  // 新增: 允许服务端直接发送AI参数建议
+  ai_param_recommendation?: ServerAIParameterRecommendation;
 }
 
 // WebSocket连接状态类型
@@ -126,14 +129,18 @@ class GlobalWebSocketManager {
       // 生成消息的唯一标识
       let messageId = rawData.type;
       if (rawData.type === 'SAThreats' && rawData.saThreats) {
-        messageId += '_' + JSON.stringify(rawData.saThreats);
+        messageId += '_' + JSON.stringify(rawData.saThreats.map((t:any) => t.id).sort());
+      } else if (rawData.type === 'externalTargets' && rawData.externalTargets) {
+        messageId += '_' + JSON.stringify(rawData.externalTargets.map((t:any) => t.id).sort());
       } else if (rawData.targetElevation !== undefined) {
         messageId += '_' + rawData.targetElevation;
+      } else if (rawData.type === 'radar_data' && rawData.timestamp) {
+        messageId += '_' + rawData.timestamp;
       }
       
       // 如果这个消息已经处理过，则跳过
-      if (messageId === this.lastMessageId) {
-        console.log('【全局WS】跳过已处理的消息:', messageId);
+      if (messageId === this.lastMessageId && rawData.type !== 'radar_data') {
+        console.log('【全局WS】跳过已处理或重复的消息:', messageId);
         return;
       }
       
@@ -141,31 +148,42 @@ class GlobalWebSocketManager {
       this.lastMessageId = messageId;
       this.lastMessage = rawData;
       
+      // 处理 emergency 数据
+      let emergencyData: RadarData['emergency'] | undefined = undefined;
+      if (rawData.type === "SAEmergency") {
+        // 如果消息类型本身是 SAEmergency，则从顶层字段构造 emergency 对象
+        emergencyData = {
+            event: rawData.event,
+            missileType: rawData.missileType,
+            saThreats: rawData.saThreats
+            // 确保这里包含了 RadarData['emergency'] 类型定义的所有必需和可选字段
+            // 如果原始的 rawData 中可能没有 missileType 或 saThreats，需要做相应处理，例如：
+            // missileType: rawData.missileType || undefined,
+            // saThreats: rawData.saThreats || undefined,
+        };
+      } else if (rawData.emergency) {
+        // 否则，如果 rawData 中有一个名为 emergency 的字段，则使用它
+        emergencyData = rawData.emergency;
+      }
+
       // 创建一个新的数据对象
       const newData: RadarData = {
-        targets: [],
-        radar_azimuth: rawData.radar_azimuth || 0,
-        own_heading: rawData.own_heading || 0,
-        timestamp: Date.now(),
+        // 对于列表数据，如果新消息中没有，则保留旧值
+        targets: rawData.targets !== undefined ? rawData.targets : (this.state.radarData?.targets || []),
+        externalTargets: rawData.externalTargets !== undefined ? rawData.externalTargets : this.state.radarData?.externalTargets,
+        saThreats: rawData.saThreats !== undefined ? rawData.saThreats : this.state.radarData?.saThreats,
+        
+        // 对于数值数据，如果新消息中没有，则保留旧值或使用默认值
+        radar_azimuth: rawData.radar_azimuth !== undefined ? rawData.radar_azimuth : (this.state.radarData?.radar_azimuth || 0),
+        own_heading: rawData.own_heading !== undefined ? rawData.own_heading : (this.state.radarData?.own_heading || 0),
+        
+        // 时间戳通常随消息更新或取当前时间
+        timestamp: rawData.timestamp || Date.now(),
+        
+        // 使用处理过的 emergencyData
+        emergency: emergencyData,
+        ai_param_recommendation: rawData.ai_param_recommendation // 如果rawData中没有，则为undefined
       };
-      
-      // 处理externalTargets数据
-      if ('externalTargets' in rawData && Array.isArray(rawData.externalTargets)) {
-        newData.externalTargets = [...rawData.externalTargets];
-        console.log('【全局WS】接收到externalTargets数据，数量:', newData.externalTargets.length);
-      }
-      
-      // 处理saThreats数据
-      if ('saThreats' in rawData && Array.isArray(rawData.saThreats)) {
-        newData.saThreats = [...rawData.saThreats];
-        console.log('【全局WS】接收到saThreats数据，数量:', newData.saThreats.length);
-      }
-      
-      // 处理emergency数据
-      if ('emergency' in rawData) {
-        newData.emergency = { ...rawData.emergency };
-        console.log('【全局WS】接收到emergency数据:', newData.emergency);
-      }
       
       // 更新状态
       this.updateState({
@@ -173,7 +191,7 @@ class GlobalWebSocketManager {
         radarData: newData
       });
     } catch (error) {
-      console.error('【全局WS】解析消息时出错:', error);
+      console.error('【全局WS】解析消息时出错:', error, event.data);
     }
   };
   
@@ -263,9 +281,15 @@ class GlobalWebSocketManager {
     }
     
     try {
-      const messageStr = JSON.stringify(message);
+      // Automatically add user_id and event_owner to all messages
+      const messageToSend = {
+        ...message,
+        user_id: radarStore.userId, // Assuming radarStore is accessible here or passed
+        event_owner: agentStore.currentOperationOwner
+      };
+      const messageStr = JSON.stringify(messageToSend);
       this.ws.send(messageStr);
-      console.log('【全局WS】已发送消息:', message);
+      console.log('【全局WS】已发送消息:', messageToSend);
       return true;
     } catch (error) {
       console.error('【全局WS】发送消息时出错:', error);
@@ -304,7 +328,7 @@ export const globalWS = GlobalWebSocketManager.getInstance();
 // 修改后的useRadarData hook使用全局WebSocket管理器
 const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   const [connected, setConnected] = useState<boolean>(false);
-  const [radarData, setRadarData] = useState<RadarData | null>(null);
+  const [radarDataState, setRadarDataState] = useState<RadarData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<number | null>(null);
   const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
@@ -326,15 +350,6 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     parameters?: any;
   }>>([]);
   
-  // 添加 userId 状态
-  const [userId, setUserId] = useState<string | null>(radarStore.userId);
-  
-  // 监听 radarStore.userId 的变化
-  useEffect(() => {
-    console.log('radarStore.userId 变化:', radarStore.userId);
-    setUserId(radarStore.userId);
-  }, [radarStore.userId]);
-  
   // 验证参数是否在推荐范围内
   const validateSettings = useCallback((settings: { range: number, scanAngle: number }) => {
     console.log('验证参数:', initSettings, settings);
@@ -352,7 +367,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   const sendMessage = useCallback((message: any) => {
     const success = globalWS.sendMessage(message);
     if (!success) {
-      console.warn('消息发送失败，WebSocket未连接');
+      console.warn('消息发送失败，WebSocket未连接或发送出错');
     }
   }, []);
   
@@ -438,163 +453,97 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     }
     
     // 如果有本地缓存的目标数据，也一并清除
-    if (radarData && radarData.externalTargets) {
-      setRadarData({
-        ...radarData,
+    if (radarDataState && radarDataState.externalTargets) {
+      setRadarDataState({
+        ...radarDataState,
         externalTargets: []
       });
     }
-  }, [radarData]);
+  }, [radarDataState]);
   
   // 处理接收到的消息
-  const handleMessage = useCallback((message: any) => {
-    console.log('处理接收到的消息:', message);
-    
-    if (message.type === 'task_id_assigned') {
-      setTaskId(message.task_id);
-      
+  const handleHookMessage = useCallback((message: any) => {
+    if (!message || !message.type) return; // Guard against null/undefined messages
+
+    console.log('[useRadarData] Processing message:', message);
+
+    // Handle AI parameter recommendations specifically
+    if (message.type === 'ai_param_recommendation' && message.recommendation) {
+      agentStore.setServerAIRecommendation(message.recommendation);
+    } else if (message.ai_param_recommendation) { // Check if it's a field in another message type
+        agentStore.setServerAIRecommendation(message.ai_param_recommendation);
     }
+
+    // Handle other message types
+    if (message.type === 'task_id_assigned') setTaskId(message.task_id);
     else if (message.type === 'init_settings') {
-      // 接收到初始设置参数
-      console.log('收到初始设置参数:', message.settings);
-      
-      // 更新初始设置参数状态
       setInitSettings(message.settings);
-      
-      // 记录被动操作并保存时间戳
-      const timestamp = Date.now();
-      recordOperation({
-        operationType: 'init_settings_received',
-        timestamp: timestamp,
-        isActive: false,
-        parameters: message.settings
-      });
-      setInitSettingsTimestamp(timestamp);
-  
-    }
-    else if (message.type === 'settings_validation') {
-      if ((window as any).__settingsTimeoutRef) {
-        clearTimeout((window as any).__settingsTimeoutRef.current);
-        (window as any).__settingsTimeoutRef = null;
-      }
-      
-      console.log('收到参数验证结果:', message);
-      
-      // 记录被动操作并保存时间戳
-      const timestamp = Date.now();
-      recordOperation({
-        operationType: 'settings_validation_received',
-        timestamp: timestamp,
-        isActive: false,
-        parameters: { 
-          status: message.status, 
-          message: message.message,
-          settings: message.settings
-        }
-      });
-     
-    }
-    else if (message.type === 'adjust_antenna') {
-      // 检查是否已经处理过相同的目标高度
-      if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) {
-        console.log('已处理过相同的天线调整指令，忽略重复消息');
-        return;
-      }
-
-      console.log('收到调整天线高度指令:', message);
-      const timestamp = Date.now();
-      console.log('setSettingsValidationTimestamp 收到调整天线高度指令:', timestamp);
-
+      const ts = Date.now();
+      recordOperation({ operationType: 'init_settings_received', timestamp: ts, isActive: false, parameters: message.settings });
+      setInitSettingsTimestamp(ts);
+      // If init_settings also contains AI recommendation, it would be caught by the generic check above
+      // or can be explicitly checked here: if (message.settings?.ai_recommendation) agentStore.setServerAIRecommendation(message.settings.ai_recommendation);
+    } else if (message.type === 'settings_validation') {
+      if ((window as any).__settingsTimeoutRef) clearTimeout((window as any).__settingsTimeoutRef.current);
+      const ts = Date.now();
+      recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
+    } else if (message.type === 'adjust_antenna') {
+      if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
+      console.log('[useRadarData] Received adjust_antenna message:', message);
+      const ts = Date.now();
       setAntennaAdjustmentRequired(true);
       setTargetAntennaElevationState(message.targetElevation);
-      
-      // 更新 RadarStore 中的目标天线高度
       radarStore.setTargetAntennaElevation(message.targetElevation);
-      
-      // 记录被动操作
-      recordOperation({
-        operationType: 'antenna_adjustment_required',
-        timestamp,
-        isActive: false,
-        parameters: { targetElevation: message.targetElevation }
-      });
-      setSettingsValidationTimestamp(timestamp);
+      recordOperation({ operationType: 'antenna_adjustment_required', timestamp: ts, isActive: false, parameters: { targetElevation: message.targetElevation }});
+      setSettingsValidationTimestamp(ts);
     }
-    else if (message.type === 'SAThreats') {
-      // 处理SA页面威胁数组
-      setRadarData(prev => ({
-        ...(prev || {
-          targets: [],
-          radar_azimuth: 0,
-          own_heading: 0,
-          timestamp: Date.now(),
-        }),
-        saThreats: Array.isArray(message.saThreats) ? message.saThreats : [],
-      }));
-    }
-    else if (message.type === 'SAEmergency') {
-      setRadarData(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          emergency: {
-            event: message.event,
-            missileType: message.missileType,
-            saThreats: message.saThreats
-          }
-        };
-      });
-    }
-  }, [recordOperation, setTaskId, setAntennaAdjustmentRequired, setTargetAntennaElevationState, targetAntennaElevation, antennaAdjustmentRequired]);
+    // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
+
+  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired]);
   
-  // 使用全局WebSocket管理器并订阅状态变化
-  const lastProcessedMessage = useRef<string>('');  // 添加 ref 来记录最后处理的消息
+  const confirmAntennaAdjustmentHandled = useCallback(() => {
+    setAntennaAdjustmentRequired(false);
+    setTargetAntennaElevationState(null); // Reset the elevation state as the signal is handled
+    console.log('[useRadarData] Antenna adjustment requirement handled and states reset.');
+  }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevationState are stable from useState
+
+  const lastProcessedMessageIdForHook = useRef<string>('');
 
   useEffect(() => {
     // 确保连接到指定URL
     globalWS.connect(wsUrl);
     
     // 自定义消息处理函数
-    const processMessage = (state: WebSocketState) => {
+    const processSubscribedState = (state: WebSocketState) => {
       setConnected(state.connected);
       setError(state.error);
       
       // 处理雷达数据更新
       if (state.radarData) {
-        setRadarData(state.radarData);
-      }
-      
-      // 处理其他类型的消息
-      const lastMessage = globalWS.getLastMessage();
-      if (lastMessage && typeof lastMessage === 'object') {
-        console.log('跳过当前信息', lastMessage)
-        // 生成消息的唯一标识，type+saThreats内容（如有）
-        let messageId = lastMessage.type;
-        if (lastMessage.type === 'SAThreats' && lastMessage.saThreats) {
-          messageId += '_' + JSON.stringify(lastMessage.saThreats);
-        } else if (lastMessage.targetElevation !== undefined) {
-          messageId += '_' + lastMessage.targetElevation;
+        setRadarDataState(state.radarData);
+        
+        // Process the most recent message that formed this radarData state IF it's new for the hook
+        const latestMsgFromGlobal = globalWS.getLastMessage();
+        if (latestMsgFromGlobal) {
+            let currentMsgId = latestMsgFromGlobal.type; // Simple ID for now, could be enhanced
+            if (latestMsgFromGlobal.timestamp) currentMsgId += '_' + latestMsgFromGlobal.timestamp;
+
+            if (currentMsgId !== lastProcessedMessageIdForHook.current) {
+                handleHookMessage(latestMsgFromGlobal);
+                lastProcessedMessageIdForHook.current = currentMsgId;
+            }
         }
-        // 如果这个消息已经处理过，则跳过
-        if (messageId === lastProcessedMessage.current) {
-          console.log('跳过已处理的消息:', messageId);
-          return;
-        }
-        // 更新最后处理的消息ID
-        lastProcessedMessage.current = messageId;
-        // 处理消息
-        handleMessage(lastMessage);
       }
     };
     
     // 订阅状态变化
-    const unsubscribe = globalWS.subscribe(processMessage);
+    const unsubscribe = globalWS.subscribe(processSubscribedState);
     
     // 清理函数 - 取消订阅，但不关闭连接
     return () => {
       unsubscribe();
     };
-  }, [wsUrl, handleMessage]);
+  }, [wsUrl, handleHookMessage]);
   
   const sendResetSA = useCallback(() => {
     sendMessage({ type: 'ResetSA', timestamp: Date.now() });
@@ -602,7 +551,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   
   return { 
     connected, 
-    radarData, 
+    radarData: radarDataState, 
     error, 
     sendMessage, 
     resetTargets,
@@ -617,8 +566,9 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     currentSettings,
     settingsValidationTimestamp,
     validateSettings,
-    userId,
-    sendResetSA
+    userId: radarStore.userId,
+    sendResetSA,
+    confirmAntennaAdjustmentHandled,
   };
 };
 

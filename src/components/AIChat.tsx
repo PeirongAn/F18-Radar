@@ -5,7 +5,7 @@ interface AIChatProps {
 }
 
 interface Message {
-  id: number;
+  id: string;
   text: string;
   sender: 'ai' | 'user';
   timestamp: Date;
@@ -14,7 +14,7 @@ interface Message {
 const AIChat: React.FC<AIChatProps> = ({ selectedTarget }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: 1,
+      id: '1',
       text: '我是您的智能雷达辅助系统。请问有什么可以帮助您的？',
       sender: 'ai',
       timestamp: new Date()
@@ -30,7 +30,7 @@ const AIChat: React.FC<AIChatProps> = ({ selectedTarget }) => {
       setMessages(prev => [
         ...prev,
         {
-          id: Date.now(),
+          id: Date.now().toString(),
           text: targetInfo,
           sender: 'ai',
           timestamp: new Date()
@@ -44,7 +44,7 @@ const AIChat: React.FC<AIChatProps> = ({ selectedTarget }) => {
     
     // 添加用户消息
     const userMessage: Message = {
-      id: Date.now(),
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       text: input,
       sender: 'user',
       timestamp: new Date()
@@ -56,7 +56,7 @@ const AIChat: React.FC<AIChatProps> = ({ selectedTarget }) => {
     // 模拟AI回复
     setTimeout(() => {
       const aiResponse: Message = {
-        id: Date.now() + 1,
+        id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         text: getAIResponse(input),
         sender: 'ai',
         timestamp: new Date()

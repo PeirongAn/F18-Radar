@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Stage, Layer, Group, Line } from 'react-konva';
+import { observer } from 'mobx-react-lite';
 import { renderMainFrame, renderText } from './RadarRenderers';
 import useRadarData from '../hooks/useRadarData';
 import ScanLine from './ScanLine';
@@ -9,7 +10,8 @@ import HorizonHUD from './HorizonHUD';
 import { UnknownTargetManager } from './UnknownTargetManager';
 import { UnknownTargetData } from './UnknownTarget';
 import { globalWS } from '../hooks/useRadarData';
-import radarStore from '../stores/RadarStore';  // 添加 radarStore 导入
+import radarStore from '../stores/RadarStore';
+import agentStore from '../stores/AgentStore';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -30,6 +32,14 @@ export interface ScanModeType {
   elevationLevel?: 'low' | 'medium' | 'high'; // 添加天线高度级别
 }
 
+// Define the parameters for onTargetSelect callback
+interface TargetSelectParams {
+  targetId: string | undefined;
+  lockX?: number;
+  iffMode?: boolean;
+  externalTargetsTimestamp?: number | null;
+}
+
 // 定义组件属性接口
 export interface RadarDisplayProps {
   width: number;
@@ -42,7 +52,7 @@ export interface RadarDisplayProps {
     endY: number;
   };
   tdcPosition: { x: number, y: number };
-  onTargetSelect?: (targetId: string) => void;
+  onTargetSelect?: (params: TargetSelectParams) => void;
   wsUrl?: string; // WebSocket服务器URL
   scanMode: ScanModeType;
   scanControl: ScanControlParams;
@@ -58,7 +68,7 @@ export interface RadarDisplayProps {
   isStarted?: boolean; // 添加系统启动状态属性
 }
 
-const RadarDisplay: React.FC<RadarDisplayProps> = ({ 
+const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
   width, 
   height, 
   radarConfig, 
@@ -90,10 +100,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   const [localExternalTargets, setLocalExternalTargets] = React.useState<UnknownTargetData[] | undefined>(undefined);
   const [updateCounter, setUpdateCounter] = React.useState(0); // 用于强制更新的计数器
   
-  // 添加状态跟踪选中的目标和垂直线
-  const [selectedTargetId, setSelectedTargetId] = React.useState<string | undefined>(undefined);
-  const [verticalLineX, setVerticalLineX] = React.useState<number | undefined>(undefined);
-  
   // 添加IFF模式状态
   const [iffMode, setIffMode] = React.useState(false);
   const [externalTargetsTimestamp, setExternalTargetsTimestamp] = React.useState<number | null>(null);
@@ -110,28 +116,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   
   // 添加useEffect来监控radarData的变化并更新本地状态
   React.useEffect(() => {
-    console.log('【调试】RadarDisplay - radarData变化, 值:', JSON.stringify(radarData));
-    
     if (radarData) {
-      console.log('【调试】RadarDisplay - radarData包含的键:', Object.keys(radarData));
       const hasExternalTargets = 'externalTargets' in radarData && Array.isArray(radarData.externalTargets);
-      console.log('【调试】RadarDisplay - radarData是否包含externalTargets:', hasExternalTargets);
-      
       if (hasExternalTargets && radarData.externalTargets) {
-        console.log('【调试】RadarDisplay - 设置本地externalTargets:', JSON.stringify(radarData.externalTargets));
         setLocalExternalTargets(radarData.externalTargets);
-        // 强制更新计数器增加，确保组件重新渲染
         setUpdateCounter(prev => prev + 1);
-        setExternalTargetsTimestamp(Date.now());  // 更新时间戳
+        setExternalTargetsTimestamp(Date.now());
       }
-      
-      // 更新雷达扫描角度
       setRadarAzimuth(radarData.radar_azimuth);
-      
-      // 更新自机航向
       setOwnHeading(radarData.own_heading);
     }
-  }, [radarData]); // 移除updateCounter以避免循环依赖
+  }, [radarData]);
   
   // 直接检查并处理targets
   React.useEffect(() => {
@@ -139,8 +134,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
       console.log('RadarDisplay - 本地externalTargets已更新:', localExternalTargets);
     }
   }, [localExternalTargets, centerX, centerY]);
-  
-  // 添加一些额外的调试信息
   
   // 从本地状态获取externalTargets并处理坐标
   const processedExternalTargets = React.useMemo(() => {
@@ -164,8 +157,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
   }, [localExternalTargets, centerX, centerY, updateCounter]); // 添加updateCounter作为依赖
   
   // 处理按下Enter键时的TDC和目标选择逻辑
-  const handleKeyDown = React.useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Enter' && processedExternalTargets) {
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Enter' && processedExternalTargets && onTargetSelect) {
       console.log('RadarDisplay - Enter键被按下，TDC位置:', tdcPosition);
       
       // 计算TDC的X偏移量
@@ -193,39 +186,53 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
       
       if (closestTarget) {
         console.log('找到最近的目标:', closestTarget.id, '距离:', minDistance);
-        setSelectedTargetId(closestTarget.id);
-        setVerticalLineX(tdcPosition.x); // 设置垂直线的X坐标为TDC的X坐标
-        
-        // 如果有外部的目标选择回调，调用它
-        if (onTargetSelect) {
-          onTargetSelect(closestTarget.id);
-        }
-
-        // 发送目标选择消息
-        const targetSelectMessage = {
-          type: 'target_selected',
-          timestamp: Date.now(),
-          receive_timestamp: externalTargetsTimestamp,  // 使用收到 external_targets 的时间戳
-          target_id: closestTarget.id,
-          action: 'select',
-          iff_mode: iffMode,
-          user_id: radarStore.userId // 添加用户ID
-        };
-        
-        console.log('发送目标选择消息:', targetSelectMessage);
-        globalWS.sendMessage(targetSelectMessage);
+        agentStore.setOperationOwner('manual');
+        onTargetSelect({
+          targetId: closestTarget.id,
+          lockX: tdcPosition.x,
+          iffMode: iffMode,
+          externalTargetsTimestamp: externalTargetsTimestamp
+        });
       } else {
         console.log('没有找到靠近TDC的目标');
-        // 如果没有找到目标，清除选中状态
-        setSelectedTargetId(undefined);
-        setVerticalLineX(undefined);
+        onTargetSelect({ targetId: undefined });
+      }
+    }
+    // Space key for auto-lock (existing logic)
+    if (e.key === ' ' && processedExternalTargets && onTargetSelect) { // Space bar
+      console.log('RadarDisplay - Spacebar pressed. TDC position:', tdcPosition);
+      let closestTarget: UnknownTargetData | undefined;
+      let minDistance = 30; // 30px search radius
+
+      processedExternalTargets.forEach(target => {
+        const distance = Math.sqrt(
+          Math.pow(target.position.x - tdcPosition.x, 2) +
+          Math.pow(target.position.y - tdcPosition.y, 2)
+        );
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestTarget = target;
+        }
+      });
+
+      if (closestTarget) {
+        console.log('RadarDisplay - Spacebar: Found closest target:', closestTarget.id, 'at TDC X:', closestTarget.position.x);
+        agentStore.setOperationOwner('manual'); // Manual action
+        onTargetSelect({
+          targetId: closestTarget.id,
+          lockX: closestTarget.position.x,
+          iffMode: iffMode,
+          externalTargetsTimestamp: externalTargetsTimestamp
+        });
+      } else {
+        console.log('RadarDisplay - Spacebar: No target found near TDC for auto-lock.');
       }
     }
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, externalTargetsTimestamp]);
   
   // 处理IFF模式切换
   const handleIFFModeToggle = () => {
-    setIffMode(prev => prev = !prev);
+    setIffMode(prev => !prev);
   };
   
   // 自定义渲染函数，添加IFF按钮的点击事件
@@ -402,8 +409,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
             showTargets={showUnknownTargets && !isSilent} // 在静默模式下不显示目标
             color={radarConfig.recColor}
             externalTargets={processedExternalTargets} // 传递处理后的目标数据
-            selectedTargetId={selectedTargetId} // 传递选中的目标ID
-            verticalLineX={verticalLineX} // 传递垂直线位置
+            selectedTargetId={radarStore.lockedTargetId} // Use from store
+            verticalLineX={radarStore.lockScreenX}    // Use from store
             framePositions={framePositions} // 传递显示区域边界
             iffMode={iffMode} // 启用IFF模式
           />
@@ -414,6 +421,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = ({
       </Stage>
     </div>
   );
-};
+});
 
 export default RadarDisplay; 

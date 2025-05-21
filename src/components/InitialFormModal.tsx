@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '../stores/StoreProvider';
+import agentStore from '../stores/AgentStore';
 
 interface InitialFormModalProps {
   onStart: (userId: string, includeAI: boolean) => void;
@@ -23,6 +24,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({ onStart })
     if (userId) {
       radarStore.startSystem(userId, includeAI);
       onStart(userId, includeAI);
+      agentStore.setAIActive(includeAI);
     }
   };
 
