@@ -464,7 +464,7 @@ async def handle_client_message(message_str, websocket=None):
                 'isActive': True,
                 'parameters': {},
                 'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner # Pass event_owner
+                'event_owner': 'AI' if message.get('include_ai', False) else 'manual' # Pass event_owner
             })
             response = {"type": "task_id_assigned", "task_id": task_id, "timestamp": time.time() * 1000}
             init_settings = {
@@ -476,17 +476,18 @@ async def handle_client_message(message_str, websocket=None):
         
         elif message_type == 'settings_update':
             print("消息类型: settings_update")
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': 'settings_update',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),
-                'isActive': True,
-                'parameters': message, # Entire message as parameters for now
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner # Pass event_owner
-            })
+          
             if should_include_targets(message):
+                record_operation_to_db({
+                    'task_id': current_session.get('task_id'),
+                    'operationType': 'settings_update',
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'receive_timestamp': message.get('receive_timestamp'),
+                    'isActive': True,
+                    'parameters': message, # Entire message as parameters for now
+                    'user_id': message.get('user_id', ''),
+                    'event_owner': client_event_owner # Pass event_owner
+                })
                 validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
                 antenna_command = generate_antenna_adjustment()
                 return [validation_response, antenna_command]
@@ -496,18 +497,19 @@ async def handle_client_message(message_str, websocket=None):
         
         elif message_type == 'antenna_adjusted':
             print("消息类型: antenna_adjusted")
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': 'antenna_adjusted',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),
-                'isActive': True,
-                'parameters': {'elevation': message.get('elevation')},
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner # Pass event_owner
-            })
+           
             validation_response, is_valid = handle_antenna_adjustment(message)
             if is_valid:
+                record_operation_to_db({
+                    'task_id': current_session.get('task_id'),
+                    'operationType': 'antenna_adjusted',
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'receive_timestamp': message.get('receive_timestamp'),
+                    'isActive': True,
+                    'parameters': {'elevation': message.get('elevation')},
+                    'user_id': message.get('user_id', ''),
+                    'event_owner': client_event_owner # Pass event_owner
+                })
                 # If settings are correct, initialize and return target data
                 # This response might be redundant if settings_validation is already sent by handle_antenna_adjustment
                 # For now, we follow the logic that a successful antenna adjustment leads to target identification phase
@@ -659,14 +661,15 @@ async def radar_server(websocket):
         await websocket.send(initial_json)
         print(f"【服务器】已发送基础数据（不含目标），长度: {len(initial_json)}")
         
-        # 初始化SA威胁并发送
-        threats = generate_sa_threats(n=random.randint(3, 6))
-        sa_msg = {'type': 'SAThreats', 'saThreats': threats}
-        await send_message(websocket, sa_msg)
-        print("【服务器】已发送初始SA威胁数组")
+        # # 初始化SA威胁并发送  <--- MODIFIED: Commented out
+        # threats = generate_sa_threats(n=random.randint(3, 6))
+        # sa_msg = {'type': 'SAThreats', 'saThreats': threats}
+        # await send_message(websocket, sa_msg)
+        # print("【服务器】已发送初始SA威胁数组")
 
-        # 2~3秒后自动推送一次SAEmergency
-        asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+        # # 2~3秒后自动推送一次SAEmergency <--- MODIFIED: Commented out
+        # # If you re-enable this, ensure 'threats' is defined, e.g., after a 'SwitchSA'
+        # # asyncio.create_task(auto_send_sa_emergency(websocket, threats))
 
         # 接收并处理客户端消息
         while True:

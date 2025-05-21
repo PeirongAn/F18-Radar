@@ -4,8 +4,8 @@ import { makeAutoObservable, runInAction, computed } from "mobx";
 export interface AgentLevelConfig {
   level: string;
   desc: string;
-  sa_emergency_delay_ms: number;
   threat_select_delay_ms: number;
+  tdc_select_delay_ms: number;
   tdc_move_delay_ms?: number; // Added: Optional, for AI TDC movement simulation delay
   // Can be made non-optional if all levels must have it.
   // radar_auto_range?: number;
@@ -61,7 +61,9 @@ class AgentStore {
 
   setAIActive = (isActive: boolean) => {
     this.isAIActive = isActive;
-    console.log(`AI Active state set to: ${this.isAIActive}`);
+    // 自动同步 currentOperationOwner
+    this.currentOperationOwner = isActive ? 'AI' : 'manual';
+    console.log(`AI Active state set to: ${this.isAIActive}, operation owner: ${this.currentOperationOwner}`);
   }
 
   setCurrentAILevel = (level: string) => {
@@ -77,10 +79,6 @@ class AgentStore {
       this.currentAILevel = level;
        console.log(`AI Level tentatively set to: ${this.currentAILevel} (pending config load)`);
     }
-  }
-
-  setOperationOwner = (owner: 'AI' | 'manual') => {
-    this.currentOperationOwner = owner;
   }
 
   // 新增：Action来设置服务端的AI参数推荐
@@ -109,15 +107,17 @@ class AgentStore {
       if (!resp.ok) {
         throw new Error(`Failed to fetch agent_level.json: ${resp.statusText} (status: ${resp.status})`);
       }
-      const data: AgentLevelConfig[] = await resp.json();
+      const data = await resp.json();
       
       runInAction(() => {
-        if (data && Array.isArray(data) && data.length > 0) {
-          this.aiConfigs = data;
-          // 验证 currentAILevel 是否在加载的配置中有效
-          if (!this.aiConfigs.some(c => c.level === this.currentAILevel)) {
-            console.warn(`Previously set AI level "${this.currentAILevel}" is not in the loaded configs. Defaulting to "${this.aiConfigs[0].level}".`);
-            this.currentAILevel = this.aiConfigs[0].level; 
+        if (data && data.levels && Array.isArray(data.levels) && data.levels.length > 0) {
+          this.aiConfigs = data.levels;
+          // 使用配置文件中的current_level
+          if (data.current_level && this.aiConfigs.some(c => c.level === data.current_level)) {
+            this.currentAILevel = data.current_level;
+          } else {
+            console.warn(`Config file's current_level "${data.current_level}" is invalid. Defaulting to "${this.aiConfigs[0].level}".`);
+            this.currentAILevel = this.aiConfigs[0].level;
           }
           console.log("Agent configurations loaded:", JSON.stringify(this.aiConfigs, null, 2));
           console.log("Current AI Level:", this.currentAILevel);
@@ -132,14 +132,12 @@ class AgentStore {
       runInAction(() => {
         // Fallback to a default configuration if loading fails
         this.aiConfigs = [
-          { level: "L0", desc: "Fallback L0", sa_emergency_delay_ms: 2500, threat_select_delay_ms: 2000 },
-          { level: "L1", desc: "Fallback L1 (Default)", sa_emergency_delay_ms: 1500, threat_select_delay_ms: 1000 },
-          { level: "L2", desc: "Fallback L2", sa_emergency_delay_ms: 700, threat_select_delay_ms: 500 }
+          { level: "L0", desc: "Fallback L0", threat_select_delay_ms: 2500, tdc_select_delay_ms: 2000 },
+          { level: "L1", desc: "Fallback L1 (Default)", threat_select_delay_ms: 1500, tdc_select_delay_ms: 1000 },
+          { level: "L2", desc: "Fallback L2", threat_select_delay_ms: 700, tdc_select_delay_ms: 500 }
         ];
-        // Ensure currentAILevel is one of the fallback levels
-        if (!this.aiConfigs.some(c => c.level === this.currentAILevel)) {
-             this.currentAILevel = "L1"; // Default to L1 on fallback
-        }
+        // 在fallback情况下使用L1作为默认值
+        this.currentAILevel = "L1";
         console.warn("Using hardcoded fallback agent configurations due to loading error.");
         console.log("Current AI Level (fallback):", this.currentAILevel);
         console.log("Current AI Config (fallback):", JSON.stringify(this.currentAILevelConfig, null, 2));

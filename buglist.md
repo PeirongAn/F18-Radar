@@ -1,0 +1,5 @@
+- 1. client 端发送的事件中，user_id 不是InitialFormModal.tsx 中的user_id
+- 2. radar_server.py 不用一启动就发送事件SAThreats，而且为什么服务器会被反复连接
+- 3. Radar.tsx 多了一个“天线高度指示器 - 放置在左侧按钮下方”， 需要去掉
+- 4. radar_server.py 只有天线高度符合需求，才需要被记录在数据库中
+- 5. 去掉SAPage.tsx 中的人工接管按钮isAIAgentActive 初始值与是否启用智能体的值一致

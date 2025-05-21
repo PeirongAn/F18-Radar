@@ -23,7 +23,7 @@ export function useAIAgent({
   useEffect(() => {
     if (isActive && emergency && lastHandledRef.current !== emergencyId) {
       // 从 agentStore.currentAILevelConfig 获取延迟，并提供默认值
-      const delay = agentStore.currentAILevelConfig?.sa_emergency_delay_ms ?? 1500; // 默认1500ms
+      const delay = agentStore.currentAILevelConfig?.threat_select_delay_ms ?? 1500; // 默认1500ms
 
       timerRef.current = window.setTimeout(() => {
         if (getBestThreat) {

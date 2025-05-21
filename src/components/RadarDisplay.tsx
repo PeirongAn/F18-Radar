@@ -66,6 +66,7 @@ export interface RadarDisplayProps {
   onModeDisplayChange?: (mode: 'AUTO' | 'HI' | 'MED') => void; // 添加显示模式变更回调
   isSilent?: boolean; // 添加雷达静默模式属性
   isStarted?: boolean; // 添加系统启动状态属性
+  sendMessage: (message: any) => void; // 添加发送消息函数
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -91,7 +92,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   displayMode, // 从props接收显示模式
   onModeDisplayChange, // 显示模式变更回调
   isSilent = false, // 默认不处于静默模式
-  isStarted = false // 默认未启动状态
+  isStarted = false, // 默认未启动状态
+  sendMessage // 传递发送消息函数
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   const { connected, radarData, error } = useRadarData(wsUrl);
@@ -102,7 +104,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 添加IFF模式状态
   const [iffMode, setIffMode] = React.useState(false);
-  const [externalTargetsTimestamp, setExternalTargetsTimestamp] = React.useState<number | null>(null);
   const [radarAzimuth, setRadarAzimuth] = React.useState<number>(0);
   const [ownHeading, setOwnHeading] = React.useState<number>(0);
   
@@ -121,7 +122,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       if (hasExternalTargets && radarData.externalTargets) {
         setLocalExternalTargets(radarData.externalTargets);
         setUpdateCounter(prev => prev + 1);
-        setExternalTargetsTimestamp(Date.now());
       }
       setRadarAzimuth(radarData.radar_azimuth);
       setOwnHeading(radarData.own_heading);
@@ -186,12 +186,11 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       
       if (closestTarget) {
         console.log('找到最近的目标:', closestTarget.id, '距离:', minDistance);
-        agentStore.setOperationOwner('manual');
         onTargetSelect({
           targetId: closestTarget.id,
           lockX: tdcPosition.x,
           iffMode: iffMode,
-          externalTargetsTimestamp: externalTargetsTimestamp
+          externalTargetsTimestamp: radarData?.externalTargetsTimestamp
         });
       } else {
         console.log('没有找到靠近TDC的目标');
@@ -217,18 +216,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
       if (closestTarget) {
         console.log('RadarDisplay - Spacebar: Found closest target:', closestTarget.id, 'at TDC X:', closestTarget.position.x);
-        agentStore.setOperationOwner('manual'); // Manual action
         onTargetSelect({
           targetId: closestTarget.id,
           lockX: closestTarget.position.x,
           iffMode: iffMode,
-          externalTargetsTimestamp: externalTargetsTimestamp
+          externalTargetsTimestamp: radarData?.externalTargetsTimestamp
         });
       } else {
         console.log('RadarDisplay - Spacebar: No target found near TDC for auto-lock.');
       }
     }
-  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, externalTargetsTimestamp]);
+  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp]);
   
   // 处理IFF模式切换
   const handleIFFModeToggle = () => {
@@ -354,7 +352,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
             displayMode, // 传递显示模式
             hiMedToggle, // 传递HI/MED切换状态
             isSilent,    // 传递静默状态
-            isStarted    // 传递系统启动状态
+            isStarted,    // 传递系统启动状态
+            sendMessage, // 传递发送消息函数
           })}
           
           {/* 渲染文本和状态信息，使用自定义渲染函数 */}

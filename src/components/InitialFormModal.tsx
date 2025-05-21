@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '../stores/StoreProvider';
 import agentStore from '../stores/AgentStore';
+import useRadarData from '../hooks/useRadarData';
 
 interface InitialFormModalProps {
   onStart: (userId: string, includeAI: boolean) => void;
@@ -11,6 +12,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({ onStart })
   const userIdRef = useRef<HTMLInputElement>(null);
   const [includeAI, setIncludeAI] = React.useState(false);
   const { radarStore } = useStore();
+  const { initializeSystem } = useRadarData();
 
   useEffect(() => {
     if (userIdRef.current) {
@@ -25,6 +27,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({ onStart })
       radarStore.startSystem(userId, includeAI);
       onStart(userId, includeAI);
       agentStore.setAIActive(includeAI);
+      initializeSystem(userId, includeAI);
     }
   };
 

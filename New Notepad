@@ -73,3 +73,41 @@
 - 日志/埋点统一封装，便于后续扩展和维护。
 
 如需详细代码结构或接口示例，可进一步细化。 
+
+
+
+好的，我已经将梳理和补全后的AI实现方案追加到了你的 `New Notepad` 文件中。
+
+现在，我列出需要你进一步明确的关键问题，以便我们继续细化和实现这些功能：
+
+**亟待明确的问题：**
+
+1.  **AI状态和配置的来源与传递：**
+    *   **问题1.1**：`Radar.tsx` 组件如何获取以下信息？
+        *   `isAIActive: boolean` (AI智能体当前是否激活)
+        *   `currentAILevel: string` (例如 "L0", "L1", "L2")
+        *   `aiConfigs: Array<AgentLevelConfig>` (从 `agent_level.json` 加载的完整配置数组，或者至少是当前等级的配置对象，如 `{ level: "L1", sa_emergency_delay_ms: 1200, threat_select_delay_ms: 800, ... }`)
+        *   **选项A**: 通过 props 从父组件 (`App.tsx`) 逐层传递？
+        *   **选项B**: `Radar.tsx` 直接从一个全局 MobX Store (例如，你之前提到的 `radarStore`，或者一个新建的 `agentStore`) 中获取这些状态？*(如果是Store，这个Store是否已经创建并包含了这些状态？)*
+
+2.  **`event_owner` (事件归属：AI/人工) 的实现机制：**
+    *   **问题2.1**：我们同意在后端 `user_operations` 表中增加 `event_owner` 字段。前端在发送需要记录归属的事件（如 `settings_update`, `target_selected`）时，如何在消息体中加入 `event_owner: 'AI'` 或 `event_owner: 'manual'`？
+        *   **方案设想**：在 `RadarStore.ts` (或其他相关 Store) 中增加一个 observable 属性 `currentOperationOwner: 'AI' | 'manual'`，默认为 `'manual'`。
+            *   当AI准备执行一个会自动触发后端消息的操作时，代码会先调用 `radarStore.setOperationOwner('AI')`。
+            *   操作完成后（例如，`submitSettings` 调用之后，或AI选择目标并触发相应消息发送之后），代码再调用 `radarStore.setOperationOwner('manual')` 将其重置。
+            *   `useRadarData.ts` 中的 `sendMessage` 函数（或其上游调用者如 `submitSettings`）在构建最终发送给 WebSocket 的消息体时，会自动读取 `radarStore.currentOperationOwner` 并将其值加入消息体。
+        *   **你的看法**：这个方案是否可行？或者你有其他关于如何将 `event_owner` 信息注入到出站消息中的想法？
+
+3.  **AI自动选择目标的具体执行细节：**
+    *   **问题3.1**：AI选定一个目标后（例如，从 `radarData.externalTargets` 中选出威胁最大的一个），它如何实际“执行”这个选择动作，以便最终触发向后端发送 `target_selected` 类型的消息（并附带 `event_owner: 'AI'`）？
+        *   **选项A**: `Radar.tsx` 是否应该直接调用传递给它的 `onTargetSelect?: (targetId: string) => void` prop？如果是，那么 `App.tsx` 中实现的 `handleTargetSelect` (如果 `onTargetSelect` 指向它) 需要被修改，或者 `useRadarData` 中处理 `target_selected` 的逻辑需要能感知到 `event_owner`。
+        *   **选项B**: `RadarDisplay.tsx` 组件是否应该暴露一个专门的函数给父组件 `Radar.tsx`，例如 `selectTargetByAI(target: ExternalTargetData)`，这个函数内部会处理UI反馈（如高亮选中目标）并负责以AI身份发送 `target_selected` 消息？
+        *   **选项C**: AI是否应该尝试模拟键盘控制TDC移动到目标上并按下“回车”？(这个方案技术上更复杂，可能不是首选)。
+
+4.  **AI参数调整的触发时机和逻辑：**
+    *   **问题4.1**：AI自动调整雷达参数（范围、扫描角度）的逻辑是怎样的？
+        *   是在AI激活时执行一次，设置到一个预设的“AI推荐值”？
+        *   还是会根据战场态势 (例如 `radarData` 中的目标数量、类型、距离等) 动态决策？(如果动态，决策逻辑是什么？)
+        *   我在方案中提到一个示例条件 `radarStore.someConditionForAIParamAdjust`，这个具体指什么？
+
+请你仔细思考这些问题。你的回答将帮助我们确定最合适的实现路径，并确保AI功能的行为符合你的预期。

@@ -200,12 +200,10 @@ const Radar: React.FC<RadarProps> = (({
       }
 
       if (needsSettingsSubmission) {
-        agentStore.setOperationOwner('AI');
         submitSettings({
           range: targetRange,       // Submit the actual recommended value
           scanAngle: targetScanAngle  // Submit the actual recommended value
         });
-        agentStore.setOperationOwner('manual');
         console.log('[AI Radar] Parameters automatically adjusted by AI based on server recommendation and submitted.');
         
         // Important: Clear the recommendation to prevent re-triggering unless a new one arrives.
@@ -221,10 +219,12 @@ const Radar: React.FC<RadarProps> = (({
     scanMode    // To compare current state
   ]);
 
-  // useEffect for AI to automatically submit initial radar parameters when AI is activated
+  const initSettingsProcessedRef = useRef(false);
+
   useEffect(() => {
     console.log('initSettings', agentStore.isAIActive, isStarted, initSettings);
     if (
+      !initSettingsProcessedRef.current &&  // 添加检查，确保只处理一次
       agentStore.isAIActive &&
       isStarted &&
       initSettings &&
@@ -232,6 +232,7 @@ const Radar: React.FC<RadarProps> = (({
       typeof initSettings.scanAngle === 'number'
     ) {
       console.log('[AI Radar] AI is active and initSettings received. Processing for auto-configuration:', initSettings);
+      initSettingsProcessedRef.current = true;  // 标记为已处理
 
       const targetRange = initSettings.range;
       const targetScanAngle = initSettings.scanAngle;
@@ -257,114 +258,109 @@ const Radar: React.FC<RadarProps> = (({
           newScanModeName = 'narrow'; newScanFraction = 0.25;
         } else if (targetScanAngle !== 60) {
             console.warn(`[AI Radar] initSettings: Unsupported scan angle ${targetScanAngle}. Defaulting to 60 for UI.`);
-            // UI will use targetScanAngle, but name/fraction might be for 'normal'
         }
         setScanMode({
           name: newScanModeName,
-          scanAngle: targetScanAngle, // Use the initSetting angle
+          scanAngle: targetScanAngle,
           scanFraction: newScanFraction,
-          centerOffset: 0 // Reset offset when AI takes over with initSettings
+          centerOffset: 0
         });
         paramsChangedForUI = true;
       }
       
-      // Always try to submit initSettings if AI is active and initSettings are present, 
-      // as backend might expect this handshake regardless of UI change.
-      // The validateSettings in useRadarData will ensure it's within tolerance of its own initSettings copy.
-      needsSettingsSubmission = true; 
+      needsSettingsSubmission = true;
 
       if (needsSettingsSubmission) {
         console.log('[AI Radar] Submitting initSettings to backend.');
-        agentStore.setOperationOwner('AI');
         submitSettings({
-          range: targetRange, // Submit the actual initSetting value
-          scanAngle: targetScanAngle, // Submit the actual initSetting value
+          range: targetRange,
+          scanAngle: targetScanAngle,
         });
-        agentStore.setOperationOwner('manual');
         console.log('[AI Radar] Initial parameters (from initSettings) processed by AI.');
       } else if (paramsChangedForUI) {
         console.log('[AI Radar] initSettings: UI parameters updated, but no submission needed as values might match server expectations already or validation might handle it.');
       }
-
     }
   }, [agentStore.isAIActive, isStarted, initSettings, submitSettings, rangeIndex, scanMode]);
 
-  // Effect for AI to automatically select a target
+  // 当AI被禁用时重置ref
   useEffect(() => {
-    if (agentStore.isAIActive && agentStore.currentAILevelConfig && radarData?.externalTargets && radarData.externalTargets.length > 0 && !radarStore.lockedTargetId && isStarted) {
+    if (!agentStore.isAIActive) {
+      initSettingsProcessedRef.current = false;
+    }
+  }, [agentStore.isAIActive]);
+
+  // Effect for AI to automatically select a target and move TDC
+  useEffect(() => {
+    if (!agentStore.isAIActive || !agentStore.currentAILevelConfig || !isStarted) {
+      return;
+    }
+
+    // 只在没有锁定目标时执行目标选择
+    if (!radarStore.lockedTargetId && radarData?.externalTargets && radarData.externalTargets.length > 0) {
       const config = agentStore.currentAILevelConfig;
-      // const availableTargets = radarData.externalTargets.filter(t => !t.isHostile); // Example: AI avoids hostile targets or specific logic
-      // For now, AI considers all external targets
       const availableTargets = radarData.externalTargets;
       
       if (availableTargets.length > 0) {
-        // Simple AI: select the first available target
-        // More complex AI might use threat assessment, distance, etc.
-        const targetToSelect = availableTargets[0];
+        // 寻找id以enemy开头的目标
+        const enemyTarget = availableTargets.find(target => target.id.startsWith('enemy'));
+        const targetToSelect = enemyTarget || availableTargets[0];
+        const targetDisplayPosition = radarStore.targetDisplayPositions.get(targetToSelect.id);
 
-        // Simulate AI decision delay
-        const decisionTimeoutId = setTimeout(() => {
-          if (!agentStore.isAIActive || radarStore.lockedTargetId) return; // Double check before action
+        // 使用tdc_select_delay_ms作为统一的延迟参数
+        const actionTimeout = setTimeout(() => {
+          if (!agentStore.isAIActive) return;
 
-          console.log(`[AI Engine] AI is preparing to select target: ${targetToSelect.id}`);
-          agentStore.setOperationOwner('AI');
-
-          // AI needs to determine the TDC position for the lock line.
-          // For simplicity, let's assume AI wants to place TDC directly on the target.
-          // We need the target's current display position.
-          const targetDisplayPosition = radarStore.targetDisplayPositions.get(targetToSelect.id);
-
+          // 第一步：移动TDC到目标位置
           if (targetDisplayPosition) {
-            const aiTdcXForLock = targetDisplayPosition.x;
-            console.log(`[AI Engine] AI selected target ${targetToSelect.id}. Calculated TDC X for lock: ${aiTdcXForLock}`);
+            console.log(`[AI Engine] Moving TDC to target position: (${targetDisplayPosition.x}, ${targetDisplayPosition.y})`);
+            setTdcPosition(targetDisplayPosition);
+
+            // 第二步：选择目标并设置锁定线
+            console.log(`[AI Engine] AI is selecting target: ${targetToSelect.id}`);
             if (onTargetSelect) {
-              onTargetSelect({ targetId: targetToSelect.id, lockX: aiTdcXForLock });
+              // 计算锁定线的X坐标（使用目标的x坐标）
+              const lockX = targetDisplayPosition.x;
+              
+              // 调用目标选择回调，传入锁定线位置
+              onTargetSelect({ 
+                targetId: targetToSelect.id, 
+                lockX: lockX,
+                externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
+              });
+
+              // 更新TDC位置到锁定线
+              setTdcPosition(prev => ({
+                ...prev,
+                x: lockX
+              }));
+
+              console.log(`[AI Engine] Target locked at X: ${lockX}`);
             }
-            // 操作完成后，AI应在合适的时机将 operationOwner 恢复为 'manual'
-            // 例如，在一个模拟操作序列的末尾，或者如果这是一个独立操作，则可以在此之后不久恢复
-            // setTimeout(() => agentStore.setOperationOwner('manual'), 100); // Example: Reset after a short delay
           } else {
-            console.warn(`[AI Engine] Could not get display position for target ${targetToSelect.id}. Cannot lock with AI TDC.`);
-            // Fallback or do nothing if position is not available
-             if (onTargetSelect) {
-              // Select without specific lockX, App.tsx might handle default or no line
-              onTargetSelect({ targetId: targetToSelect.id }); 
+            // 如果没有位置信息，仍然可以选择目标
+            console.log(`[AI Engine] Selecting target without position: ${targetToSelect.id}`);
+            if (onTargetSelect) {
+              onTargetSelect({ 
+                targetId: targetToSelect.id,
+                externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
+              });
             }
           }
-          // Consider resetting operation owner after a short delay or sequence completion
-          // setTimeout(() => agentStore.setOperationOwner('manual'), 200); // Example reset
-        }, config.threat_select_delay_ms || 1000);
+        }, config.tdc_select_delay_ms);
 
-        return () => clearTimeout(decisionTimeoutId);
+        return () => clearTimeout(actionTimeout);
       }
     }
-  }, [agentStore.isAIActive, agentStore.currentAILevelConfig, radarData, radarStore.lockedTargetId, onTargetSelect, isStarted]);
-
-  // Effect for AI to move TDC to the selected target (if AI selected it)
-  useEffect(() => {
-    if (agentStore.isAIActive && radarStore.lockedTargetId && agentStore.currentOperationOwner === 'AI' && agentStore.currentAILevelConfig) {
-      const targetId = radarStore.lockedTargetId;
-      const targetPosition = radarStore.targetDisplayPositions.get(targetId);
-      const config = agentStore.currentAILevelConfig;
-
-      if (targetPosition && config?.tdc_move_delay_ms !== undefined) {
-        console.log(`[AI TDC DEBUG Radar.tsx] AI preparing to move TDC to target ${targetId} at (${targetPosition.x}, ${targetPosition.y}) after ${config.tdc_move_delay_ms}ms delay.`);
-        
-        const tdcMoveTimeoutId = setTimeout(() => {
-          if (agentStore.isAIActive && radarStore.lockedTargetId === targetId) { // Check if still relevant
-            console.log(`[AI TDC DEBUG Radar.tsx] AI moving TDC to (${targetPosition.x}, ${targetPosition.y}) for target ${targetId}.`);
-            setTdcPosition(targetPosition);
-            // After TDC movement, AI might perform other actions or reset its state.
-            // Resetting operation owner to manual should happen after the *entire sequence* of AI actions for this target.
-            // For example, if AI selects, moves TDC, then does something else, reset owner after all steps.
-            // If this is the last step for this specific target selection event by AI: 
-            // setTimeout(() => agentStore.setOperationOwner('manual'), 50); // Small delay to ensure message sending etc.
-          }
-        }, config.tdc_move_delay_ms);
-        return () => clearTimeout(tdcMoveTimeoutId);
-      }
-    }
-  }, [radarStore.lockedTargetId, agentStore.isAIActive, agentStore.currentOperationOwner, agentStore.currentAILevelConfig, radarStore.targetDisplayPositions]);
+  }, [
+    agentStore.isAIActive,
+    agentStore.currentAILevelConfig,
+    radarData,
+    radarStore.lockedTargetId,
+    onTargetSelect,
+    isStarted,
+    radarStore.targetDisplayPositions
+  ]);
 
   // useEffect for AI to automatically adjust antenna when required
   useEffect(() => {
@@ -381,12 +377,10 @@ const Radar: React.FC<RadarProps> = (({
       targetAntennaElevation !== null
     ) {
       console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${targetAntennaElevation}. AI is taking action.`);
-      agentStore.setOperationOwner('AI');
       
       // Pass 'ai' as source and the sendMessage callback
       radarStore.setCurrentAntennaElevation(targetAntennaElevation, 'ai', sendMessage);
       
-      agentStore.setOperationOwner('manual');
       if (confirmAntennaAdjustmentHandled) {
         confirmAntennaAdjustmentHandled();
       }
@@ -614,42 +608,13 @@ const Radar: React.FC<RadarProps> = (({
       
       <div className="flex items-center justify-center">
         {/* 左侧按钮和天线指示器 */}
-        <div className="flex flex-col items-center mr-2"> {/* Wrapper for left buttons and marker */}
-          <RadarButtons 
-            position="left" 
-            framePositions={framePositions} 
-            radarConfig={radarConfig} 
-            onButtonClick={handleButtonClick}
-          />
-          {/* 天线高度指示器 - 放置在左侧按钮下方 */}
-          {isStarted && (
-            <div style={{ marginTop: '10px', width: radarConfig.buttonSize, height: '100px', backgroundColor: '#222', padding:'5px' }}>
-              {/* 
-                x: 相对于其父容器的偏移，这里因为AntennaElevationMarker内部使用的是Konva, 
-                   直接在HTML div中渲染可能需要调整或包裹在Stage/Layer中。
-                   为了简单起见，我们假设AntennaElevationMarker可以处理这种混合，
-                   或者提供一个简化的HTML/SVG版本的天线指示器。
-                   对于Konva组件，它需要一个Konva Stage环境。
-                   此处仅为占位，实际渲染Konva组件需要更复杂的集成。
-                   我们先传递必要的props。
-              */}
-              {/* Placeholder for AntennaElevationMarker Konva rendering, needs a Stage/Layer */}
-              {/* For now, let's assume we want to render it conceptually here. */}
-              {/* Actual Konva rendering of AntennaElevationMarker inside a non-Konva parent (div) 
-                  would require setting up a new Konva Stage for it, or making AntennaElevationMarker 
-                  a pure React component if it's simple enough. 
-                  Given its current Konva dependencies, it's best rendered within a Stage.
-                  Let's simplify for now and assume its props are what matter for the logic.
-              */}
-               <AntennaElevationMarker
-                x={radarConfig.buttonSize / 2} // Example X position within its own small container
-                minY={10} // Example minY for the marker display area
-                maxY={90} // Example maxY for the marker display area
-                color={radarConfig.gridColor}
-                sendMessage={sendMessage} // Pass the sendMessage function
-              />
-            </div>
-          )}
+        <div className="flex flex-col items-center mr-2"> {/* Wrapper for left buttons */}
+        <RadarButtons 
+          position="left" 
+          framePositions={framePositions} 
+          radarConfig={radarConfig} 
+          onButtonClick={handleButtonClick}
+        />
         </div>
         
         {/* 雷达显示 */}
@@ -672,6 +637,7 @@ const Radar: React.FC<RadarProps> = (({
           onModeDisplayChange={setDisplayMode} // 传递显示模式变更回调
           isSilent={isSilent} // 传递雷达静默状态
           isStarted={isStarted} // 传递系统启动状态
+          sendMessage={sendMessage} // 传递发送消息函数
         />
         
         {/* 右侧按钮 */}

@@ -11,8 +11,9 @@ import MissileDownIcon from '../icons/MissileDownIcon';
 import useRadarData from '../hooks/useRadarData';
 import { MessageType } from './CommunicationLog';
 import { useAIAgent } from '../hooks/useAIAgent';
-// import agentStore from '../stores/AgentStore';
+import agentStore from '../stores/AgentStore';
 import { observer } from 'mobx-react-lite';
+import radarStore from '../stores/RadarStore';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -80,8 +81,8 @@ const iconColors = [
 const AudioManager = {
   missileUp: new Audio('/sounds/MissileLaunch.wav'),
   missileDown: new Audio('/sounds/MissileLaunch.wav'),
-  threatUpgrade: new Audio('/sounds/Lock.wav'),
-  saInit: new Audio('/sounds/Tracking.wav'),
+  threatUpgrade: new Audio('/sounds/Tracking.wav'),
+  saInit: new Audio('/sounds/ThreatNew.wav'),
   
   play(type: 'missileUp' | 'missileDown' | 'threatUpgrade' | 'saInit') {
     const audio = this[type];
@@ -253,7 +254,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const sideContainerHeight = height * 0.8; // 侧边容器高度与雷达高度的80%相同
 
   // 随机分布icon
-  const { radarData, sendResetSA, sendMessage } = useRadarData();
+  const { connected, radarData, error, sendMessage, sendResetSA } = useRadarData();
  
   
   const [saThreats, setSaThreats] = useState(radarData?.saThreats ?? []);
@@ -262,7 +263,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   
   // 添加refs控制日志写入
   const hasInitLogRef = useRef(false);
-  const lastEmergencyRef = useRef<string | undefined>(undefined);
+  const lastEmergencyRef = useRef<string | null>(null);
   const lastThreatsLengthRef = useRef<number>(0);
   // 记录最近一次SAEmergency的接收时间戳
   const lastEmergencyReceiveTimestampRef = useRef<number | null>(null);
@@ -435,6 +436,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       timestamp: Date.now(),
       receive_timestamp: lastEmergencyReceiveTimestampRef.current,
       user_id: userId,
+      event_owner: agentStore.currentOperationOwner,
     });
   }, [onAddMessage, sendMessage]);
 
@@ -462,20 +464,108 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     dy: (Math.random() - 0.5) * 20  // -10~+10
   }));
 
-  const [isAIAgentActive, setIsAIAgentActive] = useState(true);
-
   // 智能体自动处理临机事件
   useAIAgent({
-    isActive: isAIAgentActive,
+    isActive: agentStore.isAIActive,
     emergency: radarData?.emergency,
     onHandleEmergency: (threat) => {
-      // 自动处理：优先点击最具威胁项（高优先级）
-      if (threatList.length > 0) {
-        handleThreatIconClick(threatList[0]);
+      if (threat) {
+        console.log(`[AI Agent] Handling emergency with provided threat: ${threat.id}, type: ${threat.type}`);
+        handleThreatIconClick(threat);
+        return;
+      }
+
+      // 如果没有提供threat，则作为后备方案重新查找威胁
+      const bestThreat = threatList.find(threat => 
+        (threat.type && threat.type.toLowerCase().includes('missile')) || 
+        (threat.id && threat.id.includes('Primary'))
+      ) || threatList[0];
+
+      if (bestThreat) {
+        console.log(`[AI Agent] Handling emergency with fallback threat: ${bestThreat.id}, type: ${bestThreat.type}`);
+        handleThreatIconClick(bestThreat);
       }
     },
-    getBestThreat: () => threatList[0]
+    getBestThreat: () => {
+      // 如果当前emergency是missile类型，优先处理它
+      if (radarData?.emergency?.event === 'missile') {
+        const missileType = radarData.emergency.missileType;
+        return {
+          id: `missile_${Date.now()}`,
+          type: 'missile',
+          label: missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
+          source: missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
+          distance: 0,
+          heading: 0,
+          priority: 'high'
+        };
+      }
+
+      // 如果是upgrade类型的emergency，检查新的saThreats数据
+      if (radarData?.emergency?.event === 'upgrade' && radarData.emergency.saThreats) {
+        // 在新的saThreats中查找Primary目标
+        const primaryThreat = radarData.emergency.saThreats.find(threat => 
+          threat.id.includes('Primary')
+        );
+        if (primaryThreat) {
+          return {
+            id: primaryThreat.id,
+            type: primaryThreat.type,
+            label: primaryThreat.label,
+            source: primaryThreat.label,
+            distance: 0,
+            heading: 0,
+            priority: 'high'
+          };
+        }
+      }
+
+      // 其次检查threatList中的威胁
+      const missileThreat = threatList.find(threat => 
+        (threat.type && threat.type.toLowerCase().includes('missile')) || 
+        (threat.id && threat.id.includes('Primary'))
+      );
+      
+      // 如果找到符合条件的威胁，返回它，否则返回第一个威胁
+      return missileThreat || threatList[0];
+    }
   });
+
+  const [isStarted, setIsStarted] = useState(false);
+  const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
+  const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
+  const [confirmAntennaAdjustmentHandled, setConfirmAntennaAdjustmentHandled] = useState(false);
+
+  useEffect(() => {
+    console.log('[AI Radar Antenna Effect Check]', {
+      isAIActive: agentStore.isAIActive,
+      isStarted,
+      antennaAdjustmentRequired,
+      targetAntennaElevation,
+    });
+    if (
+      agentStore.isAIActive &&
+      isStarted &&
+      antennaAdjustmentRequired &&
+      targetAntennaElevation !== null
+    ) {
+      console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${targetAntennaElevation}. AI is taking action.`);
+      
+      // Pass 'ai' as source and the sendMessage callback
+      radarStore.setCurrentAntennaElevation(targetAntennaElevation, 'ai', sendMessage);
+      
+    
+      console.log(`[AI Radar] Antenna elevation automatically set to ${targetAntennaElevation} by AI and requirement cleared.`);
+    }
+  }, [
+    agentStore.isAIActive,
+    isStarted,
+    antennaAdjustmentRequired,
+    targetAntennaElevation,
+    sendMessage,
+    confirmAntennaAdjustmentHandled,
+    radarStore
+  ]);
 
   return (
     <div className="flex flex-col items-center justify-center">
@@ -672,18 +762,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             </div>
           </div>
         ))}
-      </div>
-
-      {/* AI/人工接管切换按钮 */}
-      <div className="mb-2">
-        <button
-          className={`px-4 py-1 rounded font-mono mr-2 ${isAIAgentActive ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'}`}
-          onClick={() => setIsAIAgentActive(false)}
-          disabled={!isAIAgentActive}
-        >
-          人工接管
-        </button>
-        <span className="text-xs text-gray-400">当前模式：{isAIAgentActive ? '智能体自动' : '人工'}</span>
       </div>
     </div>
   );

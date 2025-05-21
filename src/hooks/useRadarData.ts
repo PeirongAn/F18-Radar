@@ -24,6 +24,7 @@ export interface RadarTarget {
 export interface RadarData {
   targets: RadarTarget[];
   externalTargets?: UnknownTargetData[]; // 从服务端接收的未知目标数据
+  externalTargetsTimestamp?: number | null; // 添加这个字段，记录接收时间
   saThreats?: Array<{
     id: string;
     type: string;
@@ -171,6 +172,7 @@ class GlobalWebSocketManager {
         // 对于列表数据，如果新消息中没有，则保留旧值
         targets: rawData.targets !== undefined ? rawData.targets : (this.state.radarData?.targets || []),
         externalTargets: rawData.externalTargets !== undefined ? rawData.externalTargets : this.state.radarData?.externalTargets,
+        externalTargetsTimestamp: rawData.externalTargets !== undefined ? Date.now() : this.state.radarData?.externalTargetsTimestamp,
         saThreats: rawData.saThreats !== undefined ? rawData.saThreats : this.state.radarData?.saThreats,
         
         // 对于数值数据，如果新消息中没有，则保留旧值或使用默认值
@@ -384,8 +386,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   }, []);
   
   // 初始化系统，请求任务ID和初始设置
-  const initializeSystem = useCallback(() => {
-    console.log('[雷达系统] 正在初始化雷达系统...');
+  const initializeSystem = useCallback((userId: string, includeAI: boolean) => {
+    console.log('[雷达系统] 正在初始化雷达系统...', { userId, includeAI });
     const timestamp = Date.now();
     
     // 先检查WebSocket连接状态
@@ -400,7 +402,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       type: 'task_start',
       timestamp: timestamp,
       receive_timestamp: timestamp,
-      user_id: radarStore.userId // 添加用户ID
+      user_id: userId,
+      include_ai: includeAI,
     };
     
     console.log('[雷达系统] 发送初始化请求...');
@@ -412,7 +415,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     } else {
       console.log('[雷达系统] 初始化请求已发送');
     }
-  }, [recordOperation]);
+  }, []);
   
   // 发送参数设置给服务器
   const submitSettings = useCallback((settings: { range: number, scanAngle: number }) => {

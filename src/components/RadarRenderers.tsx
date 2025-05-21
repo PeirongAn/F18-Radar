@@ -26,11 +26,13 @@ interface RenderProps {
   hiMedToggle?: 'HI' | 'MED'; // HI/MED切换状态
   isSilent?: boolean; // 雷达静默模式状态
   isStarted?: boolean; // 雷达启动状态
+  sendMessage: (message: any) => void; // 发送消息函数
 }
   // 抽取刻度线相关的常量
 const scaleLineLength = 20;  // 刻度线长度
 
 export const renderMainFrame = ({ 
+  sendMessage,
   radarConfig, 
   framePositions,
   tdcPosition,
@@ -186,10 +188,10 @@ export const renderMainFrame = ({
       {/* 天线俯仰角刻度标记 */}
       <AntennaElevationMarker
         x={startX + 20}  // 向左偏移，使其位于左侧刻度线外
-        y={minY + (maxY - minY) / 2} // 初始位置在中间
         color={mainColor}
         minY={minY}
         maxY={maxY}
+        sendMessage={sendMessage}
       />
 
 

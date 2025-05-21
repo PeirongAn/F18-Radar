@@ -52,7 +52,6 @@ const AntennaElevationMarker: React.FC<AntennaElevationMarkerProps> = observer((
       return; // Ignore left/right for this marker
     }
 
-    agentStore.setOperationOwner('manual'); // Set owner before action
     // Pass 'user' as source and the sendMessage callback
     radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
     // No need to reset owner to manual here as it should persist for user actions unless AI takes over

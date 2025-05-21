@@ -71,23 +71,13 @@ const App: React.FC = observer(() => {
   // 监听WebSocket连接状态，在连接成功时初始化系统
   useEffect(() => {
     if (isStarted && connected && !error) {
-      // 当系统已启动且WebSocket已连接，且没有错误时，执行系统初始化
+      // 当系统已启动且WebSocket已连接，且没有错误时，记录日志
       console.log('[雷达系统] 连接成功');
-      
-      // 添加一个小延迟，确保WebSocket完全就绪
-      const initTimer = setTimeout(() => {
-        console.log('[雷达系统] 延迟初始化开始...');
-        radarStore.initializeSystem();
-      }, 500); // 500ms延迟
-      
-      return () => {
-        clearTimeout(initTimer); // 清理定时器
-      };
     } else if (isStarted && !connected && error) {
       // 连接失败，显示错误信息
       console.error('WebSocket连接失败，无法初始化系统:', error);
     }
-  }, [isStarted, connected, error, radarStore]);
+  }, [isStarted, connected, error]);
   
   // 处理目标选择
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
@@ -155,7 +145,8 @@ const App: React.FC = observer(() => {
       sendMessage({
         type: 'SwitchSA',
         timestamp: Date.now(),
-        user_id: userId
+        user_id: userId,
+        event_owner: 'manual'
       });
     }
   };
