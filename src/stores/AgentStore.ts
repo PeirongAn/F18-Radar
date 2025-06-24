@@ -11,6 +11,7 @@ export interface AgentLevelConfig {
   // radar_auto_range?: number;
   // 可以根据需要添加更多雷达相关的AI配置，例如：
   // radar_auto_scan_angle?: number;
+  decision_probabilities?: number[];
 }
 
 // 新增：定义服务端AI参数推荐的接口
@@ -33,12 +34,15 @@ class AgentStore {
   // 新增：存储服务端对AI的参数推荐
   serverAIRecommendation: ServerAIParameterRecommendation | null = null;
 
+  // 新增：音频状态
+  audioEnabled = true; // 默认值
+
   constructor() {
     makeAutoObservable(this, {
       currentAILevelConfig: computed,
       // serverAIRecommendation is observable by default
     });
-    this.loadAgentConfig(); // 在构造时自动加载配置
+    this.loadConfig(); // 在构造时自动加载配置
   }
 
   // --- Computed Property ---
@@ -101,7 +105,7 @@ class AgentStore {
     });
   }
 
-  async loadAgentConfig() {
+  async loadConfig() {
     try {
       const resp = await fetch("/agent_level.json");
       if (!resp.ok) {
@@ -127,6 +131,12 @@ class AgentStore {
           this.aiConfigs = []; 
         }
       });
+
+      // 从配置文件中读取音频设置
+      if (data.game_settings && typeof data.game_settings.audio_enabled === 'boolean') {
+        this.audioEnabled = data.game_settings.audio_enabled;
+        console.log(`[AgentStore] 音频初始状态设置为: ${this.audioEnabled}`);
+      }
     } catch (e) {
       console.error("加载智能体配置失败:", e);
       runInAction(() => {
@@ -147,6 +157,11 @@ class AgentStore {
     console.log("Final AI Configs in Store:", JSON.stringify(this.aiConfigs, null, 2));
     console.log("Final Current AI Level in Store:", this.currentAILevel);
     console.log("Final Current AI Config in Store:", JSON.stringify(this.currentAILevelConfig, null, 2));
+  }
+
+  toggleAudioEnabled() {
+    this.audioEnabled = !this.audioEnabled;
+    console.log(`[AgentStore] 音频状态手动切换为: ${this.audioEnabled}`);
   }
 }
 

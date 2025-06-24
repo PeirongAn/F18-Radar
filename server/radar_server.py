@@ -12,6 +12,35 @@ from contextlib import contextmanager
 import atexit
 import random
 
+# 全局配置
+CONFIG = {}
+
+# 加载配置文件
+def load_config():
+    global CONFIG
+    script_dir = os.path.dirname(__file__)
+    config_path = os.path.join(script_dir, '../public/agent_level.json')
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            CONFIG = json.load(f)
+        print("Configuration loaded successfully.")
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading configuration: {e}. Using default settings.")
+        # 如果加载失败，使用默认配置
+        CONFIG = {
+            "game_settings": {
+                "current_difficulty": "low",
+                "audio_enabled": True,
+                "difficulty_levels": {
+                    "low": {"threat_count": 4, "target_count": 5},
+                    "high": {"threat_count": 8, "target_count": 10}
+                }
+            }
+        }
+
+# 在程序启动时加载配置
+load_config()
+
 # 用于存储目标信息的全局变量
 unknown_targets = []
 own_heading = 278  # 当前航向 (度)
@@ -138,15 +167,28 @@ def generate_task_id():
 def initialize_targets():
     global unknown_targets
     
+    # 从配置中获取目标数量
+    settings = CONFIG.get('game_settings', {})
+    difficulty = settings.get('current_difficulty', 'low')
+    level_settings = settings.get('difficulty_levels', {}).get(difficulty, {})
+    total_targets = level_settings.get('target_count', 5)  # 默认为5个目标
+    
+    num_friends = total_targets - 2  # 向上取整
+    num_enemies =  2       # 向下取整
+
     # 定义雷达显示区域的边界（可以根据实际显示区域调整）
     min_x, max_x = -100, 100
     min_y, max_y = -100, 100
     
+    # 根据新的逻辑，雷达中心位于显示区域的底部中心
+    radar_center_x = 0
+    radar_center_y = -100
+    
     # 创建空的目标列表
     unknown_targets = []
     
-    # 生成3个友机
-    for i in range(3):
+    # 生成友机
+    for i in range(num_friends):
         # 随机生成位置
         x = random.uniform(min_x, max_x)
         y = random.uniform(min_y, max_y)
@@ -154,8 +196,10 @@ def initialize_targets():
         # 随机生成速度（友机速度较慢）
         speed = random.uniform(3, 6)
         
-        # 随机生成方向
-        direction = random.uniform(0, 2 * np.pi)
+        # 再次修正：逻辑交换，友机朝向中心点（模拟返航）
+        base_direction = np.arctan2(radar_center_y - y, radar_center_x - x)
+        offset = random.uniform(-np.pi / 6, np.pi / 6)  # +/- 30度
+        direction = base_direction + offset
         
         unknown_targets.append({
             "id": f"friend-{i+1}",
@@ -166,8 +210,8 @@ def initialize_targets():
             "type": "friend"
         })
     
-    # 生成2个敌机
-    for i in range(2):
+    # 生成敌机
+    for i in range(num_enemies):
         # 随机生成位置
         x = random.uniform(min_x, max_x)
         y = random.uniform(min_y, max_y)
@@ -175,8 +219,10 @@ def initialize_targets():
         # 随机生成速度（敌机速度较快）
         speed = random.uniform(8, 12)
         
-        # 随机生成方向
-        direction = random.uniform(0, 2 * np.pi)
+        # 再次修正：逻辑交换，敌机远离中心点（模拟飞越）
+        base_direction = np.arctan2(y - radar_center_y, x - radar_center_x)
+        offset = random.uniform(-np.pi / 6, np.pi / 6)  # +/- 30度
+        direction = base_direction + offset
         
         unknown_targets.append({
             "id": f"enemy-{i+1}",
@@ -200,13 +246,17 @@ def get_radar_data(include_targets=False):
     try:
         print("【调试】开始生成雷达数据...")
         
+        # 从配置中获取音频设置
+        audio_enabled = CONFIG.get('game_settings', {}).get('audio_enabled', True)
+        
         # 基础数据，不包含目标
         data = {
             "radar_azimuth": float(radar_azimuth),
             "own_heading": float(own_heading),
             "timestamp": time.time(),
             "range": float(radar_range),
-            "scanAngle": float(scan_angle)
+            "scanAngle": float(scan_angle),
+            "audioEnabled": audio_enabled
         }
         
         # 仅当明确指定要包含目标时，才添加目标数据
@@ -332,35 +382,39 @@ def generate_antenna_adjustment():
 # 处理天线高度调整确认
 def handle_antenna_adjustment(message):
     # 获取客户端设置的高度
-    client_elevation = message.get('elevation')
-    
-    # 检查是否在预期范围内（允许±2°的误差）
-    global current_session
-    target_elevation = current_session.get('target_elevation')
-    
-    if target_elevation is None:
-        return {
-            "type": "settings_validation",
-            "status": "error",
-            "message": "未找到目标天线高度设置，请重新初始化系统"
-        }, False
-    
-    if abs(client_elevation - target_elevation) <= 0.1:
-        # 高度设置正确
-        current_session['stage'] = 'target_identification'
-        print('【调试】天线高度设置正确，开始发送目标数据')
-        return {
-            "type": "settings_validation",
-            "status": "success",
-            "message": "天线高度设置正确，开始发送目标数据"
-        }, True
-    else:
-        # 高度设置不正确
-        return {
-            "type": "settings_validation",
-            "status": "error",
-            "message": f"天线高度设置不正确，目标为{target_elevation}°，当前为{client_elevation}°"
-        }, False
+    try:
+        client_elevation = message.get('elevation')
+        
+        # 检查是否在预期范围内（允许±2°的误差）
+        global current_session
+        target_elevation = current_session.get('target_elevation')
+        
+        if target_elevation is None:
+            return {
+                "type": "settings_validation",
+                "status": "error",
+                "message": "未找到目标天线高度设置，请重新初始化系统"
+            }, False
+        
+        if abs(client_elevation - target_elevation) <= 0.1:
+            # 高度设置正确
+            current_session['stage'] = 'target_identification'
+            print('【调试】天线高度设置正确，开始发送目标数据')
+            return {
+                "type": "settings_validation",
+                "status": "success",
+                "message": "天线高度设置正确，开始发送目标数据"
+            }, True
+        else:
+            # 高度设置不正确
+            return {
+                "type": "settings_validation",
+                "status": "error",
+                "message": f"天线高度设置不正确，目标为{target_elevation}°，当前为{client_elevation}°"
+            }, False
+    except Exception as e:
+        print(f"天线调整出错: {e}")
+        return {"type": "ERROR", "message": f"处理天线调整时出错: {e}"}
 
 # 生成SA页面威胁数组
 SA_ICON_TYPES = [
@@ -379,32 +433,81 @@ SA_LABELS = {
     'PrimaryNaval': ['052D', '054A', '055', 'Kirov'],
     'SecondaryNaval': ['056', '053H3', 'Frigate', 'Corvette'],
 }
-def generate_sa_threats(n=4):
+def generate_sa_threats():
+    # 从配置中获取威胁数量
+    settings = CONFIG.get('game_settings', {})
+    difficulty = settings.get('current_difficulty', 'low')
+    level_settings = settings.get('difficulty_levels', {}).get(difficulty, {})
+    n = level_settings.get('threat_count', 4)  # 默认为4个威胁
+
     threats = []
-    # 只从secondary类型中选取
+    
+    # 方案1：允许重复类型，主要使用Secondary类型，但可以重复生成
     secondary_types = [t for t in SA_ICON_TYPES if t.startswith('Secondary')]
-    chosen_types = random.sample(secondary_types, k=min(n, len(secondary_types)))
-    for t in chosen_types:
-        label = random.choice(SA_LABELS[t])
+    
+    # 如果需要的威胁数量超过Secondary类型数量，允许重复选择
+    if n <= len(secondary_types):
+        # 如果需要的数量不超过可用类型，正常选择不重复
+        chosen_types = random.sample(secondary_types, k=n)
+    else:
+        # 如果需要更多威胁，允许重复选择类型
+        chosen_types = []
+        for i in range(n):
+            chosen_types.append(random.choice(secondary_types))
+    
+    # 备选方案2：混合Primary和Secondary类型（取消注释以启用）
+    # primary_types = [t for t in SA_ICON_TYPES if t.startswith('Primary')]
+    # all_types = secondary_types + primary_types
+    # chosen_types = []
+    # 
+    # # 确保至少有70%是Secondary类型
+    # secondary_count = max(1, int(n * 0.7))
+    # primary_count = n - secondary_count
+    # 
+    # # 选择Secondary威胁
+    # for i in range(secondary_count):
+    #     chosen_types.append(random.choice(secondary_types))
+    # 
+    # # 选择Primary威胁
+    # for i in range(primary_count):
+    #     chosen_types.append(random.choice(primary_types))
+    # 
+    # # 随机打乱顺序
+    # random.shuffle(chosen_types)
+    
+    # 生成威胁
+    for i, threat_type in enumerate(chosen_types):
+        label = random.choice(SA_LABELS[threat_type])
         threats.append({
-            'id': f'{t}-{random.randint(1000,9999)}',
-            'type': t,
+            'id': f'{threat_type}-{random.randint(1000,9999)}-{i}', # 添加索引避免ID重复
+            'type': threat_type,
             'label': label
         })
+    
+    print(f"[SA威胁生成] 生成了{len(threats)}个威胁，类型分布: {[t['type'] for t in threats]}")
     return threats
 
 def generate_sa_emergency(threats):
     # 随机选择事件类型
     event_type = random.choice(['upgrade', 'missile'])
     if event_type == 'upgrade':
-        # 找到所有secondary威胁
-        secondary = [t for t in threats if t['type'].startswith('Secondary')]
-        if secondary:
-            to_upgrade = random.choice(secondary)
-            # 升级为primary
-            primary_type = to_upgrade['type'].replace('Secondary', 'Primary')
-            to_upgrade['type'] = primary_type
-            to_upgrade['label'] = random.choice(SA_LABELS[primary_type])
+        # 随机决定是否进行类型升级 (50%概率升级类型，50%概率保持原类型)
+        should_upgrade_type = random.choice([True, False])
+        
+        if should_upgrade_type:
+            # 找到所有secondary威胁并升级为primary
+            secondary = [t for t in threats if t['type'].startswith('Secondary')]
+            if secondary:
+                to_upgrade = random.choice(secondary)
+                # 升级为primary
+                primary_type = to_upgrade['type'].replace('Secondary', 'Primary')
+                to_upgrade['type'] = primary_type
+                to_upgrade['label'] = random.choice(SA_LABELS[primary_type])
+                print(f"[SA升级] 威胁类型升级: {to_upgrade['id']} -> {primary_type}")
+        else:
+            # 不升级类型，保持现有威胁，让客户端根据位置判断优先级
+            print(f"[SA升级] 威胁未升级类型，客户端将根据位置判断优先级")
+        
         return {
             'type': 'SAEmergency',
             'event': 'upgrade',
@@ -476,18 +579,18 @@ async def handle_client_message(message_str, websocket=None):
         
         elif message_type == 'settings_update':
             print("消息类型: settings_update")
-          
+            
             if should_include_targets(message):
                 record_operation_to_db({
                     'task_id': current_session.get('task_id'),
                     'operationType': 'settings_update',
                     'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                    'receive_timestamp': message.get('receive_timestamp'),
+                        'receive_timestamp': message.get('receive_timestamp'),
                     'isActive': True,
-                    'parameters': message, # Entire message as parameters for now
-                    'user_id': message.get('user_id', ''),
-                    'event_owner': client_event_owner # Pass event_owner
-                })
+                        'parameters': message, # Entire message as parameters for now
+                        'user_id': message.get('user_id', ''),
+                        'event_owner': client_event_owner # Pass event_owner
+                    })
                 validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
                 antenna_command = generate_antenna_adjustment()
                 return [validation_response, antenna_command]
@@ -497,25 +600,25 @@ async def handle_client_message(message_str, websocket=None):
         
         elif message_type == 'antenna_adjusted':
             print("消息类型: antenna_adjusted")
-           
+            
             validation_response, is_valid = handle_antenna_adjustment(message)
             if is_valid:
                 record_operation_to_db({
                     'task_id': current_session.get('task_id'),
                     'operationType': 'antenna_adjusted',
                     'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                    'receive_timestamp': message.get('receive_timestamp'),
+                        'receive_timestamp': message.get('receive_timestamp'),
                     'isActive': True,
                     'parameters': {'elevation': message.get('elevation')},
-                    'user_id': message.get('user_id', ''),
-                    'event_owner': client_event_owner # Pass event_owner
-                })
-                # If settings are correct, initialize and return target data
-                # This response might be redundant if settings_validation is already sent by handle_antenna_adjustment
-                # For now, we follow the logic that a successful antenna adjustment leads to target identification phase
-                # The actual data sending is handled by the main loop based on 'is_valid'
-                # We might want to send a specific message here indicating success, or rely on the main loop.
-                # For now, let's assume `is_valid` being True is enough to trigger data sending in the main loop.
+                        'user_id': message.get('user_id', ''),
+                        'event_owner': client_event_owner # Pass event_owner
+                    })
+                    # If settings are correct, initialize and return target data
+                    # This response might be redundant if settings_validation is already sent by handle_antenna_adjustment
+                    # For now, we follow the logic that a successful antenna adjustment leads to target identification phase
+                    # The actual data sending is handled by the main loop based on 'is_valid'
+                    # We might want to send a specific message here indicating success, or rely on the main loop.
+                    # For now, let's assume `is_valid` being True is enough to trigger data sending in the main loop.
                 return validation_response, True # Signal to send data with targets
             else:
                 return [validation_response] # Only send validation error
@@ -579,7 +682,7 @@ async def handle_client_message(message_str, websocket=None):
                     operation['event_owner'] = client_event_owner
                 record_operation_to_db(operation)
             return []
-
+        
         # ... (other message types like SwitchSA, ResetSA, reset_targets)
         # These might not have a direct client-side event_owner in the same way, 
         # or they are server-initiated in some contexts.
@@ -595,7 +698,7 @@ async def handle_client_message(message_str, websocket=None):
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner
             })
-            threats = generate_sa_threats(n=random.randint(3, 6))
+            threats = generate_sa_threats()
             response = {'type': 'SAThreats', 'saThreats': threats}
             if websocket:
                 asyncio.create_task(auto_send_sa_emergency(websocket, threats))
@@ -612,7 +715,7 @@ async def handle_client_message(message_str, websocket=None):
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner
             })
-            threats = generate_sa_threats(n=random.randint(3, 6))
+            threats = generate_sa_threats()
             response = {'type': 'SAThreats', 'saThreats': threats}
             if websocket:
                 asyncio.create_task(auto_send_sa_emergency(websocket, threats))
@@ -631,7 +734,7 @@ async def handle_client_message(message_str, websocket=None):
             })
             initialize_targets()
             return True, False # Signal to send data, but no targets initially
-
+            
     except json.JSONDecodeError as e:
         print(f"解析JSON时出错: {e}")
     except Exception as e:
@@ -670,7 +773,7 @@ async def radar_server(websocket):
         # # 2~3秒后自动推送一次SAEmergency <--- MODIFIED: Commented out
         # # If you re-enable this, ensure 'threats' is defined, e.g., after a 'SwitchSA'
         # # asyncio.create_task(auto_send_sa_emergency(websocket, threats))
-
+        
         # 接收并处理客户端消息
         while True:
             try:

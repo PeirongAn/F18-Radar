@@ -2,23 +2,24 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { UnknownTargetData } from '../components/UnknownTarget';
 import radarStore from '../stores/RadarStore';
 import agentStore, { ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
+import audioManager from '../managers/AudioManager'; // 引入新的全局音频管理器
 
 export interface TargetHistory {
   x: number;
   y: number;
 }
 
+// 定义雷达目标数据接口 - 统一为与UnknownTargetData类似的结构
 export interface RadarTarget {
-  id: number;
-  x: number;  // 相对位置 (NM)
-  y: number;
-  distance: number;  // 距离 (NM)
-  bearing: number;   // 方位角 (度)
-  heading: number;   // 航向 (度)
-  speed: number;     // 速度 (节)
-  quality: number;   // 跟踪质量 (0-1)
-  threat_level: number; // 威胁等级 (0-3)
-  history: [number, number][]; // 历史轨迹点 [x, y]
+  id: string;
+  position: { x: number, y: number };
+  speed: number;
+  direction: number;
+  type: 'friend' | 'army';
+  quality?: number; // Make quality optional
+  threat_level?: number; // Make threat_level optional
+  history: { x: number, y: number }[];
+  selected?: boolean;
 }
 
 export interface RadarData {
@@ -33,6 +34,7 @@ export interface RadarData {
   radar_azimuth: number;  // 雷达当前扫描方位角
   own_heading: number;    // 自机航向
   timestamp: number;      // 时间戳
+  audioEnabled?: boolean;
   emergency?: {
     event: 'upgrade' | 'missile';
     missileType?: 'MissileUp' | 'MissileDown';
@@ -44,6 +46,11 @@ export interface RadarData {
   };
   // 新增: 允许服务端直接发送AI参数建议
   ai_param_recommendation?: ServerAIParameterRecommendation;
+}
+
+export interface IFFResult {
+  targetId: string;
+  // ... existing code ...
 }
 
 // WebSocket连接状态类型
@@ -480,6 +487,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     // Handle other message types
     if (message.type === 'task_id_assigned') setTaskId(message.task_id);
     else if (message.type === 'init_settings') {
+      audioManager.play('radarRange'); // 播放提示音
       setInitSettings(message.settings);
       const ts = Date.now();
       recordOperation({ operationType: 'init_settings_received', timestamp: ts, isActive: false, parameters: message.settings });
@@ -491,6 +499,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       const ts = Date.now();
       recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
     } else if (message.type === 'adjust_antenna') {
+      audioManager.play('radarHeight'); // 播放提示音
       if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
       console.log('[useRadarData] Received adjust_antenna message:', message);
       const ts = Date.now();

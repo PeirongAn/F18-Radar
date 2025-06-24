@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import agentStore from "../stores/AgentStore";
 
 interface UseAIAgentOptions {
@@ -16,9 +16,35 @@ export function useAIAgent({
 }: UseAIAgentOptions) {
   const timerRef = useRef<number | null>(null);
   const lastHandledRef = useRef<string | null>(null);
+  const prevIsActiveRef = useRef(isActive);
 
   // 生成emergency唯一标识
   const emergencyId = emergency ? JSON.stringify({ event: emergency.event, missileType: emergency.missileType }) : '';
+
+  useEffect(() => {
+    // 当AI从 `false` 变为 `true` 时触发
+    if (isActive && !prevIsActiveRef.current && getBestThreat) {
+      console.log("[AI Agent] AI activated. Performing initial threat assessment.");
+      const delay = agentStore.currentAILevelConfig?.threat_select_delay_ms ?? 1500;
+      
+      timerRef.current = window.setTimeout(() => {
+        const threat = getBestThreat();
+        if (threat) {
+          onHandleEmergency(threat);
+          console.log("[AI Agent] Initial threat handled:", threat);
+        } else {
+          console.log("[AI Agent] No threats found for initial assessment.");
+        }
+      }, delay);
+    }
+
+    // 更新上一个状态
+    prevIsActiveRef.current = isActive;
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [isActive, getBestThreat, onHandleEmergency]);
 
   useEffect(() => {
     if (isActive && emergency && lastHandledRef.current !== emergencyId) {

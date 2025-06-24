@@ -38,8 +38,8 @@ const App: React.FC = observer(() => {
   const { 
     connected,
     error,
-    taskId,
-    antennaAdjustmentRequired,
+    taskId, 
+    antennaAdjustmentRequired, 
     targetAntennaElevation,
     initSettings,
     operations,
@@ -68,6 +68,30 @@ const App: React.FC = observer(() => {
     radarStore.setUserId(userId);
   }, [userId, radarStore]);
   
+  // 检查是否有保存的用户名（页面重置后恢复）
+  useEffect(() => {
+    const preservedUserId = sessionStorage.getItem('preservedUserId');
+    const preservedIncludeAI = sessionStorage.getItem('preservedIncludeAI');
+    
+    if (preservedUserId) {
+      console.log('检测到保存的用户信息，正在恢复:', { 
+        userId: preservedUserId, 
+        includeAI: preservedIncludeAI === 'true' 
+      });
+      
+      // 预填充用户信息到表单，但仍然显示表单让用户确认
+      setUserId(preservedUserId);
+      setIncludeAI(preservedIncludeAI === 'true');
+      // 保持showInitialForm为true，让用户可以重新选择AI选项
+      
+      // 清除保存的信息，避免下次启动时误用
+      sessionStorage.removeItem('preservedUserId');
+      sessionStorage.removeItem('preservedIncludeAI');
+      
+      console.log('✅ 用户信息已预填充到表单');
+    }
+  }, []); // 只在组件挂载时运行一次
+  
   // 监听WebSocket连接状态，在连接成功时初始化系统
   useEffect(() => {
     if (isStarted && connected && !error) {
@@ -91,6 +115,23 @@ const App: React.FC = observer(() => {
       radarStore.setLockScreenX(lockX);
     } else if (!targetId) {
       radarStore.setLockScreenX(undefined); // 清除锁定
+    }
+
+    // 如果成功锁定目标，自动激活IFF
+    if (lockX !== undefined) {
+      console.log('✅ 目标锁定完成，触发IFF激活');
+      // 通过事件通知RadarDisplay激活IFF
+      // window.dispatchEvent(new CustomEvent('autoActivateIFF'));
+      
+      // 发送IFF激活消息到服务器
+      if (sendMessage) {
+        sendMessage({
+          type: 'iff_activated',
+          targetId: targetId,
+          timestamp: Date.now(),
+          auto_triggered: true // 标记为自动触发
+        });
+      }
     }
 
     if (targetId) {
@@ -155,7 +196,11 @@ const App: React.FC = observer(() => {
     <div className="min-h-screen bg-black text-gray-300">
       {/* 显示初始表单模态框 */}
       {showInitialForm && (
-        <InitialFormModal onStart={handleStartApp} />
+        <InitialFormModal 
+          onStart={handleStartApp} 
+          defaultUserId={userId}
+          defaultIncludeAI={includeAI}
+        />
       )}
       
       <h1 className="text-center text-2xl text-green-500 font-mono pt-6 pb-4">
@@ -202,18 +247,16 @@ const App: React.FC = observer(() => {
           </div>
         </div>
         
-        {/* 右侧内容 - 根据用户选择显示智能体或通信日志 */}
-        <div className="w-full lg:w-2/5">
-          <div className="bg-gray-900 p-4 rounded-lg shadow-lg h-full border border-gray-800">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className={`${includeAI ? 'text-blue-400' : 'text-green-400'} font-mono text-lg`}>
-                {includeAI ? '智能辅助系统' : '系统通信'}
-              </h2>
-            </div>
-            
-            {includeAI ? (
+        {/* 右侧内容 - 始终显示日志，AI激活时额外显示AI助手 */}
+        <div className="w-full lg:w-2/5 flex flex-col gap-4">
+          {includeAI && (
+            <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
+              <h2 className="text-green-500 font-mono text-lg mb-4">AI助手</h2>
               <AIAssistant selectedTarget={selectedTarget} />
-            ) : (
+            </div>
+          )}
+          <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800 flex-grow">
+            <h2 className="text-green-500 font-mono text-lg mb-4">通信日志</h2>
               <CommunicationLog 
                 userId={userId} 
                 isStarted={isStarted} 
@@ -221,15 +264,14 @@ const App: React.FC = observer(() => {
                 radarRange={radarRange}
                 scanAngle={scanAngle}
                 antennaAdjustmentRequired={antennaAdjustmentRequired}
-                targetAntennaElevation={targetAntennaElevation || undefined} // 处理null值
-                initSettings={initSettings} // 传递初始设置参数
-                connected={connected} // 传递WebSocket连接状态
-                error={error} // 传递WebSocket错误信息
-                operations={operations} // 传递操作记录
+              targetAntennaElevation={targetAntennaElevation || undefined}
+              initSettings={initSettings}
+              connected={connected}
+              error={error}
+              operations={operations}
                 onAddMessage={addMessage}
                 messages={messages}
               />
-            )}
           </div>
         </div>
       </div>

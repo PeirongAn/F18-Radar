@@ -1,11 +1,11 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Stage, Layer, Circle, Line, Group, Text, Rect } from 'react-konva';
 import PrimaryAirIcon from '../icons/PrimaryAirIcon';
-import SecondaryAirIcon from '../icons/SecondaryNavalIcon';
+import SecondaryAirIcon from '../icons/SecondaryAirIcon';
 import PrimaryAntiAircraftArtilleryIcon from '../icons/PrimaryAntiAircraftArtilleryIcon';
 import SecondaryAntiAircraftArtilleryIcon from '../icons/SecondaryAntiAircraftArtilleryIcon';
 import PrimaryNavalIcon from '../icons/PrimaryNavalIcon';
-import SecondaryNavalIcon from '../icons/SecondaryAirIcon';
+import SecondaryNavalIcon from '../icons/SecondaryNavalIcon';
 import MissileUpIcon from '../icons/MissileUpIcon';
 import MissileDownIcon from '../icons/MissileDownIcon';
 import useRadarData from '../hooks/useRadarData';
@@ -14,6 +14,7 @@ import { useAIAgent } from '../hooks/useAIAgent';
 import agentStore from '../stores/AgentStore';
 import { observer } from 'mobx-react-lite';
 import radarStore from '../stores/RadarStore';
+import audioManager from '../managers/AudioManager';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -77,35 +78,11 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
-// 添加音频管理器
-const AudioManager = {
-  missileUp: new Audio('/sounds/MissileLaunch.wav'),
-  missileDown: new Audio('/sounds/MissileLaunch.wav'),
-  threatUpgrade: new Audio('/sounds/Tracking.wav'),
-  saInit: new Audio('/sounds/ThreatNew.wav'),
-  
-  play(type: 'missileUp' | 'missileDown' | 'threatUpgrade' | 'saInit') {
-    const audio = this[type];
-    if (audio) {
-      audio.currentTime = 0; // 重置音频播放位置
-      audio.play().catch(err => console.error('播放音频失败:', err));
-    }
-  }
-};
-
 const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, userId: originalUserId}) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
 
-  // 获取优先级对应的颜色
-  const getPriorityColor = (priority: string): string => {
-    switch (priority) {
-      case 'high': return '#ff0000';
-      case 'medium': return '#ffff00';
-      case 'low': return '#00ffff';
-      default: return '#ffffff';
-    }
-  };
+
   const [userId, setUserId] = useState(originalUserId);
 
   useEffect(() => {
@@ -113,6 +90,35 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       setUserId(originalUserId);
     }
   }, [originalUserId]);
+
+  // 从 agentStore 获取初始音频状态，并设置本地 state
+  const [audioEnabled, setAudioEnabled] = useState(agentStore.audioEnabled);
+  
+  // 监听来自 agentStore 的变化，确保初始加载后能正确同步
+  useEffect(() => {
+    setAudioEnabled(agentStore.audioEnabled);
+  }, [agentStore.audioEnabled]);
+  
+  // 处理手动切换
+  const handleAudioToggle = useCallback(() => {
+    agentStore.toggleAudioEnabled();
+  }, []);
+
+  const { connected, radarData, error, sendMessage, sendResetSA } = useRadarData();
+
+  // 使用 useEffect 监听来自 useRadarData 的 audioEnabled 状态
+  useEffect(() => {
+    if (radarData && typeof radarData.audioEnabled === 'boolean') {
+      console.log(`[SAPage] Audio state updated from config: ${radarData.audioEnabled}`);
+    }
+  }, [radarData?.audioEnabled]);
+
+  // 添加刻度数值标记状态
+  const [scaleValues] = useState(() => ({
+    leftScale: Math.floor(Math.random() * 900) + 100,
+    rightScale: Math.floor(Math.random() * 900) + 100
+  }));
+
   // 配置
   const config = {
     backgroundColor: '#000000',
@@ -142,6 +148,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 随机旋转角度（0~360度）
   const [rotation] = React.useState(() => Math.random() * 360);
 
+  // 添加动态旋转角度状态
+  const [dynamicRotation, setDynamicRotation] = React.useState(0);
+
   // 方向字母和短线（E S W N，顺时针，带出头短线）
   const directionLabels = [
     { label: 'E', angle: 0 },
@@ -151,7 +160,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   ];
   const shortLen = 18; // 短线总长度
   const markerLines = directionLabels.map(({ label, angle }) => {
-    const rad = ((angle + rotation) * Math.PI) / 180;
+    // 使用组合的旋转角度：初始随机角度 + 动态旋转角度
+    const totalRotation = rotation + dynamicRotation;
+    const rad = ((angle + totalRotation) * Math.PI) / 180;
     const centerX = config.centerX;
     const centerY = config.centerY - 50;
     const r1 = radius1 - shortLen * 0.6;
@@ -239,6 +250,79 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     });
   };
 
+  // 刻度数值标记渲染函数
+  const renderScaleValues = () => {
+    const scaleMarkers = [];
+    const totalArcAngle = 100;
+    const divisionAngle = totalArcAngle / 10; // 10个间隔
+    const arcBaseAngle = -140;
+    
+    // 左侧第4个刻度（索引3）
+    const leftScaleIndex = 3;
+    const leftAngle = arcBaseAngle + leftScaleIndex * divisionAngle;
+    // 根据内圈旋转调整数值显示角度
+    const leftAdjustedAngle = leftAngle + rotation + dynamicRotation;
+    const leftRad = (leftAngle * Math.PI) / 180;
+    const leftX = config.centerX + (radius3 - 30) * Math.cos(leftRad); // 移到弧线内侧
+    const leftY = config.centerY + (radius3 - 30) * Math.sin(leftRad);
+    
+    // 计算基于旋转的数值（模拟雷达扫描数值变化）
+    const leftDisplayValue = Math.floor(scaleValues.leftScale + (leftAdjustedAngle % 360) / 10);
+    
+    // 绿色数字，无背景圆圈
+    scaleMarkers.push(
+      <Text
+        key="left-scale"
+        x={leftX}
+        y={leftY}
+        text={leftDisplayValue.toString()}
+        fill="#00ff00"  // 绿色数值
+        fontSize={16}   // 增大字体
+        fontFamily="monospace"
+        align="center"
+        verticalAlign="middle"
+        offsetX={8}
+        offsetY={8}
+      />
+    );
+    
+    // 右侧第2个刻度（索引8）
+    const rightScaleIndex = 8;
+    const rightAngle = arcBaseAngle + rightScaleIndex * divisionAngle;
+    // 根据内圈旋转调整数值显示角度
+    const rightAdjustedAngle = rightAngle + rotation + dynamicRotation;
+    const rightRad = (rightAngle * Math.PI) / 180;
+    const rightX = config.centerX + (radius3 - 30) * Math.cos(rightRad); // 移到弧线内侧
+    const rightY = config.centerY + (radius3 - 30) * Math.sin(rightRad);
+    
+    // 计算基于旋转的数值（模拟雷达扫描数值变化）
+    const rightDisplayValue = Math.floor(scaleValues.rightScale + (rightAdjustedAngle % 360) / 10);
+    
+    // 绿色数字，无背景圆圈
+    scaleMarkers.push(
+      <Text
+        key="right-scale"
+        x={rightX}
+        y={rightY}
+        text={rightDisplayValue.toString()}
+        fill="#00ff00"  // 绿色数值
+        fontSize={16}   // 增大字体
+        fontFamily="monospace"
+        align="center"
+        verticalAlign="middle"
+        offsetX={8}
+        offsetY={8}
+      />
+    );
+    
+    // 每5秒输出一次调试信息
+    if (Math.floor(Date.now() / 5000) % 5 === 0) {
+      console.log(`📊 刻度数值更新: 左侧=${leftDisplayValue}(索引${leftScaleIndex}), 右侧=${rightDisplayValue}(索引${rightScaleIndex}), 旋转角度=${dynamicRotation.toFixed(1)}°`);
+    }
+    
+    return scaleMarkers;
+  };
+
   // 创建按钮标签
   const topButtons = Array(5).fill(0).map((_, i) => `T${i + 1}`);
   const leftButtons = Array(5).fill(0).map((_, i) => `L${i + 1}`);
@@ -254,9 +338,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const sideContainerHeight = height * 0.8; // 侧边容器高度与雷达高度的80%相同
 
   // 随机分布icon
-  const { connected, radarData, error, sendMessage, sendResetSA } = useRadarData();
- 
-  
   const [saThreats, setSaThreats] = useState(radarData?.saThreats ?? []);
   const [missiles, setMissiles] = useState<MissileData[]>([]);
   const [threatList, setThreatList] = useState<ThreatData[]>([]);
@@ -268,16 +349,71 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 记录最近一次SAEmergency的接收时间戳
   const lastEmergencyReceiveTimestampRef = useRef<number | null>(null);
 
+  // 添加任务结束弹窗状态
+  const [showTaskComplete, setShowTaskComplete] = useState(false);
+  const [completedThreat, setCompletedThreat] = useState<string>('');
+
+  // 添加接管按钮处理函数
+  const handleTakeControl = useCallback(() => {
+    console.log('[SA页面] 用户手动接管控制');
+    // 禁用AI控制
+    agentStore.setAIActive(false);
+    
+    // 发送接管消息到服务器
+    if (sendMessage) {
+      sendMessage({
+        type: 'user_take_control',
+        timestamp: Date.now(),
+        user_id: userId || 'current_user',
+        page: 'SA' // 标记是SA页面的接管
+      });
+    }
+    
+    console.log('✅ [SA页面] 用户已接管威胁排序控制');
+  }, [sendMessage, userId]);
+
+  // 添加F10快捷键监听
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (event.key === 'F10') {
+        event.preventDefault();
+        handleTakeControl();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [handleTakeControl]);
+
   // 处理重置SA
   const handleResetSA = useCallback(() => {
+    console.log('====== SA系统重置 ======');
+    
+    // 发送重置消息到服务器
     sendResetSA();
+    
+    // 清除所有本地状态
     setMissiles([]);
     setThreatList([]);
+    setSaThreats([]);
+    setShowTaskComplete(false); // 关闭任务完成弹窗
+    setCompletedThreat(''); // 清空已完成威胁
+    setDynamicRotation(0); // 重置仪表盘旋转
+    
+    // 重置控制标志
     hasInitLogRef.current = false;
     lastThreatsLengthRef.current = 0;
+    lastEmergencyRef.current = null;
+    lastEmergencyReceiveTimestampRef.current = null;
+    
+    // 记录重置日志
     if (typeof onAddMessage === 'function') {
-      onAddMessage('sa_init', 'SA系统已重置，导弹状态已清空');
+      onAddMessage('sa_init', 'SA系统已重置，所有威胁和状态已清空');
     }
+    
+    console.log('✅ SA系统重置完成');
   }, [sendResetSA, onAddMessage]);
 
   // 主动同步saThreats
@@ -306,7 +442,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       if (!hasInitLogRef.current && onAddMessage) {
         console.log('【SAPage】Writing SA init log...'); // 调试日志
         onAddMessage('sa_init', `SA系统初始化完成，当前威胁数量：${saThreats.length}`);
-        AudioManager.play('saInit');
+        audioManager.play('saInit');
         hasInitLogRef.current = true;
       }
     }
@@ -330,11 +466,43 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           saThreats: data.saThreats
         });
         if (data.event === 'missile') {
-          AudioManager.play(data.missileType === 'MissileUp' ? 'missileUp' : 'missileDown');
-          const angle = Math.random() * Math.PI * 2;
-          const r = radius2 + Math.random() * (radius3 - radius2);
-          const x = config.centerX + r * Math.cos(angle);
-          const y = config.centerY + r * Math.sin(angle);
+          audioManager.play(data.missileType === 'MissileUp' ? 'missileUp' : 'missileDown');
+          
+          // 优化导弹位置分布策略
+          let angle, r, rawX, rawY;
+          let attempts = 0;
+          const maxAttempts = 10;
+          
+          do {
+            // 导弹更倾向于出现在上半圆区域（-π到0，即上方180度）
+            // 这样更符合导弹威胁的逻辑，且不容易超出边界
+            if (Math.random() < 0.7) {
+              // 70%概率在上半圆
+              angle = -Math.PI + Math.random() * Math.PI; // -π到0
+            } else {
+              // 30%概率在任意位置
+              angle = Math.random() * Math.PI * 2;
+            }
+            
+            // 导弹距离稍微靠近内圈，避免太边缘
+            r = radius2 + Math.random() * (radius3 - radius2) * 0.8; // 只使用80%的范围
+            
+            rawX = config.centerX + r * Math.cos(angle);
+            rawY = config.centerY + r * Math.sin(angle);
+            
+            attempts++;
+          } while (
+            (rawX < 60 || rawX > width - 60 || rawY < 60 || rawY > height - 60) && 
+            attempts < maxAttempts
+          );
+          
+          // 添加边界检查，确保导弹在可视区域内
+          const missileSize = 30; // 导弹图标大小
+          const x = Math.max(missileSize, Math.min(width - missileSize, rawX));
+          const y = Math.max(missileSize, Math.min(height - missileSize, rawY));
+          
+          console.log(`🚀 导弹位置: 尝试${attempts}次, 原始(${rawX.toFixed(0)}, ${rawY.toFixed(0)}) -> 修正后(${x.toFixed(0)}, ${y.toFixed(0)})`);
+          
           const missileType: 'MissileUp' | 'MissileDown' = data.missileType === 'MissileUp' ? 'MissileUp' : 'MissileDown';
           const newMissile: MissileData = {
             id: Date.now().toString(),
@@ -357,7 +525,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             onAddMessage('sa_missile', `警告！导弹来袭！类型：${data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹'}`);
           }
         } else if (data.event === 'upgrade' && data.saThreats) {
-          AudioManager.play('threatUpgrade');
+          audioManager.play('threatUpgrade');
           setSaThreats(data.saThreats);
           if (onAddMessage) {
             console.log('Writing threat upgrade log...');
@@ -373,26 +541,109 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // iconPositions 依赖 saThreats
   const iconPositions = React.useMemo(() => {
-    return saThreats.map((threat) => {
-      let angle;
-      let r;
-      if (threat.type.startsWith('Primary')) {
-        // Primary类型仍然在radius2附近随机分布
-        angle = Math.random() * 2 * Math.PI;
-        r = radius2 + Math.random() * 20;
-      } else {
-        // 其余类型分布在radius3的上方弧线（-140°到-40°）
-        // 转为弧度
-        const minDeg = -140;
-        const maxDeg = -40;
-        angle = (minDeg + Math.random() * (maxDeg - minDeg)) * Math.PI / 180;
-        r = radius2 + Math.random() * (radius3 - radius2);
-      }
-      const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
-      const y = config.centerY + r * Math.sin(angle) - ICON_SIZE / 2;
-      return { x, y };
+    const positions: Array<{x: number, y: number}> = [];
+    
+    // 检查位置是否与已有位置冲突
+    const isPositionConflicting = (newPos: {x: number, y: number}, existingPositions: Array<{x: number, y: number}>, minDistance: number = ICON_SIZE * 1.2) => {
+      return existingPositions.some(pos => {
+        const distance = Math.sqrt(Math.pow(newPos.x - pos.x, 2) + Math.pow(newPos.y - pos.y, 2));
+        return distance < minDistance;
+      });
+    };
+    
+    // 分别处理Primary和Secondary威胁
+    const primaryThreats = saThreats.filter(t => t.type.startsWith('Primary'));
+    const secondaryThreats = saThreats.filter(t => !t.type.startsWith('Primary'));
+    
+    // 先处理Primary威胁 - 在内圈完整圆圈中分布
+    primaryThreats.forEach((threat, index) => {
+      let attempts = 0;
+      let pos;
+      
+      do {
+        const angle = Math.random() * 2 * Math.PI;
+        const r = radius2 + Math.random() * 40; // 在radius2附近分布，范围稍大一些
+        const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
+        const y = config.centerY + r * Math.sin(angle) - ICON_SIZE / 2;
+        
+        // 确保在屏幕范围内
+        const clampedX = Math.max(ICON_SIZE, Math.min(width - ICON_SIZE, x));
+        const clampedY = Math.max(ICON_SIZE, Math.min(height - ICON_SIZE, y));
+        
+        pos = { x: clampedX, y: clampedY };
+        attempts++;
+      } while (isPositionConflicting(pos, positions) && attempts < 20);
+      
+      positions.push(pos);
     });
-  }, [config.centerX, config.centerY, radius2, radius3, saThreats]);
+    
+    // 再处理Secondary威胁 - 在外圈弧线区域分布
+    secondaryThreats.forEach((threat, index) => {
+      let attempts = 0;
+      let pos;
+      
+      do {
+        // 扩大Secondary威胁的分布角度范围
+        const minDeg = -180; // 进一步扩大角度范围
+        const maxDeg = 0;     // 覆盖整个上半圆
+        
+        let angle;
+        if (secondaryThreats.length > 1) {
+          // 多个Secondary威胁时，先尝试均匀分布
+          const angleStep = (maxDeg - minDeg) / secondaryThreats.length;
+          const baseAngle = minDeg + angleStep * index + angleStep * 0.5;
+          // 添加随机偏移避免完全对齐
+          angle = (baseAngle + (Math.random() - 0.5) * angleStep * 0.4) * Math.PI / 180;
+        } else {
+          // 单个Secondary威胁随机分布
+          angle = (minDeg + Math.random() * (maxDeg - minDeg)) * Math.PI / 180;
+        }
+        
+        // 在radius2到radius3之间随机分布半径
+        const radiusRange = radius3 - radius2;
+        const r = radius2 + Math.random() * radiusRange;
+        
+        const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
+        const y = config.centerY + r * Math.sin(angle) - ICON_SIZE / 2;
+        
+        // 确保在屏幕范围内
+        const clampedX = Math.max(ICON_SIZE, Math.min(width - ICON_SIZE, x));
+        const clampedY = Math.max(ICON_SIZE, Math.min(height - ICON_SIZE, y));
+        
+        pos = { x: clampedX, y: clampedY };
+        attempts++;
+      } while (isPositionConflicting(pos, positions, ICON_SIZE * 1.1) && attempts < 30);
+      
+      positions.push(pos);
+    });
+    
+    // 重新组装positions数组，按照原始saThreats的顺序
+    const finalPositions = saThreats.map(threat => {
+      const isPrimary = threat.type.startsWith('Primary');
+      if (isPrimary) {
+        const primaryIndex = primaryThreats.findIndex(t => t.id === threat.id);
+        return positions[primaryIndex];
+      } else {
+        const secondaryIndex = secondaryThreats.findIndex(t => t.id === threat.id);
+        return positions[primaryThreats.length + secondaryIndex];
+      }
+    });
+    
+    // 调试信息：输出威胁分布情况
+    if (saThreats.length > 0) {
+      const primaryCount = primaryThreats.length;
+      const secondaryCount = secondaryThreats.length;
+      console.log(`🎯 威胁分布更新: 总数=${saThreats.length}, Primary=${primaryCount}, Secondary=${secondaryCount}`);
+      
+      // 输出每个威胁的位置信息
+      saThreats.forEach((threat, index) => {
+        const pos = finalPositions[index];
+        console.log(`  - ${threat.label} (${threat.type}): (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})`);
+      });
+    }
+    
+    return finalPositions;
+  }, [config.centerX, config.centerY, radius2, radius3, saThreats, width, height]);
 
   // 英文类型转中文
   const TYPE_MAP: Record<string, string> = {
@@ -404,8 +655,107 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     SecondaryNaval: '二级水面威胁',
   };
 
-  // 点击icon将其加入威胁列表首位且优先级为高
+  // 为包含分数的威胁定义接口
+  interface ThreatWithScore {
+    threat: any;
+    score: number;
+    isMissile: boolean;
+  }
+
+  // 计算所有威胁的分数并排序
+  const threatsWithScore = useMemo(() => {
+    // 1. 定义威胁类型的权重
+    const getTypeWeight = (type: string): number => {
+      if (type.toLowerCase().includes('missile')) return 210; // 导弹权重最高
+      if (type.startsWith('Primary')) return 210;           // Primary类型次之
+      if (type.startsWith('Secondary')) return 200;         // Secondary类型权重较低
+      return 80; // 其他未知类型
+    };
+
+    const allThreats: ThreatWithScore[] = [];
+
+    // 2. 计算导弹的威胁分数
+    missiles.forEach(missile => {
+      const distance = Math.sqrt(Math.pow(missile.x - config.centerX, 2) + Math.pow(missile.y - config.centerY, 2));
+      const weight = getTypeWeight('missile');
+      const score = weight / (distance + 1e-6);
+      allThreats.push({
+        threat: missile,
+        score,
+        isMissile: true,
+      });
+    });
+
+    // 3. 计算常规威胁的分数
+    saThreats.forEach((threat, index) => {
+      const pos = iconPositions[index];
+      if (pos) {
+        const distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - config.centerY, 2));
+        const weight = getTypeWeight(threat.type);
+        const score = weight / (distance + 1e-6);
+        allThreats.push({
+          threat,
+          score,
+          isMissile: false,
+        });
+      }
+    });
+
+    return allThreats.sort((a, b) => b.score - a.score);
+  }, [missiles, saThreats, iconPositions, config.centerX, config.centerY]);
+
+  // 获取当前最高优先级威胁的函数
+  const getCurrentHighestPriorityThreat = useCallback(() => {
+    if (threatsWithScore.length === 0) {
+      return null;
+    }
+
+    const bestThreatInfo = threatsWithScore[0];
+
+    if (!bestThreatInfo) return null;
+
+    if (bestThreatInfo.isMissile) {
+      const missile = bestThreatInfo.threat as MissileData;
+      return {
+        id: missile.id,
+        type: 'missile',
+        label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+        isMissile: true,
+      };
+    } else {
+      const saThreat = bestThreatInfo.threat as {id: string, type: string, label: string};
+      return {
+        id: saThreat.id,
+        type: saThreat.type,
+        label: saThreat.label,
+        isMissile: false,
+      };
+    }
+  }, [threatsWithScore]);
+
+  // 点击icon将其加入威胁列表首位但保持原优先级
   const handleThreatIconClick = useCallback((threat: any) => {
+    // 获取当前最高优先级威胁
+    const highestPriorityThreat = getCurrentHighestPriorityThreat();
+    
+    // 检查被点击的威胁是否是当前最高优先级威胁
+    const isClickedHighestPriority = highestPriorityThreat && 
+      (threat.id === highestPriorityThreat.id);
+
+    // 确定威胁的原始优先级（基于类型）
+    const getOriginalPriority = (threat: any): 'high' | 'medium' | 'low' => {
+      if (threat.type?.toLowerCase().includes('missile')) {
+        return 'high';
+      } else if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) {
+        return 'high';
+      } else {
+        return 'medium'; // Secondary威胁默认为中等优先级
+      }
+    };
+
+    const originalPriority = getOriginalPriority(threat);
+
+    // 更新威胁列表：移到首位但保持原始优先级
     setThreatList(prev => {
       const idx = prev.findIndex(t => t.id === threat.id);
       let newList = [...prev];
@@ -419,26 +769,72 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         source: threat.label,
         distance: 0,
         heading: 0,
-        priority: 'high',
+        priority: originalPriority, // 保持原始优先级
       });
       return newList;
     });
+    
+    // 统一显示弹窗，根据是否点击最高优先级威胁显示不同内容
+    if (isClickedHighestPriority) {
+      setCompletedThreat(`✅ 正确！${threat.label || '威胁目标'}`);
+      setShowTaskComplete(true);
+      console.log(`🎯 用户正确识别最高优先级威胁: ${threat.label} (ID: ${threat.id})`);
+    } else {
+      const correctThreatLabel = highestPriorityThreat ? highestPriorityThreat.label : '未知威胁';
+      setCompletedThreat(`❌ 错误！正确答案是：${correctThreatLabel}`);
+      setShowTaskComplete(true);
+      console.log(`❌ 用户点击了非最高优先级威胁: ${threat.label} (ID: ${threat.id})，正确答案是: ${correctThreatLabel}`);
+    }
+    
     // 确保威胁处理日志写入
     if (onAddMessage) {
-      onAddMessage('sa_threat', `处理威胁：${threat.label || '导弹'}，已设为高优先级`);
+      const actor = agentStore.isAIActive ? '[AI]' : '[用户]';
+      const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
+      onAddMessage('sa_threat', `${actor} 处理威胁：${threat.label || '威胁'}，优先级：${priorityText}，${isClickedHighestPriority ? '✅正确选择' : '❌选择错误'}`);
+
+      // 在用户选择后记录威胁分数
+      const logMessage = threatsWithScore
+        .map(item => {
+          const label = item.isMissile
+            ? (item.threat as MissileData).type === 'MissileUp' ? '上升导弹' : '下降导弹'
+            : (item.threat as any).label;
+          return `${label}: ${item.score.toFixed(2)}`;
+        })
+        .join('; ');
+      onAddMessage('info', `(评估) ${logMessage}`);
     }
-    // 上报点击日志到后端，带上最近一次receive_timestamp
-    sendMessage && sendMessage({
-      type: 'threat_clicked',
-      threat_id: threat.id,
-      label: threat.label,
-      priority: 'high',
-      timestamp: Date.now(),
-      receive_timestamp: lastEmergencyReceiveTimestampRef.current,
-      user_id: userId,
-      event_owner: agentStore.currentOperationOwner,
-    });
-  }, [onAddMessage, sendMessage]);
+    
+    // 只有点击了当前最高优先级威胁时才发送threat_clicked事件
+    if (isClickedHighestPriority && sendMessage) {
+      sendMessage({
+        type: 'threat_clicked',
+        threat_id: threat.id,
+        label: threat.label,
+        priority: 'highest',  // 标记为最高优先级
+        is_highest_priority: true,  // 明确标记这是最高优先级威胁
+        is_correct: true,  // 标记为正确选择
+        timestamp: Date.now(),
+        receive_timestamp: lastEmergencyReceiveTimestampRef.current,
+        user_id: userId,
+        event_owner: agentStore.currentOperationOwner,
+      });
+    } else if (sendMessage) {
+      // 发送错误选择的事件
+      sendMessage({
+        type: 'threat_clicked',
+        threat_id: threat.id,
+        label: threat.label,
+        priority: originalPriority,  // 使用原始优先级
+        is_highest_priority: false,  // 明确标记这不是最高优先级威胁
+        is_correct: false,  // 标记为错误选择
+        correct_answer: highestPriorityThreat ? highestPriorityThreat.id : null,
+        timestamp: Date.now(),
+        receive_timestamp: lastEmergencyReceiveTimestampRef.current,
+        user_id: userId,
+        event_owner: agentStore.currentOperationOwner,
+      });
+    }
+  }, [getCurrentHighestPriorityThreat, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef, agentStore.currentOperationOwner, threatsWithScore]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -487,47 +883,34 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     },
     getBestThreat: () => {
-      // 如果当前emergency是missile类型，优先处理它
-      if (radarData?.emergency?.event === 'missile') {
-        const missileType = radarData.emergency.missileType;
-        return {
-          id: `missile_${Date.now()}`,
-          type: 'missile',
-          label: missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
-          source: missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
-          distance: 0,
-          heading: 0,
-          priority: 'high'
-        };
-      }
+      if (threatsWithScore.length === 0) return null;
 
-      // 如果是upgrade类型的emergency，检查新的saThreats数据
-      if (radarData?.emergency?.event === 'upgrade' && radarData.emergency.saThreats) {
-        // 在新的saThreats中查找Primary目标
-        const primaryThreat = radarData.emergency.saThreats.find(threat => 
-          threat.id.includes('Primary')
-        );
-        if (primaryThreat) {
-          return {
-            id: primaryThreat.id,
-            type: primaryThreat.type,
-            label: primaryThreat.label,
-            source: primaryThreat.label,
-            distance: 0,
-            heading: 0,
-            priority: 'high'
-          };
+      const level = agentStore.currentAILevel;
+      const probabilities = agentStore.currentAILevelConfig?.decision_probabilities || [1.0];
+      let choiceIndex = 0;
+
+      // 根据配置的概率决定选择
+      const rand = Math.random();
+      let cumulativeProbability = 0;
+      for (let i = 0; i < probabilities.length; i++) {
+        cumulativeProbability += probabilities[i];
+        if (rand < cumulativeProbability) {
+          choiceIndex = i;
+          break;
         }
       }
-
-      // 其次检查threatList中的威胁
-      const missileThreat = threatList.find(threat => 
-        (threat.type && threat.type.toLowerCase().includes('missile')) || 
-        (threat.id && threat.id.includes('Primary'))
-      );
       
-      // 如果找到符合条件的威胁，返回它，否则返回第一个威胁
-      return missileThreat || threatList[0];
+      // 确保选择的索引不越界
+      choiceIndex = Math.min(choiceIndex, threatsWithScore.length - 1);
+      
+      const bestThreatInfo = threatsWithScore[choiceIndex];
+
+      if (!bestThreatInfo) return null;
+
+      console.log(`[AI Agent] Level: ${level}, Choice Index: ${choiceIndex}, Threat: ${bestThreatInfo.threat.label || bestThreatInfo.threat.type}`);
+
+      // 返回被选中威胁的原始对象，因为 handleThreatIconClick 需要它
+      return bestThreatInfo.threat;
     }
   });
 
@@ -567,6 +950,60 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     radarStore
   ]);
 
+  useEffect(() => {
+    // 仪表盘间歇式旋转 - 旋转一段时间后暂停，模拟真实雷达扫描
+    let animationId: number;
+    let stateChangeTimeout: number;
+    let lastTime = 0;
+    let isRotating = true; // 旋转状态标志
+    
+    const rotationSpeed = 12; // 旋转速度：每秒12度（旋转时）
+    const rotationDuration = 8000; // 旋转持续时间：8秒
+    const pauseDuration = 2000; // 暂停持续时间：2秒
+    
+    console.log(`🎯 仪表盘开始间歇式旋转，旋转${rotationDuration/1000}秒，暂停${pauseDuration/1000}秒`);
+    
+    const animate = (currentTime: number) => {
+      if (lastTime === 0) lastTime = currentTime;
+      const deltaTime = (currentTime - lastTime) / 1000; // 转换为秒
+      
+      // 只有在旋转状态时才更新角度
+      if (isRotating) {
+        setDynamicRotation(prev => {
+          const newRotation = (prev + rotationSpeed * deltaTime) % 360;
+          return newRotation;
+        });
+      }
+      
+      lastTime = currentTime;
+      animationId = requestAnimationFrame(animate);
+    };
+    
+    // 状态切换函数
+    const toggleRotationState = () => {
+      isRotating = !isRotating;
+      const nextDuration = isRotating ? rotationDuration : pauseDuration;
+      
+      console.log(`🎯 仪表盘${isRotating ? '开始旋转' : '暂停旋转'}，下次切换: ${nextDuration/1000}秒后`);
+      
+      stateChangeTimeout = window.setTimeout(toggleRotationState, nextDuration);
+    };
+    
+    // 启动动画和状态切换
+    animationId = requestAnimationFrame(animate);
+    stateChangeTimeout = window.setTimeout(toggleRotationState, rotationDuration);
+    
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        console.log(`🎯 仪表盘旋转动画已停止`);
+      }
+      if (stateChangeTimeout) {
+        window.clearTimeout(stateChangeTimeout);
+      }
+    };
+  }, []);
+
   return (
     <div className="flex flex-col items-center justify-center">
       <div className="flex flex-col items-center">
@@ -587,16 +1024,38 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             style={{ height: sideContainerHeight }}
           >
             {leftButtons.map((label, idx) => (
-              <Button
-                key={label}
-                label={label}
-                onClick={idx === 1 ? handleResetSA : () => handleButtonClick(label)}
-              />
+              <div key={label} className="relative">
+                <Button
+                  label={label}
+                  onClick={idx === 1 ? handleResetSA : () => handleButtonClick(label)}
+                />
+                {/* 在L2按钮(idx === 1)下方添加RESET标签 */}
+                {idx === 1 && (
+                  <div className="text-green-400 text-xs font-mono text-center mt-1">
+                    RESET
+                  </div>
+                )}
+              </div>
             ))}
           </div>
           
           {/* 雷达显示 - 仅包含雷达相关元素 */}
-          <div className="sa-page bg-black" style={{ width, height }}>
+          <div className="sa-page bg-black relative" style={{ width, height }}>
+            {/* 接管控制按钮 - 位置更靠近操作区域 */}
+            {agentStore.isAIActive && (
+              <button 
+                className="absolute bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded shadow-lg transition-colors duration-200 z-50"
+                style={{
+                  top: '10px',
+                  right: '10px'
+                }}
+                onClick={handleTakeControl}
+                title="按F10或点击此按钮接管威胁排序控制"
+              >
+                接管控制 (F10)
+              </button>
+            )}
+            
             <Stage width={width} height={height}>
               <Layer>
                 {/* 第一个圆（中心圆） */}
@@ -652,7 +1111,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                 </Group>
                 
                 {/* 方向和刻度线 */}
-                {renderDirectionMarkers && renderDirectionMarkers()}
+                {renderDirectionMarkers()}
                 
                 {/* 第二个和第三个圆之间的刻度线 */}
                 {scaleLines && scaleLines.map((line, i) => (
@@ -673,6 +1132,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                     strokeWidth={1}
                   />
                 ))}
+                
+                {/* 刻度数值标记 */}
+                {renderScaleValues()}
                 
                 {/* 底部横线 */}
                 <Line
@@ -695,15 +1157,33 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                 {/* 随机分布的icon */}
                 {saThreats.map((threat, idx) => {
                   const IconComp = ICON_MAP[threat.type as keyof typeof ICON_MAP];
-                  if (!IconComp) return null;
+                  
+                  // 添加调试信息
+                  if (!IconComp) {
+                    console.warn(`⚠️ 未找到威胁类型 "${threat.type}" 对应的图标组件`);
+                    console.log('可用的图标类型:', Object.keys(ICON_MAP));
+                    console.log('当前威胁数据:', threat);
+                    return null;
+                  }
+                  
+                  console.log(`✅ 渲染威胁: ${threat.type} (${threat.label}) at (${iconPositions[idx].x}, ${iconPositions[idx].y})`);
+                  
                   return (
                     <Group key={threat.id} onClick={() => handleThreatIconClick(threat)}>
                       <IconComp
                         x={iconPositions[idx].x}
-                        y={iconPositions[idx].y - 100}
+                        y={iconPositions[idx].y}
                         size={ICON_SIZE}
                         color={iconColors[Object.keys(ICON_MAP).indexOf(threat.type as keyof typeof ICON_MAP)]}
                         label={threat.label}
+                      />
+                      <Text
+                        x={iconPositions[idx].x + ICON_SIZE + 5}
+                        y={iconPositions[idx].y + ICON_SIZE / 2 - 8}
+                        text={threat.label}
+                        fontSize={14}
+                        fill="#00ff00"
+                        fontFamily="monospace"
                       />
                     </Group>
                   );
@@ -721,6 +1201,22 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             className="flex flex-col justify-between ml-4 mt-12" 
             style={{ height: sideContainerHeight }}
           >
+            {/* 音频控制按钮 - 状态直接来自 agentStore */}
+            <div className="mb-4">
+              <button
+                className="w-12 h-10 border-2 border-white rounded font-mono text-xs transition-colors duration-200"
+                // {`w-12 h-10 border-2 border-white rounded font-mono text-xs transition-colors duration-200 ${
+                //   agentStore.audioEnabled 
+                //     ? 'bg-green-600 hover:bg-green-700 text-white' 
+                //     : 'bg-red-600 hover:bg-red-700 text-white'
+                // }`}
+                onClick={handleAudioToggle}
+                title="点击切换音频播放状态"
+              >
+                {/* 🔊{agentStore.audioEnabled ? 'ON' : 'OFF'} */}
+              </button>
+            </div>
+            
             {rightButtons.map(label => (
               <Button key={label} label={label} onClick={() => handleButtonClick(label)} />
             ))}
@@ -763,6 +1259,29 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           </div>
         ))}
       </div>
+      
+      {/* 任务结束弹窗 */}
+      {showTaskComplete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 border-2 border-green-400 rounded-lg p-6 max-w-md mx-4">
+            <div className="text-center">
+              <div className="text-green-400 text-2xl font-bold mb-4">
+                ✅ 任务结束
+              </div>
+              <div className="text-white mb-4">
+                最具威胁项处理完成：<br />
+                <span className="text-yellow-400 font-mono">{completedThreat}</span>
+              </div>
+              <button
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
+                onClick={() => setShowTaskComplete(false)}
+              >
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

@@ -22,9 +22,10 @@ interface UnknownTargetProps {
     endX: number;
     endY: number;
   };
+  scanAngle?: number;
 }
 
-const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions }) => {
+const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions, scanAngle = 60 }) => {
   // 简化状态，只用一个状态跟踪偏移量，而不是完整的位置
   // 这样即使原始position发生变化，也不会影响偏移量的累加
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -35,6 +36,17 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
   // 从props解构需要的属性
   const { id, direction, type, speed, selected, position } = data;
   
+  // 根据scanAngle计算缩放比例
+  const getScale = () => {
+    switch (scanAngle) {
+      case 15: return 1.2;
+      case 30: return 1.0;
+      case 60: return 0.8;
+      default: return 1.0;
+    }
+  };
+  const scale = getScale();
+
   // 计算实际显示位置 = 原始位置 + 当前偏移量
   const displayPosition = {
     x: position.x + offset.x,
@@ -81,103 +93,10 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     return null;
   }
   
-  // 将弧度转换为角度，便于调试
-  const directionDegrees = (direction * 180 / Math.PI) % 360;
-  
-  // 旋转点的辅助函数
-  const rotatePoint = (x: number, y: number, angle: number): [number, number] => {
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    return [
-      x * cos - y * sin,
-      x * sin + y * cos
-    ];
-  };
-  
-  // ==================== 三角形绘制 ====================
-  
-  // 定义三角形基础形状（倒置，底边在上，尖端朝下）
-  const triangleTip = { x: 0, y: 10 }; // 顶点（朝下）
-  const baseLeft = { x: -5, y: 0 }; // 底边左端点
-  const baseRight = { x: 5, y: 0 }; // 底边右端点
-  const baseCenter = { x: 0, y: 0 }; // 底边中心点
-  
-  // 计算三角形旋转角度 - 保持倒三角形状但根据方向旋转整体
-  // 在雷达坐标系中: 0度→右, 90度(π/2)→下, 180度(π)→左, 270度(3π/2)→上
-  const triangleRotation = speed > 0 ? direction : Math.PI/2; // 静止目标默认朝上
-  
-  // 应用旋转，计算三角形顶点
-  let baseTrianglePoints: number[] = [];
-  const rawTrianglePoints = [
-    triangleTip.x, triangleTip.y,
-    baseLeft.x, baseLeft.y,
-    baseRight.x, baseRight.y,
-    triangleTip.x, triangleTip.y
-  ];
-  
-  // 旋转所有点
-  for (let i = 0; i < rawTrianglePoints.length; i += 2) {
-    const [rotatedX, rotatedY] = rotatePoint(
-      rawTrianglePoints[i], 
-      rawTrianglePoints[i + 1], 
-      triangleRotation
-    );
-    baseTrianglePoints.push(rotatedX, rotatedY);
-  }
-  
-  // 计算旋转后的底边中心点
-  let rotatedBaseCenter = { ...baseCenter };
-  if (speed > 0) {
-    const [rotatedX, rotatedY] = rotatePoint(
-      baseCenter.x, 
-      baseCenter.y, 
-      triangleRotation
-    );
-    rotatedBaseCenter = { x: rotatedX, y: rotatedY };
-  }
-  
-  // ==================== 拖尾计算 ====================
-  
-  // 计算拖尾点
-  const tailPoints = (() => {
-    // 所有目标使用固定长度的拖尾
-    const tailLength = 25;
-    
-    // 计算旋转后的三角形顶点（尖端）位置
-    const [rotatedTipX, rotatedTipY] = rotatePoint(
-      triangleTip.x, 
-      triangleTip.y, 
-      triangleRotation
-    );
-    
-    // 计算旋转后的底边中心点位置
-    const [rotatedCenterX, rotatedCenterY] = rotatePoint(
-      baseCenter.x, 
-      baseCenter.y, 
-      triangleRotation
-    );
-    
-    // 计算从底边中心到顶点的方向向量
-    const directionX = rotatedTipX - rotatedCenterX;
-    const directionY = rotatedTipY - rotatedCenterY;
-    
-    // 计算向量长度
-    const vectorLength = Math.sqrt(directionX * directionX + directionY * directionY);
-    
-    // 归一化方向向量
-    const normalizedDirX = vectorLength === 0 ? 0 : directionX / vectorLength; // Handle zero vectorLength
-    const normalizedDirY = vectorLength === 0 ? 0 : directionY / vectorLength; // Handle zero vectorLength
-    
-    // 计算拖尾终点，沿着三角形中轴线的延长线
-    const tailEndX = rotatedTipX + normalizedDirX * tailLength;
-    const tailEndY = rotatedTipY + normalizedDirY * tailLength;
-    
-    // 拖尾从三角形顶点延伸到终点
-    return [
-      rotatedTipX, rotatedTipY, // 从三角形顶点开始拖尾
-      tailEndX, tailEndY // 延伸到拖尾终点
-    ];
-  })();
+  // 将后端的笛卡尔坐标系角度 (direction) 转换为屏幕坐标系下的旋转角度（单位：度）
+  // 屏幕坐标系Y轴向下，所以角度需要取反。
+  // 我们的基础图标(>)的朝向是左边, 所以需要增加180度来对齐0度朝右的标准。
+  const rotationDegrees = -data.direction * 180 / Math.PI + 180;
   
   // ==================== 动画逻辑 ====================
   
@@ -204,10 +123,10 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
       // 根据原始speed和速度因子计算实际移动距离
       const moveDistance = speed * speedFactor * deltaTime;
       
-      // 计算x和y的增量 - 方向计算已正确，保持不变
-      // 在雷达坐标系中: cos(direction)计算x轴移动, sin(direction)计算y轴移动
+      // 计算x和y的增量
+      // direction是笛卡尔坐标系角度，但屏幕坐标系Y轴是反的，所以sin(direction)需要取反才能得到正确的Y轴移动
       const dx = Math.cos(direction) * moveDistance;
-      const dy = Math.sin(direction) * moveDistance;
+      const dy = -Math.sin(direction) * moveDistance;
       
       // 累加到当前偏移量
       setOffset(current => ({
@@ -246,33 +165,37 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
   
   return (
     // 使用计算出的显示位置，而不是原始position
-    <Group x={displayPosition.x} y={displayPosition.y}>
-      {/* 拖尾 */}
+    // 将旋转应用于整个Group，这样三角形和拖尾都会一起旋转
+    <Group 
+      x={displayPosition.x} 
+      y={displayPosition.y}
+      rotation={rotationDegrees}
+      scaleX={scale}
+      scaleY={scale}
+    >
+      {/* 拖尾 - 从顶点向后延伸 */}
       <Line
-        points={tailPoints}
+        points={[-15, 0, -40, 0]} // 从顶点(-15,0)向后延伸
         stroke={color}
-        strokeWidth={2}
-        listening={false}
+        strokeWidth={1.5}
+        opacity={0.6}
+        lineCap="round"
       />
-      
-      {/* 三角形 */}
+
+      {/* 目标三角形 - 底边在前方(右侧)，顶点在后(左侧) */}
       <Line
-        points={baseTrianglePoints}
+        points={[
+           0, 7,   // 底边上端点
+           0, -7,  // 底边下端点
+           -15, 0  // 顶点
+        ]}
         closed={true}
+        fill={selected ? 'white' : color} // 选中时高亮为白色
         stroke={color}
-        strokeWidth={2}
-        fill={selected ? color : undefined}
-        listening={false} // Typically targets are not interactive themselves for clicks
+        strokeWidth={1}
+        shadowColor={selected ? 'cyan' : 'transparent'} // 选中时发光
+        shadowBlur={selected ? 10 : 0}
       />
-      {/* Optional: Display target ID or other info for debugging */}
-      {/* 
-      <Text 
-        text={`ID: ${id}`}
-        fontSize={10}
-        fill="white"
-        y={-20} // Adjust position relative to target center
-      />
-      */}
     </Group>
   );
 };

@@ -39,6 +39,10 @@ interface UnknownTargetManagerProps {
    * 是否启用IFF模式（敌我识别）
    */
   iffMode?: boolean;
+  /**
+   * 当前的雷达扫描角度
+   */
+  scanAngle?: number;
 }
 
 /**
@@ -52,7 +56,8 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
   selectedTargetId,
   verticalLineX,
   framePositions,
-  iffMode = false
+  iffMode = false,
+  scanAngle = 60 // 默认值为60
 }) => {
   // 如果不显示目标或者没有目标数据，但有垂直线需要显示
   if ((!showTargets || !externalTargets || externalTargets.length === 0) && verticalLineX === undefined) {
@@ -111,6 +116,7 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
             }} 
             color={targetColor} 
             framePositions={framePositions}
+            scanAngle={scanAngle}
           />
         );
       })}

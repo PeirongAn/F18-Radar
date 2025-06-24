@@ -6,19 +6,28 @@ import useRadarData from '../hooks/useRadarData';
 
 interface InitialFormModalProps {
   onStart: (userId: string, includeAI: boolean) => void;
+  defaultUserId?: string;
+  defaultIncludeAI?: boolean;
 }
 
-const InitialFormModal: React.FC<InitialFormModalProps> = observer(({ onStart }) => {
+const InitialFormModal: React.FC<InitialFormModalProps> = observer(({ 
+  onStart, 
+  defaultUserId = '', 
+  defaultIncludeAI = false 
+}) => {
   const userIdRef = useRef<HTMLInputElement>(null);
-  const [includeAI, setIncludeAI] = React.useState(false);
+  const [includeAI, setIncludeAI] = React.useState(defaultIncludeAI);
   const { radarStore } = useStore();
   const { initializeSystem } = useRadarData();
 
   useEffect(() => {
     if (userIdRef.current) {
       userIdRef.current.focus();
+      if (defaultUserId) {
+        userIdRef.current.value = defaultUserId;
+      }
     }
-  }, []);
+  }, [defaultUserId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

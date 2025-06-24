@@ -338,13 +338,18 @@ const Radar: React.FC<RadarProps> = (({
               console.log(`[AI Engine] Target locked at X: ${lockX}`);
             }
           } else {
-            // 如果没有位置信息，仍然可以选择目标
+            // 如果没有位置信息，使用屏幕中心作为默认lockX
             console.log(`[AI Engine] Selecting target without position: ${targetToSelect.id}`);
             if (onTargetSelect) {
+              // 使用屏幕中心的X坐标作为默认锁定线位置
+              const centerX = (framePositions.startX + framePositions.endX) / 2;
               onTargetSelect({ 
                 targetId: targetToSelect.id,
+                lockX: centerX, // 添加默认的lockX值
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
               });
+              
+              console.log(`[AI Engine] Target locked at center X: ${centerX} (fallback)`);
             }
           }
         }, config.tdc_select_delay_ms);
@@ -425,6 +430,9 @@ const Radar: React.FC<RadarProps> = (({
   const handleTargetSelection = (params: TargetSelectParams) => {
     if (onTargetSelect) {
       onTargetSelect(params);
+      
+      // 移除重复的IFF激活逻辑，现在统一在App.tsx的handleTargetSelect中处理
+      // IFF激活逻辑已移至App.tsx，避免重复触发
     }
   };
 
@@ -565,34 +573,56 @@ const Radar: React.FC<RadarProps> = (({
     console.log(`扫描中心已设置，偏移量: ${offset}px`);
   };
 
-
-  // 添加系统重置功能
-  const handleReset = () => {
-    console.log('====== 系统重置 ======');
+  // 添加接管按钮处理函数
+  const handleTakeControl = useCallback(() => {
+    console.log('用户手动接管控制');
+    // 禁用AI控制
+    agentStore.setAIActive(false);
     
-    // 发送消息到服务器重置目标
-    if (resetTargets) {
-      resetTargets();
-      console.log('已发送重置目标请求到服务器');
-    }
-    
-    // 发送重置后的设置到服务器
+    // 发送接管消息到服务器
     if (sendMessage) {
-      const resetMessage = {
-        type: 'settings_update',
-        range: RADAR_RANGES[1], // 20海里
-        scanAngle: 60
-      };
-      sendMessage(resetMessage);
-      console.log('已发送重置设置到服务器');
+      sendMessage({
+        type: 'user_take_control',
+        timestamp: Date.now(),
+        user_id: 'current_user' // 这里可以从props或store中获取实际用户ID
+      });
     }
     
-    console.log('系统即将刷新页面...');
+    // 可以添加一些UI反馈，比如短暂显示"已接管控制"的提示
+    console.log('✅ 用户已接管雷达控制');
+  }, [sendMessage]);
+
+  // 添加F10快捷键监听
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (event.key === 'F10') {
+        event.preventDefault();
+        handleTakeControl();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [handleTakeControl]);
+
+  // 优化系统重置功能 - 保留用户信息
+  const handleReset = () => {
+    console.log('====== 系统重置 (模拟页面重新载入) ======');
     
-    // 短暂延迟后刷新页面，确保消息已发送
-    setTimeout(() => {
-      window.location.reload();
-    }, 300);
+    // 保存用户名和AI选项到sessionStorage，模拟页面重新载入但保留用户信息
+    if (radarStore.userId) {
+      sessionStorage.setItem('preservedUserId', radarStore.userId);
+      sessionStorage.setItem('preservedIncludeAI', agentStore.isAIActive.toString());
+      console.log('用户信息已保存:', { 
+        userId: radarStore.userId, 
+        includeAI: agentStore.isAIActive 
+      });
+    }
+    
+    // 执行页面重新载入
+    window.location.reload();
   };
 
   return (
@@ -618,27 +648,45 @@ const Radar: React.FC<RadarProps> = (({
         </div>
         
         {/* 雷达显示 */}
-        <RadarDisplay
-          width={width}
-          height={height}
-          radarConfig={radarConfig}
-          framePositions={framePositions}
-          tdcPosition={tdcPosition}
-          onTargetSelect={handleTargetSelection}
-          scanMode={scanMode}
-          scanControl={scanControl}
-          onTDCPositionSet={handleTDCPositionSet}
-          showVectorHUD={showVectorHUD}
-          range={RADAR_RANGES[rangeIndex]}
-          showUnknownTargets={showUnknownTargets}
-          unknownTargetCount={unknownTargetCount}
-          maxScanCount={maxScanCount} // 传递BR计数上限
-          displayMode={displayMode} // 传递显示模式
-          onModeDisplayChange={setDisplayMode} // 传递显示模式变更回调
-          isSilent={isSilent} // 传递雷达静默状态
-          isStarted={isStarted} // 传递系统启动状态
-          sendMessage={sendMessage} // 传递发送消息函数
-        />
+        <div className="relative">
+          <RadarDisplay
+            width={width}
+            height={height}
+            radarConfig={radarConfig}
+            framePositions={framePositions}
+            tdcPosition={tdcPosition}
+            onTargetSelect={handleTargetSelection}
+            scanMode={scanMode}
+            scanControl={scanControl}
+            onTDCPositionSet={handleTDCPositionSet}
+            showVectorHUD={showVectorHUD}
+            range={RADAR_RANGES[rangeIndex]}
+            showUnknownTargets={showUnknownTargets}
+            unknownTargetCount={unknownTargetCount}
+            maxScanCount={maxScanCount} // 传递BR计数上限
+            displayMode={displayMode} // 传递显示模式
+            onModeDisplayChange={setDisplayMode} // 传递显示模式变更回调
+            isSilent={isSilent} // 传递雷达静默状态
+            isStarted={isStarted} // 传递系统启动状态
+            sendMessage={sendMessage} // 传递发送消息函数
+          />
+          
+          {/* 接管控制按钮 - 位置更靠近操作区域 */}
+          {agentStore.isAIActive && (
+            <button 
+              className="absolute bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded shadow-lg transition-colors duration-200"
+              style={{
+                top: '10px',
+                right: '10px',
+                zIndex: 100
+              }}
+              onClick={handleTakeControl}
+              title="按F10或点击此按钮接管控制"
+            >
+              接管控制 (F10)
+            </button>
+          )}
+        </div>
         
         {/* 右侧按钮 */}
         <RadarButtons 
@@ -667,7 +715,7 @@ const Radar: React.FC<RadarProps> = (({
         }}
         onClick={handleReset}
       >
-        重置系统
+        重新载入
       </button>
     </div>
   );

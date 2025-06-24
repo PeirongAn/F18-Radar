@@ -87,7 +87,7 @@ const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) =>
   };
 
   return (
-    <div className="flex flex-col h-[600px] bg-gray-900 rounded-lg overflow-hidden">
+    <div className="flex flex-col h-[200px] bg-gray-900 rounded-lg overflow-hidden">
       <div className="bg-gray-800 p-4 border-b border-gray-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -111,7 +111,7 @@ const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) =>
         ))}
       </div>
       
-      <div className="p-4 bg-gray-800 border-t border-gray-700">
+      {/* <div className="p-4 bg-gray-800 border-t border-gray-700">
         <div className="flex justify-between items-center">
           <div className="text-gray-400">
             {agentStore.isAIActive 
@@ -129,7 +129,7 @@ const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) =>
             {agentStore.isAIActive ? '人工接管 (停用AI)' : '激活AI辅助'}
           </button>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 });

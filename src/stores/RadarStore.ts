@@ -5,7 +5,7 @@ import agentStore from './AgentStore'; // Restore the import for agentStore
 interface RadarDataHook {
   sendMessage: (message: any) => void;
   settingsValidationTimestamp: number | null;
-  initializeSystem: () => void;
+  initializeSystem: (userId: string, includeAI: boolean) => void;
   validateSettings: (settings: { range: number, scanAngle: number }) => boolean;
   submitSettings: (settings: { range: number, scanAngle: number }) => void;
   resetTargets: () => void;
@@ -105,11 +105,13 @@ export class RadarStore {
   startSystem(userId: string, withAI: boolean = false) {
     this.userId = userId;
     this.isStarted = true;
+    agentStore.setAIActive(withAI); // 确保AI状态也被设置
+    this.initializeSystem(userId, withAI); // 直接调用初始化
     console.log(`系统已启动 - 用户ID: ${userId}, 启用AI: ${withAI}`);
   }
   
   // 初始化雷达系统
-  initializeSystem() {
+  initializeSystem(userId: string, includeAI: boolean) {
     console.log('[雷达系统] 正在初始化雷达系统...', this.isStarted);
     if (!this.isStarted) {
       console.warn('系统未启动，无法执行初始化操作');
@@ -118,7 +120,7 @@ export class RadarStore {
     // 调用雷达数据hook中的初始化方法
     if (this.radarDataHook && this.radarDataHook.initializeSystem) {
       console.log('[雷达系统] 正在调用初始化方法...');
-      this.radarDataHook.initializeSystem();
+      this.radarDataHook.initializeSystem(userId, includeAI);
     } else {
       console.error('雷达数据hook未初始化或不包含initializeSystem方法');
     }
