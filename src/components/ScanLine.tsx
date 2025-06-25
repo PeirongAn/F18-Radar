@@ -95,7 +95,7 @@ const ScanLine: React.FC<ScanLineProps> = ({
       animRef.current.isForward = true;
       setDisplayPosition(newStart);
       
-      console.log(`扫描范围已更新: 角度=${scanMode.scanAngle}, 范围=[${newStart}, ${newEnd}]`);
+      // console.log(`扫描范围已更新: 角度=${scanMode.scanAngle}, 范围=[${newStart}, ${newEnd}]`);
     } else {
       // 角度相同但范围可能因窗口大小变化而改变
       rangeRef.current.start = newStart;
@@ -136,7 +136,7 @@ const ScanLine: React.FC<ScanLineProps> = ({
         if (!anim.cycleCompleted && onScanCycleComplete) {
           onScanCycleComplete();
           anim.cycleCompleted = true;
-          console.log("扫描完成一次从左到右的循环");
+          // console.log("扫描完成一次从左到右的循环");
         }
       }
     } else {

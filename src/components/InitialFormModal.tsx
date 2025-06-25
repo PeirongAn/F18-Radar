@@ -1,11 +1,9 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { useStore } from '../stores/StoreProvider';
-import agentStore from '../stores/AgentStore';
-import useRadarData from '../hooks/useRadarData';
+
 
 interface InitialFormModalProps {
-  onStart: (userId: string, includeAI: boolean) => void;
+  onStart: (userId: string, includeAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean) => void;
   defaultUserId?: string;
   defaultIncludeAI?: boolean;
 }
@@ -16,9 +14,9 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
   defaultIncludeAI = false 
 }) => {
   const userIdRef = useRef<HTMLInputElement>(null);
-  const [includeAI, setIncludeAI] = React.useState(defaultIncludeAI);
-  const { radarStore } = useStore();
-  const { initializeSystem } = useRadarData();
+  const [includeAI, setIncludeAI] = useState(defaultIncludeAI);
+  const [taskType, setTaskType] = useState<'radar' | 'sa'>('radar');
+  const [isPractice, setIsPractice] = useState(true);
 
   useEffect(() => {
     if (userIdRef.current) {
@@ -33,10 +31,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
     e.preventDefault();
     const userId = userIdRef.current?.value.trim();
     if (userId) {
-      radarStore.startSystem(userId, includeAI);
-      onStart(userId, includeAI);
-      agentStore.setAIActive(includeAI);
-      initializeSystem(userId, includeAI);
+      onStart(userId, includeAI, taskType, isPractice);
     }
   };
 
@@ -63,6 +58,46 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
           </div>
           
           <div className="mb-6">
+            <label className="block text-green-400 font-mono mb-2">
+              任务类型
+            </label>
+            <div className="flex space-x-6">
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  name="taskType"
+                  value="radar"
+                  checked={taskType === 'radar'}
+                  onChange={() => setTaskType('radar')}
+                  className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
+                />
+                <span className="ml-2 text-green-400 font-mono">雷达任务</span>
+              </label>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  name="taskType"
+                  value="sa"
+                  checked={taskType === 'sa'}
+                  onChange={() => setTaskType('sa')}
+                  className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
+                />
+                <span className="ml-2 text-green-400 font-mono">威胁排序任务</span>
+              </label>
+            </div>
+          </div>
+          
+          <div className="flex justify-between items-center mb-8">
+            <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="form-checkbox h-5 w-5 text-green-500 rounded focus:ring-green-500 border-gray-600 bg-gray-800"
+                  checked={isPractice}
+                  onChange={(e) => setIsPractice(e.target.checked)}
+                />
+                <span className="ml-2 text-green-400 font-mono">练习模式</span>
+              </label>
+
             <label className="flex items-center cursor-pointer">
               <input
                 type="checkbox"

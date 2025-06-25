@@ -286,7 +286,7 @@ export const renderText = ({
   framePositions,
   heading,  // 添加航向参数
   scanAngle = 60,  // 添加扫描角度参数，默认为60
-  range = 40,  // 添加范围值参数，默认为40
+  range = 20,  // 添加范围值参数，默认为20
   displayMode = 'AUTO', // 默认显示模式为AUTO
   isSilent = false, // 默认非静默模式
   isStarted = true // 默认启动状态

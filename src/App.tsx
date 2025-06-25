@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Radar from './components/Radar';
 import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
 import InitialFormModal from './components/InitialFormModal';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
+import TaskInfoDisplay from './components/TaskInfoDisplay';
 import useRadarData from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
-import radarStore from './stores/RadarStore';
 import agentStore from './stores/AgentStore';
+import radarStore from './stores/RadarStore';
+import { Toaster } from 'react-hot-toast';
+import CompletionModal from './components/CompletionModal';
 
 // 日志类型声明，需与CommunicationLog保持一致
 
@@ -25,6 +28,7 @@ const App: React.FC = observer(() => {
   const [showInitialForm, setShowInitialForm] = useState<boolean>(true);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
+  const [isPractice, setIsPractice] = useState<boolean>(true);
   const [isStarted, setIsStarted] = useState<boolean>(false);
   
   // 添加雷达参数状态
@@ -43,7 +47,11 @@ const App: React.FC = observer(() => {
     targetAntennaElevation,
     initSettings,
     operations,
-    sendMessage  // 添加 sendMessage
+    sendMessage,
+    initializeSystem,
+    sendResetSA,
+    repetitionInfos,
+    resetTargets,
   } = useRadarData();
   
   // 统一管理通信日志
@@ -105,48 +113,44 @@ const App: React.FC = observer(() => {
   
   // 处理目标选择
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
-    const { targetId, lockX, iffMode, externalTargetsTimestamp } = params;
-
-    // currentOperationOwner 应该由调用方 (Radar.tsx 或 RadarDisplay.tsx) 提前设置
-    // agentStore.setOperationOwner(lockX === undefined && targetId ? 'manual' : agentStore.currentOperationOwner);
-
-    radarStore.setLockedTargetId(targetId);
-    if (targetId && lockX !== undefined) { // 确保 lockX 有效值才设置
-      radarStore.setLockScreenX(lockX);
-    } else if (!targetId) {
-      radarStore.setLockScreenX(undefined); // 清除锁定
+    // 检查是否已经锁定了同一个目标
+    if (params.targetId && params.targetId === radarStore.lockedTargetId) {
+      console.log(`目标 ${params.targetId} 已被锁定，无需重复操作`);
+      return; // 如果是同一个目标，则不执行任何操作
+    }
+    
+    // 更新锁定的目标ID
+    radarStore.setLockedTargetId(params.targetId);
+    
+    // 更新锁定时的屏幕X坐标
+    if (params.targetId && params.lockX !== undefined) {
+      radarStore.setLockScreenX(params.lockX);
+    } else {
+      // 如果没有目标ID，则清除锁定线
+      radarStore.setLockScreenX(undefined);
     }
 
-    // 如果成功锁定目标，自动激活IFF
-    if (lockX !== undefined) {
-      console.log('✅ 目标锁定完成，触发IFF激活');
-      // 通过事件通知RadarDisplay激活IFF
+    console.log(`App.tsx - 目标选择已处理: id=${params.targetId}, lockX=${params.lockX}`);
+    
+    // 如果有目标被锁定，则自动触发IFF
+    if (params.targetId && params.iffMode) {
+      // 触发一个全局的自动激活IFF事件
       // window.dispatchEvent(new CustomEvent('autoActivateIFF'));
-      
-      // 发送IFF激活消息到服务器
-      if (sendMessage) {
-        sendMessage({
-          type: 'iff_activated',
-          targetId: targetId,
-          timestamp: Date.now(),
-          auto_triggered: true // 标记为自动触发
-        });
-      }
     }
 
-    if (targetId) {
+    if (params.targetId) {
       const messagePayload: any = {
         type: 'target_selected',
         timestamp: Date.now(),
-        target_id: targetId,
+        target_id: params.targetId,
         action: 'select',
       };
       // 只有当这些值有效时才添加到消息中
-      if (iffMode !== undefined) {
-        messagePayload.iff_mode = iffMode;
+      if (params.iffMode !== undefined) {
+        messagePayload.iff_mode = params.iffMode;
       }
-      if (externalTargetsTimestamp !== undefined && externalTargetsTimestamp !== null) {
-        messagePayload.receive_timestamp = externalTargetsTimestamp;
+      if (params.externalTargetsTimestamp !== undefined && params.externalTargetsTimestamp !== null) {
+        messagePayload.receive_timestamp = params.externalTargetsTimestamp;
       }
       
       console.log('[App.tsx] Sending target_selected:', messagePayload, 'with owner:', agentStore.currentOperationOwner);
@@ -163,12 +167,39 @@ const App: React.FC = observer(() => {
   }, [sendMessage]);
   
   // 处理初始表单提交
-  const handleStartApp = (id: string, withAI: boolean) => {
+  const handleStartApp = (id: string, withAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean) => {
     setUserId(id);
     setIncludeAI(withAI);
+    setIsPractice(isPractice);
+    
+    // 1. 更新所有相关的 store 状态
+    radarStore.startSystem(id, withAI, isPractice); // This now only sets state in radarStore
+    agentStore.setAIActive(withAI); // Explicitly set AI state here
+    
+    // 2. 更新 App.tsx 的本地 UI 状态
     setShowInitialForm(false);
     setIsStarted(true); // 设置系统为已启动状态
-    console.log(`应用已启动 - 用户ID: ${id}, 启用AI: ${withAI}`);
+    
+    // 根据选择的任务类型设置初始视图
+    if (taskType === 'sa') {
+      setActiveDisplay('navigation');
+      // 启动时如果选择SA，则立即发送SwitchSA消息以加载数据
+      sendMessage({
+        type: 'SwitchSA',
+        timestamp: Date.now(),
+        user_id: id,
+        is_practice: isPractice,
+      });
+    } else {
+      setActiveDisplay('radar');
+    }
+    
+    // 3. 日志记录和系统初始化调用（雷达任务）
+    console.log(`应用已启动 - 用户ID: ${id}, 启用AI: ${withAI}, 任务: ${taskType}, 练习: ${isPractice}`);
+    // 只有雷达任务需要这个初始化
+    if (taskType === 'radar') {
+      initializeSystem(id, withAI, isPractice);
+    }
   };
   
   // 处理雷达参数更新
@@ -176,24 +207,63 @@ const App: React.FC = observer(() => {
     setRadarRange(range);
     setScanAngle(angle);
     console.log(`雷达参数已更新 - 范围: ${range}海里, 角度: ${angle}°`);
+    radarStore.updateRadarParams(range, angle);
   };
 
   // 处理显示切换
   const handleDisplayChange = (display: 'radar' | 'navigation') => {
     setActiveDisplay(display);
     if (display === 'navigation') {
-      // 发送 SwitchSA 事件
       sendMessage({
         type: 'SwitchSA',
         timestamp: Date.now(),
         user_id: userId,
-        event_owner: 'manual'
+        is_practice: isPractice,
       });
+    } else if (display === 'radar') {
+      // 当切换回雷达时，重新初始化雷达任务
+      console.log(`切换到雷达视图。为用户重新初始化雷达任务: ${userId}, AI: ${includeAI}`);
+      initializeSystem(userId, includeAI, isPractice);
     }
   };
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Check if F12 is pressed
+      if (event.key === 'F12') {
+        event.preventDefault(); // Prevent default browser action
+        console.log("F12 pressed, resetting SA threats.");
+        sendResetSA(); // Call the reset function
+      }
+    };
+
+    // Add event listener
+    window.addEventListener('keydown', handleKeyDown);
+
+    // Cleanup event listener
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sendResetSA]); // Add sendResetSA to dependency array
+
+  // 根据当前视图决定要显示哪个任务的进度
+  const infoToShow = useMemo(() => {
+    const taskType = activeDisplay === 'radar' ? 'RADAR_TARGETING' : 'SA_THREAT_RESPONSE';
+    return repetitionInfos[taskType];
+  }, [activeDisplay, repetitionInfos]);
+
   return (
     <div className="min-h-screen bg-black text-gray-300">
+      <Toaster 
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: '#333',
+            color: '#fff',
+          },
+        }}
+      />
+      <CompletionModal />
       {/* 显示初始表单模态框 */}
       {showInitialForm && (
         <InitialFormModal 
@@ -241,7 +311,14 @@ const App: React.FC = observer(() => {
               />
             ) : (
               <div className='flex justify-center'>
-                <SAPage onAddMessage={addMessage} userId={userId}/>
+                <SAPage 
+                  width={1000} 
+                  height={1000} 
+                  onAddMessage={addMessage} 
+                  userId={userId}
+                  onResetSA={sendResetSA}
+                  onResetTargets={resetTargets}
+                />
               </div>
             )}
           </div>
@@ -275,6 +352,16 @@ const App: React.FC = observer(() => {
           </div>
         </div>
       </div>
+
+      {infoToShow && isStarted && (
+        <TaskInfoDisplay
+          current={infoToShow.current}
+          total={infoToShow.total}
+          scenario_index={infoToShow.scenario_index}
+          scenario_total={infoToShow.scenario_total}
+          is_practice={infoToShow.is_practice}
+        />
+      )}
     </div>
   );
 });

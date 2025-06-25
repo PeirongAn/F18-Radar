@@ -12,6 +12,7 @@ export interface AgentLevelConfig {
   // 可以根据需要添加更多雷达相关的AI配置，例如：
   // radar_auto_scan_angle?: number;
   decision_probabilities?: number[];
+  scan_interval_ms: number;
 }
 
 // 新增：定义服务端AI参数推荐的接口
@@ -22,11 +23,11 @@ export interface ServerAIParameterRecommendation {
 
 class AgentStore {
   // --- AI 激活状态 ---
-  isAIActive: boolean = false; // 默认AI不激活
+  isAIActive: boolean = false; // 由服务器初始化
 
   // --- AI 等级与配置 ---
-  aiConfigs: AgentLevelConfig[] = []; // 存储从JSON加载的所有等级配置
-  currentAILevel: string = "L1"; // 默认AI等级，可以根据实际情况调整初始值
+  aiConfigs: AgentLevelConfig[] = []; // 由服务器初始化
+  currentAILevel: string = ""; // 由服务器初始化
 
   // --- 事件归属 ---
   currentOperationOwner: 'AI' | 'manual' = 'manual';
@@ -40,9 +41,9 @@ class AgentStore {
   constructor() {
     makeAutoObservable(this, {
       currentAILevelConfig: computed,
-      // serverAIRecommendation is observable by default
     });
-    this.loadConfig(); // 在构造时自动加载配置
+    // 不再主动加载配置
+    // this.loadConfig(); 
   }
 
   // --- Computed Property ---
@@ -53,11 +54,28 @@ class AgentStore {
     }
     const config = this.aiConfigs.find(c => c.level === this.currentAILevel);
     // 如果找不到指定等级，或configs为空，则返回第一个作为回退或null
-    // 如果希望在找不到精确匹配的等级时严格返回null，可以修改下面的逻辑
     return config || (this.aiConfigs.length > 0 ? this.aiConfigs[0] : null); 
   }
 
   // --- Actions ---
+
+  // 新增：由服务器消息来初始化或重置状态
+  initializeFromServer = (data: { 
+    is_ai_active: boolean; 
+    ai_level: string; 
+    ai_configs: AgentLevelConfig[];
+    audio_enabled: boolean; 
+  }) => {
+    runInAction(() => {
+      this.isAIActive = data.is_ai_active;
+      this.currentAILevel = data.ai_level;
+      this.aiConfigs = data.ai_configs;
+      this.audioEnabled = data.audio_enabled;
+      this.currentOperationOwner = this.isAIActive ? 'AI' : 'manual';
+      console.log(`[AgentStore] Initialized from server. AI Active: ${this.isAIActive}, Level: ${this.currentAILevel}, Audio: ${this.audioEnabled}`);
+    });
+  }
+
   toggleAIActive = () => {
     this.isAIActive = !this.isAIActive;
     console.log(`AI Active state: ${this.isAIActive}`);
@@ -68,20 +86,20 @@ class AgentStore {
     // 自动同步 currentOperationOwner
     this.currentOperationOwner = isActive ? 'AI' : 'manual';
     console.log(`AI Active state set to: ${this.isAIActive}, operation owner: ${this.currentOperationOwner}`);
+    if (!isActive) {
+      // 当AI被禁用时，可以考虑是否要重置AI等级和推荐
+      this.serverAIRecommendation = null;
+    }
   }
 
   setCurrentAILevel = (level: string) => {
+    // 仅在配置列表中存在时才更新
     const isValidLevel = this.aiConfigs.some(config => config.level === level);
     if (isValidLevel) {
       this.currentAILevel = level;
       console.log(`AI Level set to: ${this.currentAILevel}`);
-    } else if (this.aiConfigs.length > 0 && !isValidLevel) {
-      // 如果尝试设置的level无效，但配置已加载，可以警告并保持不变，或设置为默认
-      console.warn(`Attempted to set invalid AI level: ${level}. Valid levels are: ${this.aiConfigs.map(c=>c.level).join(', ')}. Keeping current: ${this.currentAILevel}`);
     } else {
-      // 配置尚未加载时，可能允许设置，加载后再验证
-      this.currentAILevel = level;
-       console.log(`AI Level tentatively set to: ${this.currentAILevel} (pending config load)`);
+      console.warn(`Attempted to set invalid AI level: ${level}.`);
     }
   }
 
@@ -105,63 +123,15 @@ class AgentStore {
     });
   }
 
+  // loadConfig 方法已被移除
+  /*
   async loadConfig() {
-    try {
-      const resp = await fetch("/agent_level.json");
-      if (!resp.ok) {
-        throw new Error(`Failed to fetch agent_level.json: ${resp.statusText} (status: ${resp.status})`);
-      }
-      const data = await resp.json();
-      
-      runInAction(() => {
-        if (data && data.levels && Array.isArray(data.levels) && data.levels.length > 0) {
-          this.aiConfigs = data.levels;
-          // 使用配置文件中的current_level
-          if (data.current_level && this.aiConfigs.some(c => c.level === data.current_level)) {
-            this.currentAILevel = data.current_level;
-          } else {
-            console.warn(`Config file's current_level "${data.current_level}" is invalid. Defaulting to "${this.aiConfigs[0].level}".`);
-            this.currentAILevel = this.aiConfigs[0].level;
-          }
-          console.log("Agent configurations loaded:", JSON.stringify(this.aiConfigs, null, 2));
-          console.log("Current AI Level:", this.currentAILevel);
-          console.log("Current AI Config:", JSON.stringify(this.currentAILevelConfig, null, 2));
-        } else {
-          console.warn("agent_level.json is empty, not an array, or invalid. Agent will use fallback configurations or defaults.");
-          this.aiConfigs = []; 
-        }
-      });
-
-      // 从配置文件中读取音频设置
-      if (data.game_settings && typeof data.game_settings.audio_enabled === 'boolean') {
-        this.audioEnabled = data.game_settings.audio_enabled;
-        console.log(`[AgentStore] 音频初始状态设置为: ${this.audioEnabled}`);
-      }
-    } catch (e) {
-      console.error("加载智能体配置失败:", e);
-      runInAction(() => {
-        // Fallback to a default configuration if loading fails
-        this.aiConfigs = [
-          { level: "L0", desc: "Fallback L0", threat_select_delay_ms: 2500, tdc_select_delay_ms: 2000 },
-          { level: "L1", desc: "Fallback L1 (Default)", threat_select_delay_ms: 1500, tdc_select_delay_ms: 1000 },
-          { level: "L2", desc: "Fallback L2", threat_select_delay_ms: 700, tdc_select_delay_ms: 500 }
-        ];
-        // 在fallback情况下使用L1作为默认值
-        this.currentAILevel = "L1";
-        console.warn("Using hardcoded fallback agent configurations due to loading error.");
-        console.log("Current AI Level (fallback):", this.currentAILevel);
-        console.log("Current AI Config (fallback):", JSON.stringify(this.currentAILevelConfig, null, 2));
-      });
-    }
-    // Log final state after attempting to load/fallback
-    console.log("Final AI Configs in Store:", JSON.stringify(this.aiConfigs, null, 2));
-    console.log("Final Current AI Level in Store:", this.currentAILevel);
-    console.log("Final Current AI Config in Store:", JSON.stringify(this.currentAILevelConfig, null, 2));
+    ...
   }
+  */
 
   toggleAudioEnabled() {
     this.audioEnabled = !this.audioEnabled;
-    console.log(`[AgentStore] 音频状态手动切换为: ${this.audioEnabled}`);
   }
 }
 

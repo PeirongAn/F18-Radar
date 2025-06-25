@@ -26,7 +26,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     const syncUserId = () => {
-      radarStore.setUserId(radarDataHook.userId);
+      if (radarDataHook.userId) {
+        radarStore.setUserId(radarDataHook.userId);
+      }
     };
     
     // 初始同步

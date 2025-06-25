@@ -8,6 +8,7 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from '../stores/StoreProvider';
 import agentStore from '../stores/AgentStore'; // Import AgentStore directly
 import radarStore from '../stores/RadarStore';
+import toast from 'react-hot-toast';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -39,6 +40,10 @@ const Radar: React.FC<RadarProps> = (({
   const { 
     sendMessage, 
     resetTargets, 
+    clearAndResetView,
+
+    clearInitSettings,
+    resetAntennaAdjustment,
     initializeSystem, 
     taskId,
     submitSettings,
@@ -47,10 +52,17 @@ const Radar: React.FC<RadarProps> = (({
     radarData, 
     initSettings, 
     confirmAntennaAdjustmentHandled, // Destructure the new function
+    connected,
+    error,
   } = useRadarData();
   
   // 使用MobX Store
   const { radarStore } = useStore();
+
+  const resetIffRef = useRef<() => void>(() => {});
+  
+  const [missionSettingsReady, setMissionSettingsReady] = useState(false);
+  const [missionAntennaReady, setMissionAntennaReady] = useState(false);
 
   // 定义扫描模式状态
   const [scanMode, setScanMode] = useState<ScanModeType>({
@@ -114,8 +126,65 @@ const Radar: React.FC<RadarProps> = (({
   // State for TDC position, managed locally in Radar.tsx
   const [tdcPosition, setTdcPosition] = useState({ x: width / 2, y: height / 2 });
 
+  const handleClearAndReset = useCallback(() => {
+    console.log('Clearing panel and resetting for next mission.');
+
+   
+    // Reset local state in Radar.tsx to initial values
+    setScanMode({
+      name: 'normal',
+      scanAngle: 60,
+      scanFraction: 1.0,
+      centerOffset: 0,
+    });
+    setShowVectorHUD(false);
+    setShowUnknownTargets(true);
+    setRangeIndex(1); // 20nm
+    setMaxScanCount(1);
+    setDisplayMode('AUTO');
+    setIsSilent(false);
+    setTdcPosition({ x: width / 2, y: height / 2 });
+
+    // Reset target lock
+    if (onTargetSelect) {
+      onTargetSelect({ targetId: undefined });
+    } else {
+      radarStore.setLockedTargetId(undefined);
+    }
+    
+    // Reset IFF mode in RadarDisplay
+    if (resetIffRef.current) {
+      resetIffRef.current();
+    }
+
+    // Reset antenna elevation to its initial value (0) before sending it
+    radarStore.setCurrentAntennaElevation(0);
+
+    // Clear the old init settings from the hook's state
+    clearInitSettings();
+
+    // Reset the mission readiness flags
+    setMissionSettingsReady(false);
+    setMissionAntennaReady(false);
+    
+    // Reset the antenna adjustment required flag *before* initializing
+    resetAntennaAdjustment();
+    
+    // Reset the flag for processing initial settings
+    initSettingsProcessedRef.current = false;
+
+    // Clear targets from the backend/data source
+    clearAndResetView();
+
+    // Re-initialize the system for the next mission
+    console.log('Starting next mission...');
+    initializeSystem(radarStore.userId, agentStore.isAIActive, radarStore.isPractice);
+    
+  }, [width, height, onTargetSelect, radarStore, clearAndResetView, initializeSystem, clearInitSettings, resetAntennaAdjustment]);
+
   // Handler for TDC key actions from useKeyboardControl
   const handleTdcKeyAction = useCallback((action: 'up' | 'down' | 'left' | 'right') => {
+    // DO NOT resume data stream here. It's managed by the readiness state.
     const moveStep = 5; // Define TDC move step here or pass from somewhere
     setTdcPosition(prev => {
       const newPos = { ...prev };
@@ -135,7 +204,7 @@ const Radar: React.FC<RadarProps> = (({
       }
       return newPos;
     });
-  }, [width, height, radarConfig.padding, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight]); // Dependencies for framePositions
+  }, [width, height, radarConfig.padding, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight, framePositions]); // resumeDataStream removed from dependencies
 
   // Setup keyboard controls for TDC
   useKeyboardControl({
@@ -222,16 +291,26 @@ const Radar: React.FC<RadarProps> = (({
   const initSettingsProcessedRef = useRef(false);
 
   useEffect(() => {
-    console.log('initSettings', agentStore.isAIActive, isStarted, initSettings);
+    // If initSettings is null (e.g., after a reset), do nothing until new settings arrive.
+    if (!initSettings) {
+      return;
+    }
+    
+    console.log('initSettings Check:', { 
+      isAIActive: agentStore.isAIActive, 
+      isStarted, 
+      initSettings, 
+      processed: initSettingsProcessedRef.current
+    });
     if (
-      !initSettingsProcessedRef.current &&  // 添加检查，确保只处理一次
       agentStore.isAIActive &&
+      !initSettingsProcessedRef.current &&
       isStarted &&
       initSettings &&
       typeof initSettings.range === 'number' &&
       typeof initSettings.scanAngle === 'number'
     ) {
-      console.log('[AI Radar] AI is active and initSettings received. Processing for auto-configuration:', initSettings);
+      console.log('[Radar] Processing initSettings for auto-configuration:', initSettings);
       initSettingsProcessedRef.current = true;  // 标记为已处理
 
       const targetRange = initSettings.range;
@@ -242,14 +321,14 @@ const Radar: React.FC<RadarProps> = (({
       // Update local rangeIndex if different
       const newRangeIndex = RADAR_RANGES.findIndex(r => r === targetRange);
       if (newRangeIndex !== -1 && rangeIndex !== newRangeIndex) {
-        console.log(`[AI Radar] initSettings: Adjusting range from ${RADAR_RANGES[rangeIndex]} to ${targetRange}`);
+        console.log(`[Radar] initSettings: Adjusting range from ${RADAR_RANGES[rangeIndex]} to ${targetRange}`);
         setRangeIndex(newRangeIndex);
         paramsChangedForUI = true;
       }
 
       // Update local scanMode if different
       if (scanMode.scanAngle !== targetScanAngle) {
-        console.log(`[AI Radar] initSettings: Adjusting scan angle from ${scanMode.scanAngle} to ${targetScanAngle}`);
+        console.log(`[Radar] initSettings: Adjusting scan angle from ${scanMode.scanAngle} to ${targetScanAngle}`);
         let newScanModeName: ScanModeType['name'] = 'normal';
         let newScanFraction = 1.0;
         if (targetScanAngle === 30) {
@@ -257,7 +336,7 @@ const Radar: React.FC<RadarProps> = (({
         } else if (targetScanAngle === 15) {
           newScanModeName = 'narrow'; newScanFraction = 0.25;
         } else if (targetScanAngle !== 60) {
-            console.warn(`[AI Radar] initSettings: Unsupported scan angle ${targetScanAngle}. Defaulting to 60 for UI.`);
+            console.warn(`[Radar] initSettings: Unsupported scan angle ${targetScanAngle}. Defaulting to 60 for UI.`);
         }
         setScanMode({
           name: newScanModeName,
@@ -271,17 +350,52 @@ const Radar: React.FC<RadarProps> = (({
       needsSettingsSubmission = true;
 
       if (needsSettingsSubmission) {
-        console.log('[AI Radar] Submitting initSettings to backend.');
+        console.log('[Radar] Submitting initSettings to backend.');
         submitSettings({
           range: targetRange,
           scanAngle: targetScanAngle,
         });
-        console.log('[AI Radar] Initial parameters (from initSettings) processed by AI.');
+        console.log('[Radar] Initial parameters (from initSettings) processed.');
       } else if (paramsChangedForUI) {
-        console.log('[AI Radar] initSettings: UI parameters updated, but no submission needed as values might match server expectations already or validation might handle it.');
+        console.log('[Radar] initSettings: UI parameters updated, but no submission needed as values might match server expectations already or validation might handle it.');
+      }
+
+      setMissionSettingsReady(true);
+    }
+  }, [isStarted, initSettings, submitSettings, rangeIndex, scanMode, agentStore.isAIActive]);
+
+  useEffect(() => {
+    if (antennaAdjustmentRequired) {
+      toast('请调整天线高度!', {
+        icon: '↕️',
+        duration: 4000,
+      });
+    }
+  }, [antennaAdjustmentRequired]);
+
+  useEffect(() => {
+    // This effect detects when the manual or AI adjustment is complete.
+    if (antennaAdjustmentRequired && radarStore.targetAntennaElevation !== null) {
+      if (radarStore.currentAntennaElevation === radarStore.targetAntennaElevation) {
+        console.log('Antenna adjustment complete.');
+        setMissionAntennaReady(true);
       }
     }
-  }, [agentStore.isAIActive, isStarted, initSettings, submitSettings, rangeIndex, scanMode]);
+    // Handle the case where no adjustment is required.
+    // This now relies on the server sending `adjust_antenna` or not.
+    // We assume if `antennaAdjustmentRequired` is false after init, we are ready.
+    // A better approach would be explicit confirmation from the server.
+    // For now, if adjustment is not required from the start, we assume ready.
+    if (!antennaAdjustmentRequired) {
+        setMissionAntennaReady(true);
+    }
+  }, [
+    antennaAdjustmentRequired,
+    radarStore.currentAntennaElevation,
+    radarStore.targetAntennaElevation
+  ]);
+
+
 
   // 当AI被禁用时重置ref
   useEffect(() => {
@@ -303,7 +417,7 @@ const Radar: React.FC<RadarProps> = (({
       
       if (availableTargets.length > 0) {
         // 寻找id以enemy开头的目标
-        const enemyTarget = availableTargets.find(target => target.id.startsWith('enemy'));
+        const enemyTarget = availableTargets.find((target: { id: string; }) => target.id.startsWith('enemy'));
         const targetToSelect = enemyTarget || availableTargets[0];
         const targetDisplayPosition = radarStore.targetDisplayPositions.get(targetToSelect.id);
 
@@ -440,6 +554,14 @@ const Radar: React.FC<RadarProps> = (({
   const handleButtonClick = (position: string, buttonIndex: number) => {
     console.log(`${position} button ${buttonIndex} clicked`);
     
+    // DO NOT resume data stream here.
+    
+    // Add clear and reset functionality to the first left button
+    if (position === 'left' && buttonIndex === 1) {
+      handleClearAndReset();
+      return; // Stop further processing for this button
+    }
+    
     // 使用MobX store中的系统状态
     const isSystemReady = radarStore.isStarted ;
     
@@ -470,6 +592,8 @@ const Radar: React.FC<RadarProps> = (({
       });
        // 如果系统已准备就绪，向服务器发送雷达范围更新
       if (isStarted) {
+       console.log("isStarted####", isStarted, RADAR_RANGES[rangeIndex], newScanAngle);
+
         submitSettings({
           range: RADAR_RANGES[rangeIndex],
           scanAngle: newScanAngle
@@ -565,6 +689,7 @@ const Radar: React.FC<RadarProps> = (({
 
   // 处理TDC位置设置
   const handleTDCPositionSet = (offset: number) => {
+    // DO NOT resume data stream here. It's managed by the readiness state.
     // 更新扫描模式，设置新的中心偏移量
     setScanMode({
       ...scanMode,
@@ -669,6 +794,11 @@ const Radar: React.FC<RadarProps> = (({
             isSilent={isSilent} // 传递雷达静默状态
             isStarted={isStarted} // 传递系统启动状态
             sendMessage={sendMessage} // 传递发送消息函数
+            connected={connected}
+            radarData={radarData}
+            error={error}
+            onResetForNextMission={handleClearAndReset}
+            resetIFF={resetIffRef}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域 */}

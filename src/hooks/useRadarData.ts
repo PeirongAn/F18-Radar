@@ -178,9 +178,12 @@ class GlobalWebSocketManager {
       const newData: RadarData = {
         // 对于列表数据，如果新消息中没有，则保留旧值
         targets: rawData.targets !== undefined ? rawData.targets : (this.state.radarData?.targets || []),
-        externalTargets: rawData.externalTargets !== undefined ? rawData.externalTargets : this.state.radarData?.externalTargets,
-        externalTargetsTimestamp: rawData.externalTargets !== undefined ? Date.now() : this.state.radarData?.externalTargetsTimestamp,
-        saThreats: rawData.saThreats !== undefined ? rawData.saThreats : this.state.radarData?.saThreats,
+        
+        // If the new message doesn't have externalTargets, it should be considered empty.
+        externalTargets: rawData.externalTargets !== undefined ? rawData.externalTargets : [],
+
+        externalTargetsTimestamp: rawData.externalTargets !== undefined ? Date.now() : null,
+        saThreats: rawData.saThreats !== undefined ? rawData.saThreats : (this.state.radarData?.saThreats || []),
         
         // 对于数值数据，如果新消息中没有，则保留旧值或使用默认值
         radar_azimuth: rawData.radar_azimuth !== undefined ? rawData.radar_azimuth : (this.state.radarData?.radar_azimuth || 0),
@@ -334,14 +337,38 @@ class GlobalWebSocketManager {
 // 获取全局WebSocket实例
 export const globalWS = GlobalWebSocketManager.getInstance();
 
+// 定义任务进度的接口
+export interface RepetitionInfo {
+  current: number;
+  total: number;
+  scenario_index?: number;
+  scenario_total?: number;
+  is_practice?: boolean;
+}
+
+export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
+
+// 定义不同任务类型的进度状态接口
+interface AllRepetitionInfos {
+  RADAR_TARGETING: RepetitionInfo | null;
+  SA_THREAT_RESPONSE: RepetitionInfo | null;
+}
+
 // 修改后的useRadarData hook使用全局WebSocket管理器
 const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   const [connected, setConnected] = useState<boolean>(false);
-  const [radarDataState, setRadarDataState] = useState<RadarData | null>(null);
+  const [radarData, setRadarData] = useState<any>({});
   const [error, setError] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<number | null>(null);
   const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
-  const [targetAntennaElevation, setTargetAntennaElevationState] = useState<number | null>(null);
+  const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
+  const [saThreats, setSaThreats] = useState<any[]>([]); // 重新添加 saThreats 状态
+  
+  // 修改：任务重复信息状态，以支持多个任务类型
+  const [repetitionInfos, setRepetitionInfos] = useState<AllRepetitionInfos>({
+    RADAR_TARGETING: null,
+    SA_THREAT_RESPONSE: null,
+  });
   
   // 初始设置参数状态
   const [initSettings, setInitSettings] = useState<any>(null);
@@ -358,6 +385,15 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     isActive: boolean;
     parameters?: any;
   }>>([]);
+  
+  const clearInitSettings = useCallback(() => {
+    setInitSettings(null);
+  }, []);
+  
+  const resetAntennaAdjustment = useCallback(() => {
+    setAntennaAdjustmentRequired(false);
+    setTargetAntennaElevation(null);
+  }, []);
   
   // 验证参数是否在推荐范围内
   const validateSettings = useCallback((settings: { range: number, scanAngle: number }) => {
@@ -393,36 +429,17 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   }, []);
   
   // 初始化系统，请求任务ID和初始设置
-  const initializeSystem = useCallback((userId: string, includeAI: boolean) => {
-    console.log('[雷达系统] 正在初始化雷达系统...', { userId, includeAI });
-    const timestamp = Date.now();
-    
-    // 先检查WebSocket连接状态
-    const wsState = globalWS.getState();
-    if (!wsState.connected) {
-      console.error('[雷达系统] WebSocket未连接，无法初始化系统');
-      return;
-    }
-    
-    // 发送系统初始化请求
+  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean) => {
     const initMessage = {
       type: 'task_start',
-      timestamp: timestamp,
-      receive_timestamp: timestamp,
       user_id: userId,
       include_ai: includeAI,
+      is_practice: isPractice, // 添加练习模式参数
     };
-    
-    console.log('[雷达系统] 发送初始化请求...');
-    // 使用重试机制发送消息
-    const success = globalWS.sendMessage(initMessage, 5, 200); // 最多重试5次，每次间隔200ms
-    
-    if (!success) {
-      console.warn('[雷达系统] 初始化请求发送失败，WebSocket未连接');
-    } else {
-      console.log('[雷达系统] 初始化请求已发送');
-    }
-  }, []);
+    sendMessage(initMessage);
+    console.log('System initialization message sent:', initMessage);
+    setTaskId(new Date().getTime());
+  }, [sendMessage]);
   
   // 发送参数设置给服务器
   const submitSettings = useCallback((settings: { range: number, scanAngle: number }) => {
@@ -452,6 +469,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   
   // 添加重置目标函数
   const resetTargets = useCallback(() => {
+    console.log("############radarData reset 222 #####");
+
     console.log('重置所有目标数据');
     // 发送重置目标的消息到服务器
     const resetMessage = {
@@ -463,17 +482,27 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     }
     
     // 如果有本地缓存的目标数据，也一并清除
-    if (radarDataState && radarDataState.externalTargets) {
-      setRadarDataState({
-        ...radarDataState,
+    if (radarData && radarData.externalTargets) {
+
+      setRadarData({
+        ...radarData,
         externalTargets: []
       });
     }
-  }, [radarDataState]);
+  }, [radarData]);
   
+  const clearAndResetView = useCallback(() => {
+    setRadarData(null); 
+    // 重置所有任务次数信息
+    setRepetitionInfos({ RADAR_TARGETING: null, SA_THREAT_RESPONSE: null });
+    sendMessage({ type: 'reset_view' });
+    console.log("View reset command sent, data stream paused, and local state cleared.");
+  }, [sendMessage]);
+
+
   // 处理接收到的消息
   const handleHookMessage = useCallback((message: any) => {
-    if (!message || !message.type) return; // Guard against null/undefined messages
+    if (!message || !message.type) return;
 
     console.log('[useRadarData] Processing message:', message);
 
@@ -485,15 +514,31 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     }
 
     // Handle other message types
-    if (message.type === 'task_id_assigned') setTaskId(message.task_id);
-    else if (message.type === 'init_settings') {
-      audioManager.play('radarRange'); // 播放提示音
+    if (message.type === 'init_settings') {
+      console.log('[useRadarData] Processing full init_settings from server:', message);
+      
+      // 1. 初始化AI和任务状态
+      agentStore.initializeFromServer(message);
+      
+      // 2. 设置任务ID
+      setTaskId(message.task_id);
+
+      // 3. 设置雷达参数供UI自动配置
       setInitSettings(message.settings);
+      
+      // 4. 设置任务重复信息
+      if (message.task_type && message.repetition_info) {
+        setRepetitionInfos(prev => ({
+          ...prev,
+          [message.task_type]: message.repetition_info,
+        }));
+      }
+
+      // 5. 记录操作和时间戳
       const ts = Date.now();
       recordOperation({ operationType: 'init_settings_received', timestamp: ts, isActive: false, parameters: message.settings });
       setInitSettingsTimestamp(ts);
-      // If init_settings also contains AI recommendation, it would be caught by the generic check above
-      // or can be explicitly checked here: if (message.settings?.ai_recommendation) agentStore.setServerAIRecommendation(message.settings.ai_recommendation);
+
     } else if (message.type === 'settings_validation') {
       if ((window as any).__settingsTimeoutRef) clearTimeout((window as any).__settingsTimeoutRef.current);
       const ts = Date.now();
@@ -504,20 +549,49 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       console.log('[useRadarData] Received adjust_antenna message:', message);
       const ts = Date.now();
       setAntennaAdjustmentRequired(true);
-      setTargetAntennaElevationState(message.targetElevation);
+      setTargetAntennaElevation(message.targetElevation);
       radarStore.setTargetAntennaElevation(message.targetElevation);
       recordOperation({ operationType: 'antenna_adjustment_required', timestamp: ts, isActive: false, parameters: { targetElevation: message.targetElevation }});
       setSettingsValidationTimestamp(ts);
+    } else if (message.type === 'agent_level_data') {
+      console.log('Received agent_level_data:', message.level, message.config);
+      // agentStore.setCurrentAILevel(message.level); // Temporarily commented out to avoid type errors
+    } else if (message.type === 'server_ai_recommendation') {
+      console.log('Received server_ai_recommendation:', message.recommendation);
+      agentStore.setServerAIRecommendation(message.recommendation);
+    } else if (message.type === 'sa_task_updated') {
+      console.log('[useRadarData] Received sa_task_updated:', message);
+      // 更新 saThreats 状态
+      if (message.saThreats) {
+        setSaThreats(message.saThreats);
+      }
+      if (message.task_type && message.repetition_info) {
+        setRepetitionInfos(prev => ({
+          ...prev,
+          [message.task_type]: message.repetition_info,
+        }));
+      }
+    } else if (message.type === 'all_tasks_completed') {
+      console.log('[useRadarData] Received all_tasks_completed:', message);
+      // 检查此任务类型是否已弹窗过
+      if (message.task_type && !radarStore.completedTaskTypes.has(message.task_type)) {
+        radarStore.showCompletionModal(message.message);
+        // 标记为已完成，防止重复弹窗
+        radarStore.addCompletedTaskType(message.task_type);
+      } else {
+        console.log(`[useRadarData] Completion modal for ${message.task_type} has already been shown. Suppressing.`);
+      }
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 
   }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired]);
   
   const confirmAntennaAdjustmentHandled = useCallback(() => {
+    console.log('Confirming to backend that antenna adjustment has been handled.');
     setAntennaAdjustmentRequired(false);
-    setTargetAntennaElevationState(null); // Reset the elevation state as the signal is handled
+    setTargetAntennaElevation(null); // Reset the elevation state as the signal is handled
     console.log('[useRadarData] Antenna adjustment requirement handled and states reset.');
-  }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevationState are stable from useState
+  }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevation are stable from useState
 
   const lastProcessedMessageIdForHook = useRef<string>('');
 
@@ -529,10 +603,11 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     const processSubscribedState = (state: WebSocketState) => {
       setConnected(state.connected);
       setError(state.error);
+      console.log("############radarData 111#####", state.radarData);
       
       // 处理雷达数据更新
       if (state.radarData) {
-        setRadarDataState(state.radarData);
+        setRadarData(state.radarData);
         
         // Process the most recent message that formed this radarData state IF it's new for the hook
         const latestMsgFromGlobal = globalWS.getLastMessage();
@@ -560,13 +635,17 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   const sendResetSA = useCallback(() => {
     sendMessage({ type: 'ResetSA', timestamp: Date.now() });
   }, [sendMessage]);
-  
+
+
   return { 
     connected, 
-    radarData: radarDataState, 
+    radarData, 
     error, 
     sendMessage, 
     resetTargets,
+    clearAndResetView,
+    clearInitSettings,
+    resetAntennaAdjustment,
     taskId,
     initializeSystem,
     submitSettings,
@@ -581,6 +660,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     userId: radarStore.userId,
     sendResetSA,
     confirmAntennaAdjustmentHandled,
+    repetitionInfos, // 导出新的字典状态
+    saThreats, // 确保导出 saThreats
   };
 };
 

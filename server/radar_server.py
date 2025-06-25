@@ -14,6 +14,8 @@ import random
 
 # 全局配置
 CONFIG = {}
+# 废除全局任务场景管理器
+# task_manager = None
 
 # 加载配置文件
 def load_config():
@@ -41,6 +43,223 @@ def load_config():
 # 在程序启动时加载配置
 load_config()
 
+# ---- 新增：数据库写入队列 ----
+db_writer_queue = queue.Queue()
+
+def db_worker():
+    """在后台线程中同步处理所有数据库写入操作。"""
+    conn = sqlite3.connect('radar_operations.db', check_same_thread=False)
+    # 设置WAL模式，可以提高并发性能，允许多个读和一个写同时进行
+    conn.execute('PRAGMA journal_mode=WAL;')
+    print("🗃️ DB worker thread started, connection in WAL mode.")
+    
+    while True:
+        try:
+            # 阻塞直到从队列中获取到任务
+            # 设置一个超时，以便线程可以优雅地退出（如果需要）
+            sql, params = db_writer_queue.get(timeout=1)
+            
+            # None作为一个哨兵值，用于终止线程
+            if sql is None:
+                print("🗃️ DB worker thread received shutdown signal.")
+                break
+                
+            conn.execute(sql, params)
+            conn.commit()
+            
+        except queue.Empty:
+            # 队列为空时超时，继续循环
+            continue
+        except Exception as e:
+            print(f"❌ [DB Worker Error] Failed to execute DB operation: {e}")
+            # 在这里可以添加更复杂的错误处理逻辑，比如重试或记录到文件
+            
+    conn.close()
+    print("🗃️ DB worker thread stopped and connection closed.")
+
+# 在主线程中启动数据库工作线程
+db_thread = threading.Thread(target=db_worker, daemon=True)
+db_thread.start()
+
+# ---- 新增：程序退出时，向队列发送停止信号 ----
+def cleanup_db_thread():
+    print("Requesting DB worker thread to shut down...")
+    db_writer_queue.put((None, None))
+    db_thread.join(timeout=5) # 等待线程结束
+    print("DB worker thread has been shut down.")
+
+atexit.register(cleanup_db_thread)
+
+# ---- 重新设计的：持久化任务场景管理器 ----
+class TaskScenarioManager:
+    """管理与数据库绑定的、持久化的用户任务场景。"""
+    def __init__(self, config, user_id, task_type, is_practice=False):
+        self.config = config
+        self.user_id = user_id
+        self.task_type = task_type
+        self.is_practice = is_practice # 由外部传入
+        
+        # 从配置中读取练习模式设置
+        game_settings = self.config.get('game_settings', {})
+        practice_reps = game_settings.get('practice_repetitions', 3)
+        formal_reps = game_settings.get('max_repetitions', 1)
+        self.max_repetitions = practice_reps if self.is_practice else formal_reps
+        
+        # 内部状态
+        self.ai_queue = []
+        self.manual_queue = []
+        self.active_queue = None
+        self.current_scenario = None
+        self.repetition_counter = 0
+
+        if not self._load_from_db():
+            self._initialize_new_progress()
+            self._save_to_db()
+
+    def _load_from_db(self):
+        """尝试从数据库加载用户进度。"""
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json FROM user_progress WHERE user_id = ? AND task_type = ?",
+                    (self.user_id, self.task_type)
+                )
+                row = cursor.fetchone()
+                if row:
+                    print(f"✅ [Task Manager] Found existing progress for user '{self.user_id}' and task '{self.task_type}'.")
+                    self.current_scenario = json.loads(row[0]) if row[0] else None
+                    self.repetition_counter = row[1] or 0
+                    self.ai_queue = json.loads(row[2]) if row[2] else []
+                    self.manual_queue = json.loads(row[3]) if row[3] else []
+                    return True
+        except Exception as e:
+            print(f"❌ Error loading progress from DB: {e}")
+        return False
+
+    def _save_to_db(self):
+        """将当前状态的写入操作放入队列，但练习模式除外。"""
+        if self.is_practice:
+            print("💾 [Task Manager] Practice mode: Skipping DB save.")
+            return
+        
+        sql = """
+            INSERT OR REPLACE INTO user_progress 
+            (user_id, task_type, current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """
+        params = (
+            self.user_id,
+            self.task_type,
+            json.dumps(self.current_scenario) if self.current_scenario else None,
+            self.repetition_counter,
+            json.dumps(self.ai_queue),
+            json.dumps(self.manual_queue)
+        )
+        db_writer_queue.put((sql, params))
+        print(f"💾 [Task Manager] Progress save queued for user '{self.user_id}', task '{self.task_type}'.")
+
+    def _initialize_new_progress(self):
+        """为新用户或新任务生成全新的队列和状态。"""
+        print(f"✨ [Task Manager] Initializing new progress for user '{self.user_id}', task '{self.task_type}'.")
+        all_levels = self.config.get('levels', [])
+        game_settings = self.config.get('game_settings', {})
+        all_difficulties = game_settings.get('difficulty_levels', {})
+        audio_options = [True, False]
+
+        # AI模式
+        ai_scenarios = []
+        for level_conf in all_levels:
+            for diff_name, diff_conf in all_difficulties.items():
+                for audio in audio_options:
+                    ai_scenarios.append({
+                        "is_ai_active": True, "audio_enabled": audio,
+                        "ai_level_name": level_conf['level'], "ai_level_config": level_conf,
+                        "difficulty_name": diff_name, "difficulty_config": diff_conf
+                    })
+        # 为每个AI场景添加类型编号
+        total_ai_scenarios = len(ai_scenarios)
+        for i, scenario in enumerate(ai_scenarios):
+            scenario['scenario_info'] = {'index': i + 1, 'total': total_ai_scenarios}
+        self.ai_queue = ai_scenarios
+
+        # 手动模式
+        manual_scenarios = []
+        for diff_name, diff_conf in all_difficulties.items():
+            for audio in audio_options:
+                manual_scenarios.append({
+                    "is_ai_active": False, "audio_enabled": audio,
+                    "ai_level_name": None, "ai_level_config": None,
+                    "difficulty_name": diff_name, "difficulty_config": diff_conf
+                })
+        # 为每个手动场景添加类型编号
+        total_manual_scenarios = len(manual_scenarios)
+        for i, scenario in enumerate(manual_scenarios):
+            scenario['scenario_info'] = {'index': i + 1, 'total': total_manual_scenarios}
+        self.manual_queue = manual_scenarios
+        
+        self.current_scenario = None
+        self.repetition_counter = 0
+
+    def are_all_scenarios_completed(self):
+        """检查此任务类型的所有场景（AI和手动）是否都已完成。"""
+        return not self.ai_queue and not self.manual_queue
+
+    def get_next_task_parameters(self, is_ai_active_request):
+        """获取下一个场景参数，并自动保存进度。"""
+        new_queue = self.ai_queue if is_ai_active_request else self.manual_queue
+        
+        # 检查是否切换了模式 (AI vs Manual)
+        queue_switched = False
+        if self.active_queue is not None: # 避免首次调用时被误判为切换
+            current_queue_name = 'ai_queue' if self.active_queue is self.ai_queue else 'manual_queue'
+            new_queue_name = 'ai_queue' if new_queue is self.ai_queue else 'manual_queue'
+            if current_queue_name != new_queue_name:
+                queue_switched = True
+
+        if queue_switched:
+            self.active_queue = new_queue
+            self.current_scenario = None
+            self.repetition_counter = 0
+            print(f"🔄 [Task Manager - {self.task_type}] Switched to {'AI' if is_ai_active_request else 'Manual'} queue.")
+
+        self.active_queue = new_queue
+
+        if self.current_scenario and self.repetition_counter < self.max_repetitions:
+            self.repetition_counter += 1
+        else:
+            if self.active_queue:
+                self.current_scenario = self.active_queue.pop(0)
+                self.repetition_counter = 1
+                print(f"🆕 [Task Manager - {self.task_type}] New scenario started: diff='{self.current_scenario['difficulty_name']}', ai='{self.current_scenario.get('ai_level_name') or 'N/A'}'")
+            else:
+                print(f"🎉 [Task Manager - {self.task_type}] Active queue empty.")
+                self.current_scenario = None
+                self.repetition_counter = 0
+
+        # 如果当前场景为空（因为队列已空），检查是否所有任务都完成了
+        if not self.current_scenario:
+            self._save_to_db()
+            if self.are_all_scenarios_completed():
+                return "ALL_COMPLETED"
+            return None
+        
+        repetition_info = {
+            "current": self.repetition_counter,
+            "total": self.max_repetitions,
+            "is_practice": self.is_practice
+        }
+        # 将类型编号添加到repetition_info中
+        if self.current_scenario.get("scenario_info"):
+            scenario_info = self.current_scenario["scenario_info"]
+            repetition_info["scenario_index"] = scenario_info.get("index")
+            repetition_info["scenario_total"] = scenario_info.get("total")
+
+        self.current_scenario['repetition_info'] = repetition_info
+        if self.current_scenario:
+            self._save_to_db()
+        return self.current_scenario
+
 # 用于存储目标信息的全局变量
 unknown_targets = []
 own_heading = 278  # 当前航向 (度)
@@ -59,102 +278,86 @@ current_session = {
     'operations': []
 }
 
-# 数据库连接池
-class ConnectionPool:
-    def __init__(self, max_connections=5):
-        self.max_connections = max_connections
-        self.pool = queue.Queue(maxsize=max_connections)
-        self.lock = threading.Lock()
-        
-        # 初始化连接池
-        for _ in range(max_connections):
-            conn = sqlite3.connect('radar_operations.db', check_same_thread=False)
-            self.pool.put(conn)
-    
-    def get_connection(self):
-        with self.lock:
-            return self.pool.get()
-    
-    def return_connection(self, conn):
-        with self.lock:
-            self.pool.put(conn)
-    
-    def close_all(self):
-        with self.lock:
-            while not self.pool.empty():
-                conn = self.pool.get()
-                conn.close()
-
-# 创建全局连接池
-db_pool = ConnectionPool()
-
+# 修改：get_db_connection 现在只用于读取操作
 @contextmanager
 def get_db_connection():
-    conn = db_pool.get_connection()
+    """
+    提供一个用于 **只读** 操作的数据库连接。
+    写入操作必须通过 db_writer_queue 进行。
+    """
+    conn = None
     try:
+        # 对于只读操作，可以创建临时连接
+        conn = sqlite3.connect('radar_operations.db', check_same_thread=False)
+        conn.execute('PRAGMA journal_mode=WAL;') # 确保读取时也使用WAL模式
         yield conn
     finally:
-        db_pool.return_connection(conn)
+        if conn:
+            conn.close()
 
-# 记录操作到数据库
-def record_operation_to_db(operation):
-    max_retries = 3
-    retry_delay = 0.1  # 100ms
-    
-    for attempt in range(max_retries):
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                
-                # 开始事务
-                cursor.execute('BEGIN TRANSACTION')
-                
-                # 插入操作记录
-                cursor.execute('''
-                INSERT INTO user_operations (
-                    task_id, 
-                    operation_type, 
-                    timestamp, 
-                    receive_timestamp,
-                    is_active, 
-                    parameters, 
-                    user_id,
-                    event_owner
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    operation.get('task_id', current_session.get('task_id', 0)),
-                    operation.get('operationType', ''),
-                    operation.get('timestamp', int(time.time() * 1000)),
-                    operation.get('receive_timestamp'),  # 从客户端消息中获取接收时间戳
-                    1 if operation.get('isActive', False) else 0,
-                    json.dumps(operation.get('parameters', {})),
-                    operation.get('user_id', ''),
-                    operation.get('event_owner', '')
-                ))
-                
-                # 提交事务
-                conn.commit()
-                print(f"已记录操作到数据库: {operation.get('operationType')}")
-                return True
-                
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                print(f"数据库锁定，等待重试 ({attempt + 1}/{max_retries})")
-                time.sleep(retry_delay)
-                continue
-            else:
-                print(f"记录操作到数据库时出错: {e}")
-                return False
-        except Exception as e:
-            print(f"记录操作到数据库时出错: {e}")
-            return False
+# 修改：所有写入函数现在都将任务放入队列
+def record_task_settings_to_db(task_id, scenario, user_id, event_owner, session_state):
+    """将任务设置的写入操作放入队列。"""
+    if session_state.get('is_practice', False):
+        print(f"큐에 추가 안함 (연습 모드): record_task_settings for task_id {task_id}")
+        return
+        
+    sql = """
+        INSERT INTO task_settings (
+            task_id, user_id, event_owner, repetition_count, is_ai_active, 
+            ai_level_config, difficulty_config, audio_enabled, ai_level_name, difficulty_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    params = (
+        task_id,
+        user_id,
+        event_owner,
+        scenario['repetition_info']['current'],
+        scenario['is_ai_active'],
+        json.dumps(scenario.get('ai_level_config')),
+        json.dumps(scenario['difficulty_config']),
+        scenario['audio_enabled'],
+        scenario.get('ai_level_name'),
+        scenario['difficulty_name']
+    )
+    db_writer_queue.put((sql, params))
+    print(f"큐에 추가: record_task_settings for task_id {task_id}")
 
-# 在程序退出时关闭所有连接
+
+def record_operation_to_db(operation, session_state):
+    """将单个操作的写入操作放入队列。"""
+    if session_state.get('is_practice', False):
+        # print(f"큐에 추가 안함 (연습 모드): record_operation {operation.get('operationType')}")
+        return
+
+    sql = """
+        INSERT INTO user_operations (
+            task_id, operation_type, timestamp, receive_timestamp, is_active, 
+            parameters, user_id, event_owner
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    parameters_json = json.dumps(operation.get('parameters', {}))
+    params = (
+        operation.get('task_id'),
+        operation.get('operationType'),
+        operation.get('timestamp'),
+        operation.get('receive_timestamp'),
+        1 if operation.get('isActive', False) else 0,
+        parameters_json,
+        operation.get('user_id'),
+        operation.get('event_owner')
+    )
+    db_writer_queue.put((sql, params))
+    # print(f"큐에 추가: record_operation {operation.get('operationType')}")
+
+
 def cleanup():
-    db_pool.close_all()
+    # 这个函数现在不再需要，因为我们使用 atexit.register
+    pass
 
-# 注册清理函数
-atexit.register(cleanup)
+# 全局数据库连接池实例 - **废除**
+# db_pool = ConnectionPool()
+# atexit.register(db_pool.close_all)
 
 # 生成新的任务ID
 def generate_task_id():
@@ -164,17 +367,15 @@ def generate_task_id():
     return task_id
 
 # 初始化未知目标数据，使用与mockUnknownTargets.ts相同的数据结构
-def initialize_targets():
+def initialize_targets(difficulty_config):
+    """根据传入的难度配置初始化目标。"""
     global unknown_targets
     
-    # 从配置中获取目标数量
-    settings = CONFIG.get('game_settings', {})
-    difficulty = settings.get('current_difficulty', 'low')
-    level_settings = settings.get('difficulty_levels', {}).get(difficulty, {})
-    total_targets = level_settings.get('target_count', 5)  # 默认为5个目标
+    # 从传入的配置中获取目标数量
+    total_targets = difficulty_config.get('target_count', 5)
     
-    num_friends = total_targets - 2  # 向上取整
-    num_enemies =  2       # 向下取整
+    num_friends = total_targets - 2
+    num_enemies = 2
 
     # 定义雷达显示区域的边界（可以根据实际显示区域调整）
     min_x, max_x = -100, 100
@@ -233,7 +434,7 @@ def initialize_targets():
             "type": "army"
         })
     
-    print(f"已初始化 {len(unknown_targets)} 个未知目标")
+    print(f"已初始化 {len(unknown_targets)} 个未知目标 (Difficulty: {difficulty_config.get('name')})")
     # 打印目标信息用于调试
     for target in unknown_targets:
         print(f"目标 {target['id']}: 位置({target['position']['x']:.1f}, {target['position']['y']:.1f}), "
@@ -433,12 +634,10 @@ SA_LABELS = {
     'PrimaryNaval': ['052D', '054A', '055', 'Kirov'],
     'SecondaryNaval': ['056', '053H3', 'Frigate', 'Corvette'],
 }
-def generate_sa_threats():
-    # 从配置中获取威胁数量
-    settings = CONFIG.get('game_settings', {})
-    difficulty = settings.get('current_difficulty', 'low')
-    level_settings = settings.get('difficulty_levels', {}).get(difficulty, {})
-    n = level_settings.get('threat_count', 4)  # 默认为4个威胁
+def generate_sa_threats(difficulty_config):
+    """根据传入的难度配置生成SA威胁。"""
+    # 从传入的配置中获取威胁数量
+    n = difficulty_config.get('threat_count', 4)
 
     threats = []
     
@@ -484,7 +683,7 @@ def generate_sa_threats():
             'label': label
         })
     
-    print(f"[SA威胁生成] 生成了{len(threats)}个威胁，类型分布: {[t['type'] for t in threats]}")
+    print(f"[SA威胁生成] 生成了{len(threats)}个威胁 (Difficulty: {difficulty_config.get('name')})")
     return threats
 
 def generate_sa_emergency(threats):
@@ -522,7 +721,7 @@ def generate_sa_emergency(threats):
             'saThreats': threats
         }
 
-async def auto_send_sa_emergency(websocket, threats):
+async def auto_send_sa_emergency(websocket, threats, user_id, event_owner, session_state):
     await asyncio.sleep(random.uniform(2, 3))
     emergency_msg = generate_sa_emergency(threats)
     await send_message(websocket, emergency_msg)
@@ -535,14 +734,14 @@ async def auto_send_sa_emergency(websocket, threats):
             'timestamp': int(time.time() * 1000),
             'isActive': False,
             'parameters': emergency_msg,
-            'user_id': '',
-            'event_owner': ''
-        })
+            'user_id': user_id,
+            'event_owner': event_owner
+        }, session_state)
     except Exception as e:
         print(f"记录SAEmergency日志失败: {e}")
 
-# 处理从客户端接收的消息
-async def handle_client_message(message_str, websocket=None):
+# 修改：handle_client_message
+async def handle_client_message(message_str, session_state, websocket=None):
     global radar_range, scan_angle, unknown_targets, current_session
     
     try:
@@ -553,48 +752,100 @@ async def handle_client_message(message_str, websocket=None):
         print(f"解析后的消息: {message}")
         
         message_type = message.get('type', '')
-        client_event_owner = message.get('event_owner', '') # Get event_owner from the message
-        
+        client_event_owner = message.get('event_owner', '')
+
         if message_type == 'task_start':
             print("消息类型: task_start", message.get('user_id', ''))
+            is_ai_active_request = message.get('include_ai', False)
+            user_id = message.get('user_id', '')
+            event_owner = 'AI' if is_ai_active_request else 'manual'
+            is_practice = message.get('is_practice', False) # 从消息获取
+            session_state['is_practice'] = is_practice # 存入会话
+
+            if not user_id:
+                return [{"type": "error", "message": "user_id is required for task_start"}]
+            
+            # 将 user_id 保存到全局会话，以便后续操作使用
+            current_session['user_id'] = user_id
+            
+            task_type = 'RADAR_TARGETING'
+            
+            # 1. 创建或加载与用户绑定的持久化任务管理器
+            # 这个管理器在初始化时会自动处理数据库加载/新建逻辑
+            task_manager = TaskScenarioManager(CONFIG, user_id, task_type, is_practice=is_practice)
+            session_state['task_manager'] = task_manager # 存入会话以便其他消息处理器使用
+            
+            # 2. 从管理器获取下一个任务场景
+            current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+            
+            if current_scenario == "ALL_COMPLETED":
+                return [{"type": "all_tasks_completed", "task_type": task_type, "message": "祝贺！所有SA威胁应对任务已完成。"}]
+            if not current_scenario:
+                return [{"type": "all_tasks_completed", "task_type": task_type, "message": f"当前模式的{task_type}任务已完成。"}]
+
+            current_session[f'{task_type}_scenario'] = current_scenario
             task_id = generate_task_id()
             current_session['task_id'] = task_id
-            current_session['stage'] = 'init'
+            
             record_operation_to_db({
                 'task_id': task_id,
                 'operationType': 'task_start',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True,
-                'parameters': {},
-                'user_id': message.get('user_id', ''),
-                'event_owner': 'AI' if message.get('include_ai', False) else 'manual' # Pass event_owner
-            })
-            response = {"type": "task_id_assigned", "task_id": task_id, "timestamp": time.time() * 1000}
-            init_settings = {
+                'parameters': {'include_ai': is_ai_active_request},
+                'user_id': user_id,
+                'event_owner': event_owner
+            }, session_state)
+
+            record_task_settings_to_db(task_id, current_scenario, user_id, event_owner, session_state)
+            initialize_targets(current_scenario['difficulty_config'])
+
+            init_response = {
                 "type": "init_settings",
+                "task_id": task_id,
+                "timestamp": time.time() * 1000,
                 "settings": {"range": 80, "scanAngle": 30},
-                "timestamp": time.time() * 1000
+                "is_ai_active": current_scenario['is_ai_active'],
+                "ai_level": current_scenario.get('ai_level_name'),
+                "ai_configs": CONFIG.get('levels', []),
+                "audio_enabled": current_scenario['audio_enabled'],
+                "repetition_info": current_scenario['repetition_info'],
+                "task_type": task_type
             }
-            return [response, init_settings]
+            return [init_response]
         
         elif message_type == 'settings_update':
             print("消息类型: settings_update")
             
-            if should_include_targets(message):
+            # --- 严格的三步验证逻辑 ---
+            # 第二步：验证雷达参数是否与init_settings一致
+            client_range = message.get('range')
+            client_scan_angle = message.get('scanAngle')
+
+            # 从init_settings获取预设值
+            # 注意：在真实的多用户场景中，这些预设值应该从会话(session)中获取
+            required_range = 80
+            required_scan_angle = 30
+
+            if client_range == required_range and client_scan_angle == required_scan_angle:
+                # 参数正确，进入天线调整阶段
+                print("雷达参数验证成功，发送天线调整指令。")
                 record_operation_to_db({
                     'task_id': current_session.get('task_id'),
                     'operationType': 'settings_update',
                     'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                        'receive_timestamp': message.get('receive_timestamp'),
+                    'receive_timestamp': message.get('receive_timestamp'),
                     'isActive': True,
-                        'parameters': message, # Entire message as parameters for now
-                        'user_id': message.get('user_id', ''),
-                        'event_owner': client_event_owner # Pass event_owner
-                    })
+                    'parameters': message, 
+                    'user_id': message.get('user_id', ''),
+                    'event_owner': client_event_owner
+                }, session_state)
                 validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
                 antenna_command = generate_antenna_adjustment()
                 return [validation_response, antenna_command]
             else:
+                # 参数不正确
+                print(f"雷达参数验证失败。需要: range={required_range}, scanAngle={required_scan_angle}。收到: range={client_range}, scanAngle={client_scan_angle}")
                 validation_response = {"type": "settings_validation", "status": "error", "message": "雷达参数设置不正确，请调整参数"}
                 return [validation_response]
         
@@ -611,17 +862,12 @@ async def handle_client_message(message_str, websocket=None):
                     'isActive': True,
                     'parameters': {'elevation': message.get('elevation')},
                         'user_id': message.get('user_id', ''),
-                        'event_owner': client_event_owner # Pass event_owner
-                    })
-                    # If settings are correct, initialize and return target data
-                    # This response might be redundant if settings_validation is already sent by handle_antenna_adjustment
-                    # For now, we follow the logic that a successful antenna adjustment leads to target identification phase
-                    # The actual data sending is handled by the main loop based on 'is_valid'
-                    # We might want to send a specific message here indicating success, or rely on the main loop.
-                    # For now, let's assume `is_valid` being True is enough to trigger data sending in the main loop.
-                return validation_response, True # Signal to send data with targets
+                        'event_owner': client_event_owner
+                    }, session_state)
+
+                return validation_response, True 
             else:
-                return [validation_response] # Only send validation error
+                return [validation_response]
 
         elif message_type == 'target_selected':
             print("消息类型: target_selected")
@@ -642,7 +888,7 @@ async def handle_client_message(message_str, websocket=None):
                 },
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner # Pass event_owner
-            })
+            }, session_state)
             return []
 
         elif message_type == 'threat_clicked':
@@ -661,7 +907,7 @@ async def handle_client_message(message_str, websocket=None):
                 },
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner # Pass event_owner
-            })
+            }, session_state)
             return []
         
         # For record_operation and record_bulk_operations, event_owner should be part of each 'operation' item
@@ -671,7 +917,7 @@ async def handle_client_message(message_str, websocket=None):
             # Ensure event_owner from the outer message is also considered if not in operation itself
             if 'event_owner' not in operation:
                 operation['event_owner'] = client_event_owner
-            record_operation_to_db(operation)
+            record_operation_to_db(operation, session_state)
             return []
         
         elif message_type == 'record_bulk_operations':
@@ -680,60 +926,106 @@ async def handle_client_message(message_str, websocket=None):
             for operation in operations:
                 if 'event_owner' not in operation:
                     operation['event_owner'] = client_event_owner
-                record_operation_to_db(operation)
+                record_operation_to_db(operation, session_state)
             return []
         
-        # ... (other message types like SwitchSA, ResetSA, reset_targets)
-        # These might not have a direct client-side event_owner in the same way, 
-        # or they are server-initiated in some contexts.
         # For SA related, if there's an owner, it should be in the message.
-        elif message_type == 'SwitchSA':
-            print('收到SwitchSA事件，生成SA威胁数组')
+        elif message_type == 'SwitchSA' or message_type == 'ResetSA':
+            user_id = message.get('user_id')
+            if not user_id:
+                 return [{"type": "error", "message": "Cannot switch SA without a user_id in the message."}]
+
+            task_type = 'SA_THREAT_RESPONSE'
+            is_practice = message.get('is_practice', False) # 从消息获取
+            session_state['is_practice'] = is_practice # 存入会话
+            # 为SA任务也创建一个持久化管理器
+            task_manager = TaskScenarioManager(CONFIG, user_id, task_type, is_practice=is_practice)
+            session_state['sa_task_manager'] = task_manager
+
+            event_owner = message.get('event_owner', 'manual')
+            is_ai_active_request = (event_owner == 'AI')
+            
+            current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+            
+            if current_scenario == "ALL_COMPLETED":
+                return [{"type": "all_tasks_completed", "task_type": task_type, "message": "祝贺！所有SA威胁应对任务已完成。"}]
+            if not current_scenario:
+                return [{"type": "all_tasks_completed", "task_type": task_type, "message": "当前模式的SA任务已完成。"}]
+
+            current_session[f'{task_type}_scenario'] = current_scenario
+            
             record_operation_to_db({
                 'task_id': current_session.get('task_id'),
                 'operationType': message_type,
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True, 
                 'parameters': {}, 
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner
-            })
-            threats = generate_sa_threats()
-            response = {'type': 'SAThreats', 'saThreats': threats}
+                'user_id': user_id, 
+                'event_owner': event_owner
+            }, session_state)
+            
+            threats = generate_sa_threats(current_scenario['difficulty_config'])
+            
+            response = {
+                'type': 'sa_task_updated',
+                'saThreats': threats,
+                'repetition_info': current_scenario['repetition_info'],
+                'task_type': task_type
+            }
+
             if websocket:
-                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
+                asyncio.create_task(
+                    auto_send_sa_emergency(
+                        websocket, 
+                        threats,
+                        user_id,
+                        event_owner,
+                        session_state
+                        )
+                    )
             return [response]
         
-        elif message_type == 'ResetSA':
-            print('收到ResetSA事件，重新生成SA威胁数组')
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': message_type,
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'isActive': True, 
-                'parameters': {}, 
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner
-            })
-            threats = generate_sa_threats()
-            response = {'type': 'SAThreats', 'saThreats': threats}
-            if websocket:
-                asyncio.create_task(auto_send_sa_emergency(websocket, threats))
-            return [response]
-
         elif message_type == 'reset_targets':
-            print("消息类型: reset_targets")
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': message_type,
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'isActive': True, 
-                'parameters': {}, 
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner 
-            })
-            initialize_targets()
-            return True, False # Signal to send data, but no targets initially
+            print("消息类型: reset_targets ( advancing scenario counter )")
+            
+            user_id = current_session.get('user_id', '')
+            if not user_id:
+                 return [{"type": "error", "message": "Cannot reset_targets without a user session."}]
+
+            task_manager = session_state.get('task_manager')
+            if not task_manager:
+                return [{"type": "error", "message": "Task not started. Cannot reset targets."}]
+
+            is_ai_active_request = current_session.get('RADAR_TARGETING_scenario', {}).get('is_ai_active', False)
+            event_owner = 'AI' if is_ai_active_request else 'manual'
+
+            current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+            if not current_scenario:
+                return [{"type": "all_tasks_completed", "task_type": task_type, "message": "Congratulations! All Radar Targeting scenarios have been completed."}]
+
+            current_session[f'RADAR_TARGETING_scenario'] = current_scenario
+            task_id = generate_task_id()
+            current_session['task_id'] = task_id
+            
+            record_task_settings_to_db(task_id, current_scenario, user_id, event_owner, session_state)
+
+            # 5. 根据新场景重新初始化目标
+            initialize_targets(current_scenario['difficulty_config'])
+            
+            # 6. 构造一个init_settings消息，以便前端可以更新其状态（包括计数器）
+            response_message = {
+                "type": "init_settings",
+                "task_id": task_id,
+                "timestamp": time.time() * 1000,
+                "settings": {"range": 80, "scanAngle": 30},
+                "is_ai_active": current_scenario['is_ai_active'],
+                "ai_level": current_scenario['ai_level_name'],
+                "ai_configs": CONFIG.get('levels', []),
+                "audio_enabled": current_scenario['audio_enabled'],
+                "repetition_info": current_scenario['repetition_info'],
+                "task_type": task_type
+            }
+            return [response_message]
             
     except json.JSONDecodeError as e:
         print(f"解析JSON时出错: {e}")
@@ -754,9 +1046,10 @@ async def send_message(websocket, message):
         print(f"发送消息失败: {e}")
         return False
 
-# WebSocket处理函数
+# 修改：WebSocket处理函数
 async def radar_server(websocket):
     print("【服务器】客户端已连接")
+    session_state = {} # 为每个连接创建一个独立的会话状态
     try:
         # 初始连接时发送不包含目标数据的基础数据
         initial_data = get_radar_data(include_targets=False)
@@ -780,8 +1073,8 @@ async def radar_server(websocket):
                 # 等待消息，但设置超时以保持连接活跃
                 message = await asyncio.wait_for(websocket.recv(), timeout=60)
                 print(f"【服务器】接收到消息: {message[:50]}..." if len(message) > 50 else message)
-                # 处理消息
-                result = await handle_client_message(message, websocket)
+                # 将会话状态传递给消息处理器
+                result = await handle_client_message(message, session_state, websocket)
                 # 检查返回结果类型
                 if isinstance(result, list):
                     for msg in result:
@@ -789,9 +1082,16 @@ async def radar_server(websocket):
                 elif isinstance(result, tuple) and len(result) == 2:
                     settings_updated, include_targets = result
                     if settings_updated:
+                        # Ensure validation message is sent BEFORE data frame
+                        if 'type' in settings_updated and settings_updated['type'] == 'settings_validation':
+                            print(f"【服务器】发送验证结果: {settings_updated}") 
+                            await websocket.send(json.dumps(settings_updated))
+
+                        # Now prepare and send the main data frame
                         data = get_radar_data(include_targets=include_targets)
                         data["_timestamp"] = time.time()
                         data_json = json.dumps(data)
+
                         if include_targets:
                             print(f"【服务器】正在发送包含目标的数据，JSON长度: {len(data_json)}")
                             print(f"【服务器】数据键: {list(data.keys())}")
@@ -799,10 +1099,9 @@ async def radar_server(websocket):
                                 print(f"【服务器】externalTargets长度: {len(data['externalTargets'])}")
                         else:
                             print(f"【服务器】正在发送不含目标的数据，JSON长度: {len(data_json)}")
+                        
                         await websocket.send(data_json)
-                        if 'type' in settings_updated and settings_updated['type'] == 'settings_validation':
-                            print(f"【服务器】发送验证结果: {settings_updated}") 
-                            await websocket.send(json.dumps(settings_updated))
+                        
                         if include_targets:
                             print("【服务器】✅ 已发送更新后的数据（包含目标）")
                         else:
@@ -817,10 +1116,15 @@ async def radar_server(websocket):
     except Exception as e:
         print(f"【服务器】【错误】WebSocket处理时出错: {e}")
 
-# 启动WebSocket服务器
+# 修改：main
 async def main():
-    # 初始化目标
-    initialize_targets()
+    # 不再需要在这里初始化全局管理器
+    # task_manager = TaskScenarioManager(CONFIG, max_repetitions=10)
+    
+    # 首次启动时，根据默认难度初始化目标
+    default_difficulty_name = CONFIG.get('game_settings', {}).get('current_difficulty', 'low')
+    default_difficulty_config = CONFIG.get('game_settings', {}).get('difficulty_levels', {}).get(default_difficulty_name, {})
+    initialize_targets(default_difficulty_config)
     
     # 初始化数据库
     try:
@@ -880,6 +1184,63 @@ async def main():
                 else:
                     print("event_owner 列已存在")
                 
+            # ---- 新增：检查和创建 task_settings 表 ----
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_settings'")
+            if not cursor.fetchone():
+                print("task_settings 表不存在，正在创建...")
+                cursor.execute("""
+                    CREATE TABLE task_settings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        task_id INTEGER NOT NULL UNIQUE,
+                        user_id TEXT,
+                        event_owner TEXT,
+                        execution_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        repetition_count INTEGER NOT NULL,
+                        is_ai_active BOOLEAN NOT NULL,
+                        ai_level_config TEXT,
+                        difficulty_config TEXT NOT NULL,
+                        audio_enabled BOOLEAN NOT NULL,
+                        ai_level_name TEXT,
+                        difficulty_name TEXT NOT NULL,
+                        FOREIGN KEY (task_id) REFERENCES user_operations (task_id)
+                    )
+                """)
+                conn.commit()
+                print("task_settings 表创建成功")
+            else:
+                print("task_settings 表已存在，检查列...")
+                cursor.execute("PRAGMA table_info(task_settings)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'user_id' not in columns:
+                    print("正在添加 user_id 列...")
+                    cursor.execute("ALTER TABLE task_settings ADD COLUMN user_id TEXT")
+                    conn.commit()
+                if 'event_owner' not in columns:
+                    print("正在添加 event_owner 列...")
+                    cursor.execute("ALTER TABLE task_settings ADD COLUMN event_owner TEXT")
+                    conn.commit()
+
+            # --- 核心修改：在启动时检查并创建 user_progress 表 ---
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_progress'")
+            if not cursor.fetchone():
+                print("user_progress 表不存在，正在创建...")
+                cursor.execute("""
+                    CREATE TABLE user_progress (
+                        user_id TEXT NOT NULL,
+                        task_type TEXT NOT NULL,
+                        current_scenario_json TEXT,
+                        repetition_counter INTEGER,
+                        ai_queue_json TEXT,
+                        manual_queue_json TEXT,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, task_type)
+                    );
+                """)
+                conn.commit()
+                print("user_progress 表创建成功。")
+            else:
+                print("user_progress 表已存在。")
+
         print("数据库初始化成功")
     except Exception as e:
         print(f"数据库初始化失败: {e}")

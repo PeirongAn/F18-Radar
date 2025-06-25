@@ -1,11 +1,11 @@
-import { makeObservable, observable, action } from 'mobx';
+import { makeObservable, observable, action, ObservableSet } from 'mobx';
 import agentStore from './AgentStore'; // Restore the import for agentStore
 
 
 interface RadarDataHook {
   sendMessage: (message: any) => void;
   settingsValidationTimestamp: number | null;
-  initializeSystem: (userId: string, includeAI: boolean) => void;
+  initializeSystem: (userId: string, includeAI: boolean, isPractice: boolean) => void;
   validateSettings: (settings: { range: number, scanAngle: number }) => boolean;
   submitSettings: (settings: { range: number, scanAngle: number }) => void;
   resetTargets: () => void;
@@ -21,6 +21,9 @@ export interface TargetDisplayPosition {
   y: number;
 }
 
+// 定义任务类型，确保与useRadarData和服务器中使用的类型一致
+export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
+
 /**
  * 雷达系统的MobX Store，管理雷达相关状态
  */
@@ -29,12 +32,13 @@ export class RadarStore {
   isStarted: boolean = false;
   isSystemInitializing: boolean = false;
   isAwaitingSettings: boolean = false;
-  userId: string = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  userId: string = '';
   taskId: number | null = null;
   antennaAdjustmentRequired: boolean = false;
   radarRange: number = 20; // 默认20海里
   scanAngle: number = 60;  // 默认60度
   settingsValidationTimestamp: number | null = null; // 声明
+  isPractice: boolean = false; // 添加 isPractice 状态
   
   // 内部变量
   private radarDataHook: RadarDataHook | null = null;
@@ -49,10 +53,20 @@ export class RadarStore {
   // AI相关状态
   lockedTargetId: string | undefined = undefined; // 当前系统锁定的目标ID (AI或手动)
   lockScreenX: number | undefined = undefined; // 锁定目标时，TDC在屏幕上的X坐标
+  lockedTargetX: number | undefined = undefined;
   
   // 存储目标在屏幕上的动态显示位置
   targetDisplayPositions: Map<string, TargetDisplayPosition> = new Map();
   
+  // 新增：任务完成弹窗状态
+  completionModalInfo: {
+    isOpen: boolean;
+    message: string;
+  } = { isOpen: false, message: '' };
+
+  // 新增：记录已经弹窗过的完成任务类型
+  completedTaskTypes: ObservableSet<TaskType> = observable.set();
+
   constructor() {
     makeObservable(this, {
       isStarted: observable,
@@ -64,15 +78,17 @@ export class RadarStore {
       radarRange: observable,
       scanAngle: observable,
       settingsValidationTimestamp: observable,
+      isPractice: observable,
       currentAntennaElevation: observable,
       targetAntennaElevation: observable,
       saEmergency: observable,
       saEmergencyHistory: observable,
       lastSAEmergencyTimestamp: observable,
       targetDisplayPositions: observable,
+      completionModalInfo: observable,
+      completedTaskTypes: observable,
       setRadarDataHook: action,
       startSystem: action,
-      initializeSystem: action,
       setTaskId: action,
       setAntennaAdjustmentRequired: action,
       updateRadarParams: action,
@@ -88,6 +104,9 @@ export class RadarStore {
       clearAllTargetDisplayPositions: action,
       setLockedTargetId: action,
       setLockScreenX: action,
+      showCompletionModal: action,
+      hideCompletionModal: action,
+      addCompletedTaskType: action,
     });
     console.log('RadarStore initialized with User ID:', this.userId);
   }
@@ -102,32 +121,19 @@ export class RadarStore {
   }
   
   // 系统启动
-  startSystem(userId: string, withAI: boolean = false) {
+
+  startSystem = (userId: string, includeAI: boolean, isPractice: boolean) => {
+    // This action should ONLY update the state.
     this.userId = userId;
     this.isStarted = true;
-    agentStore.setAIActive(withAI); // 确保AI状态也被设置
-    this.initializeSystem(userId, withAI); // 直接调用初始化
-    console.log(`系统已启动 - 用户ID: ${userId}, 启用AI: ${withAI}`);
-  }
-  
-  // 初始化雷达系统
-  initializeSystem(userId: string, includeAI: boolean) {
-    console.log('[雷达系统] 正在初始化雷达系统...', this.isStarted);
-    if (!this.isStarted) {
-      console.warn('系统未启动，无法执行初始化操作');
-      return;
-    }
-    // 调用雷达数据hook中的初始化方法
-    if (this.radarDataHook && this.radarDataHook.initializeSystem) {
-      console.log('[雷达系统] 正在调用初始化方法...');
-      this.radarDataHook.initializeSystem(userId, includeAI);
-    } else {
-      console.error('雷达数据hook未初始化或不包含initializeSystem方法');
-    }
+    this.isPractice = isPractice; // 保存 isPractice 状态
+    agentStore.setAIActive(includeAI); // It's okay to call another store's action here
+    console.log(`[RadarStore] System state started. UserID: ${this.userId}, AI: ${includeAI}, Practice: ${isPractice}`);
   }
   
   // 设置任务ID
-  setTaskId(id: number | null) {
+
+  setTaskId = (id: number | null) => {
     this.taskId = id;
   }
   
@@ -220,7 +226,8 @@ export class RadarStore {
     }
   }
 
-  setUserId(userId: string) {
+  setUserId = (userId: string) => {
+    console.log(`[RadarStore] User ID set to: ${userId}`);
     this.userId = userId;
   }
 
@@ -251,28 +258,46 @@ export class RadarStore {
 
   // 新增：移除特定目标ID的显示位置
   removeTargetDisplayPosition(targetId: string) {
-    if (this.targetDisplayPositions.delete(targetId)) {
-      // console.log(`[RadarStore] Display position for target ${targetId} removed.`);
-    }
+    this.targetDisplayPositions.delete(targetId);
   }
 
-  // 可选：清空所有目标显示位置
+  // 新增：清空所有目标显示位置
   clearAllTargetDisplayPositions() {
     this.targetDisplayPositions.clear();
-    console.log('[RadarStore] All target display positions cleared.');
   }
 
   setLockedTargetId(id: string | undefined) {
-    this.lockedTargetId = id;
-    console.log(`[RadarStore] Locked target ID set to: ${id}`);
-    if (!id) {
-      this.setLockScreenX(undefined); // 如果目标被清除，也清除锁定线
+    if (this.lockedTargetId !== id) {
+      console.log(`[RadarStore] Locked target ID changed from ${this.lockedTargetId} to ${id}`);
+      this.lockedTargetId = id;
     }
   }
 
   setLockScreenX(x: number | undefined) {
-    this.lockScreenX = x;
-    console.log(`[RadarStore] Lock screen X set to: ${x}`);
+    if (this.lockScreenX !== x) {
+      this.lockScreenX = x;
+      console.log(`[RadarStore] Lock screen X set to: ${x}`);
+    }
+  }
+
+  // 新增：显示任务完成弹窗
+  showCompletionModal = (message: string) => {
+    this.completionModalInfo = { isOpen: true, message };
+    console.log(`[RadarStore] Showing completion modal: ${message}`);
+  }
+
+  // 新增：隐藏任务完成弹窗
+  hideCompletionModal = () => {
+    this.completionModalInfo = { isOpen: false, message: '' };
+    console.log('[RadarStore] Hiding completion modal.');
+  }
+
+  // 新增：添加一个已完成的任务类型
+  addCompletedTaskType = (taskType: TaskType) => {
+    if (!this.completedTaskTypes.has(taskType)) {
+      this.completedTaskTypes.add(taskType);
+      console.log(`[RadarStore] Task type ${taskType} marked as completed.`);
+    }
   }
 }
 

@@ -22,6 +22,8 @@ interface SAPageProps {
   height?: number;
   onAddMessage?: (type: MessageType, content: string) => void;
   userId?: string;
+  onResetSA?: () => void;
+  onResetTargets?: () => void;
 }
 
 // 添加威胁数据接口
@@ -78,7 +80,7 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, userId: originalUserId}) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, userId: originalUserId, onResetSA, onResetTargets }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
 
@@ -394,6 +396,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     // 发送重置消息到服务器
     sendResetSA();
     
+    // 核心修复：重置 MobX store 中的临机事件状态
+    radarStore.resetSAEmergency();
+
     // 清除所有本地状态
     setMissiles([]);
     setThreatList([]);
@@ -428,7 +433,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   useEffect(() => {
     console.log('【SAPage】saThreats changed:', saThreats);
     if (saThreats.length > 0) {
-      setThreatList(saThreats.map(t => ({
+      setThreatList(saThreats.map((t: { id: any; type: any; label: any; }) => ({
         id: t.id,
         type: t.type,
         label: t.label,
@@ -552,11 +557,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     };
     
     // 分别处理Primary和Secondary威胁
-    const primaryThreats = saThreats.filter(t => t.type.startsWith('Primary'));
-    const secondaryThreats = saThreats.filter(t => !t.type.startsWith('Primary'));
+    const primaryThreats = saThreats.filter((t: { type: string; }) => t.type.startsWith('Primary'));
+    const secondaryThreats = saThreats.filter((t: { type: string; }) => !t.type.startsWith('Primary'));
     
     // 先处理Primary威胁 - 在内圈完整圆圈中分布
-    primaryThreats.forEach((threat, index) => {
+    primaryThreats.forEach((threat: { type: string; }, index: string | number) => {
       let attempts = 0;
       let pos;
       
@@ -578,7 +583,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     });
     
     // 再处理Secondary威胁 - 在外圈弧线区域分布
-    secondaryThreats.forEach((threat, index) => {
+    secondaryThreats.forEach((threat: any, index: number) => {
       let attempts = 0;
       let pos;
       
@@ -618,13 +623,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     });
     
     // 重新组装positions数组，按照原始saThreats的顺序
-    const finalPositions = saThreats.map(threat => {
+    const finalPositions = saThreats.map((threat: { type: string; id: any; }) => {
       const isPrimary = threat.type.startsWith('Primary');
       if (isPrimary) {
-        const primaryIndex = primaryThreats.findIndex(t => t.id === threat.id);
+        const primaryIndex = primaryThreats.findIndex((t: { id: any; }) => t.id === threat.id);
         return positions[primaryIndex];
       } else {
-        const secondaryIndex = secondaryThreats.findIndex(t => t.id === threat.id);
+        const secondaryIndex = secondaryThreats.findIndex((t: { id: any; }) => t.id === threat.id);
         return positions[primaryThreats.length + secondaryIndex];
       }
     });
@@ -636,7 +641,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       console.log(`🎯 威胁分布更新: 总数=${saThreats.length}, Primary=${primaryCount}, Secondary=${secondaryCount}`);
       
       // 输出每个威胁的位置信息
-      saThreats.forEach((threat, index) => {
+      saThreats.forEach((threat: { label: any; type: any; }, index: string | number) => {
         const pos = finalPositions[index];
         console.log(`  - ${threat.label} (${threat.type}): (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})`);
       });
@@ -687,7 +692,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     });
 
     // 3. 计算常规威胁的分数
-    saThreats.forEach((threat, index) => {
+    saThreats.forEach((threat: { type: string; }, index: string | number) => {
       const pos = iconPositions[index];
       if (pos) {
         const distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - config.centerY, 2));
@@ -1004,8 +1009,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     };
   }, []);
 
+  const handleConfirmAndReset = () => {
+    if (onResetSA) {
+      onResetSA();
+    }
+    setShowTaskComplete(false);
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center">
+    <div className="w-full h-full p-4 bg-black text-green-400 font-mono flex flex-col items-center relative">
       <div className="flex flex-col items-center">
         {/* 顶部按钮 - 使用justify-between均匀分布 */}
         <div 
@@ -1155,7 +1167,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                 /> */}
 
                 {/* 随机分布的icon */}
-                {saThreats.map((threat, idx) => {
+                {saThreats.map((threat: { type: string; label: string | undefined; id: React.Key | null | undefined; }, idx: string | number) => {
                   const IconComp = ICON_MAP[threat.type as keyof typeof ICON_MAP];
                   
                   // 添加调试信息
@@ -1263,20 +1275,27 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       {/* 任务结束弹窗 */}
       {showTaskComplete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 border-2 border-green-400 rounded-lg p-6 max-w-md mx-4">
-            <div className="text-center">
-              <div className="text-green-400 text-2xl font-bold mb-4">
-                ✅ 任务结束
-              </div>
-              <div className="text-white mb-4">
-                最具威胁项处理完成：<br />
-                <span className="text-yellow-400 font-mono">{completedThreat}</span>
-              </div>
+          <div className="bg-gray-800 border-2 border-green-400 rounded-lg p-6 max-w-md mx-4 text-center">
+            <div className="text-green-400 text-2xl font-bold mb-2">
+              ✅ 任务结束
+            </div>
+            <div className="text-white mb-4">
+              最具威胁项处理完成：<br />
+              <span className="text-yellow-400 font-mono">{completedThreat}</span>
+            </div>
+            <p className="text-white text-lg mb-6">是否进行下一个任务？</p>
+            <div className="flex justify-center space-x-4">
               <button
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
+                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
                 onClick={() => setShowTaskComplete(false)}
               >
-                确认
+                否
+              </button>
+              <button
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
+                onClick={handleResetSA}
+              >
+                是
               </button>
             </div>
           </div>

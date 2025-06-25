@@ -52,7 +52,6 @@ export interface RadarDisplayProps {
   };
   tdcPosition: { x: number, y: number };
   onTargetSelect?: (params: TargetSelectParams) => void;
-  wsUrl?: string; // WebSocket服务器URL
   scanMode: ScanModeType;
   scanControl: ScanControlParams;
   onTDCPositionSet?: (offset: number) => void;
@@ -66,6 +65,11 @@ export interface RadarDisplayProps {
   isSilent?: boolean; // 添加雷达静默模式属性
   isStarted?: boolean; // 添加系统启动状态属性
   sendMessage: (message: any) => void; // 添加发送消息函数
+  resetIFF?: React.MutableRefObject<() => void>; // 添加用于重置IFF模式的ref
+  connected: boolean;
+  radarData: import('../hooks/useRadarData').RadarData | null;
+  error: string | null;
+  onResetForNextMission?: () => void;
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -75,34 +79,47 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   framePositions,
   tdcPosition,
   onTargetSelect,
-  wsUrl = 'ws://localhost:8765',
   scanMode = { name: 'normal', scanAngle: 60, scanFraction: 1 }, // 默认扫描模式
   scanControl = { scanSpeed: 1.0 }, // 默认扫描控制参数
   onTDCPositionSet, // TDC位置设置回调函数
   showVectorHUD = true, // 默认显示
-  range = 80, // 默认范围值
+  range = 20, // 默认范围值
   showUnknownTargets = true, // 默认显示未知目标
   maxScanCount = 4, // 默认值为4
   displayMode, // 从props接收显示模式
   onModeDisplayChange, // 显示模式变更回调
   isSilent = false, // 默认不处于静默模式
   isStarted = false, // 默认未启动状态
-  sendMessage // 传递发送消息函数
+  sendMessage, // 传递发送消息函数
+  resetIFF,
+  connected,
+  radarData,
+  error,
+  onResetForNextMission
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
-  const { connected, radarData, error } = useRadarData(wsUrl);
+  // const { connected, radarData, error } = useRadarData(wsUrl);
   
-  // 添加本地状态来跟踪和强制更新externalTargets
-  const [localExternalTargets, setLocalExternalTargets] = React.useState<RadarTarget[] | undefined>(undefined);
-  const [updateCounter, setUpdateCounter] = React.useState(0); // 用于强制更新的计数器
-  
-  // 添加IFF模式状态
-  const [iffMode, setIffMode] = React.useState(false);
+  // 添加任务确认弹窗状态
+  const [showMissionConfirm, setShowMissionConfirm] = React.useState(false);
   const [radarAzimuth, setRadarAzimuth] = React.useState<number>(0);
   const [ownHeading, setOwnHeading] = React.useState<number>(0);
   
+  // 添加IFF模式状态
+  const [iffMode, setIffMode] = React.useState(false);
+  
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
+  
+  // 将重置函数暴露给父组件
+  React.useEffect(() => {
+    if (resetIFF) {
+      resetIFF.current = () => {
+        setIffMode(false);
+        console.log('IFF mode has been reset via ref.');
+      };
+    }
+  }, [resetIFF]);
   
   // 计算显示区域中心
   const centerX = (framePositions.startX + framePositions.endX) / 2;
@@ -112,11 +129,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 添加useEffect来监控radarData的变化并更新本地状态
   React.useEffect(() => {
     if (radarData) {
-      const hasExternalTargets = 'externalTargets' in radarData && Array.isArray(radarData.externalTargets);
-      if (hasExternalTargets && radarData.externalTargets) {
-        setLocalExternalTargets(radarData.externalTargets);
-        setUpdateCounter(prev => prev + 1);
-      }
       setRadarAzimuth(radarData.radar_azimuth);
       setOwnHeading(radarData.own_heading);
     }
@@ -124,31 +136,31 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 直接检查并处理targets
   React.useEffect(() => {
-    if (localExternalTargets) {
-      console.log('RadarDisplay - 本地externalTargets已更新:', localExternalTargets);
+    if (radarData?.externalTargets) {
+      console.log('RadarDisplay - externalTargets已更新:', radarData.externalTargets);
     }
-  }, [localExternalTargets, centerX, centerY]);
+  }, [radarData?.externalTargets, centerX, centerY]);
   
   // 从本地状态获取externalTargets并处理坐标
   const processedExternalTargets = React.useMemo(() => {
     console.log('RadarDisplay - processedExternalTargets 计算被调用');
-    console.log('RadarDisplay - localExternalTargets:', localExternalTargets);
+    console.log('RadarDisplay - radarData.externalTargets:', radarData?.externalTargets);
     
-    if (!localExternalTargets) {
-      console.log('RadarDisplay - 未找到 localExternalTargets 或为空');
+    if (!radarData?.externalTargets) {
+      console.log('RadarDisplay - 未找到 radarData.externalTargets 或为空');
       return undefined;
     }
     
-    console.log('RadarDisplay - 处理 localExternalTargets:', localExternalTargets);
+    console.log('RadarDisplay - 处理 radarData.externalTargets:', radarData.externalTargets);
     // 对每个目标的坐标进行处理，将偏移量调整为相对于屏幕中心的实际坐标
-    return localExternalTargets.map(target => ({
+    return radarData.externalTargets.map(target => ({
       ...target,
       position: {
         x: centerX + target.position.x, // 将x偏移量调整为相对于屏幕中心的坐标
         y: centerY + target.position.y  // 将y偏移量调整为相对于屏幕中心的坐标
       }
     }));
-  }, [localExternalTargets, centerX, centerY, updateCounter]); // 添加updateCounter作为依赖
+  }, [radarData?.externalTargets, centerX, centerY]); // 添加updateCounter作为依赖
   
   // 处理按下Enter键时的TDC和目标选择逻辑
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -222,35 +234,33 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     }
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp]);
   
-  // 处理IFF模式切换
-  const handleIFFModeToggle = () => {
+  // 处理IFF按钮点击，现在用于弹出确认框
+  const handleIffButtonClick = () => {
     setIffMode(prev => !prev);
+    setShowMissionConfirm(true);
+  };
+  
+  const handleConfirmYes = () => {
+    if (onResetForNextMission) {
+      onResetForNextMission();
+    }
+    setShowMissionConfirm(false);
   };
   
   // 监听自动激活IFF事件
   React.useEffect(() => {
-    // const handleAutoActivateIFF = () => {
-    //   console.log('RadarDisplay - 收到自动激活IFF事件');
-    //   if (!iffMode) {
-    //     setIffMode(true);
-    //     console.log('RadarDisplay - IFF模式已自动激活');
-    //   }
-    // };
-
     const handleResetIFF = () => {
       console.log('RadarDisplay - 收到重置IFF事件');
       setIffMode(false);
       console.log('RadarDisplay - IFF模式已重置');
     };
 
-    // window.addEventListener('autoActivateIFF', handleAutoActivateIFF);
     window.addEventListener('resetIFF', handleResetIFF);
 
     return () => {
-      // window.removeEventListener('autoActivateIFF', handleAutoActivateIFF);
       window.removeEventListener('resetIFF', handleResetIFF);
     };
-  }, [iffMode]);
+  }, []);
   
   // 自定义渲染函数，添加IFF按钮的点击事件
   const renderCustomText = (props: any) => {
@@ -269,8 +279,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
           points={[-5, -5, 30, -5, 30, 20, -5, 20, -5, -5]}
           fill={iffMode ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)'}
           closed={true}
-          onClick={handleIFFModeToggle}
-          onTap={handleIFFModeToggle}
+          onClick={handleIffButtonClick}
+          onTap={handleIffButtonClick}
         />
       </Group>
     ]);
@@ -295,11 +305,11 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     if (displayMode === 'AUTO') {
       // 在AUTO模式下，每次扫描循环后切换HI/MED显示
       setHiMedToggle(prev => prev === 'HI' ? 'MED' : 'HI');
-      console.log(`AUTO模式: 切换到 ${hiMedToggle === 'HI' ? 'MED' : 'HI'}`);
+      // console.log(`AUTO模式: 切换到 ${hiMedToggle === 'HI' ? 'MED' : 'HI'}`);
     }
     // 在HI或MED模式下，hiMedToggle保持不变
     
-    console.log("扫描完成一次循环，更新计数");
+    // console.log("扫描完成一次循环，更新计数");
   }, [maxScanCount, displayMode]);
   
   // 创建scanLineRef
@@ -428,6 +438,67 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         </Layer>
       </Stage>
       
+      {/* 任务确认弹窗 */}
+      {showMissionConfirm && (
+        <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            zIndex: 100,
+            paddingRight: '60px',
+        }}>
+          <div style={{
+              backgroundColor: 'black',
+              padding: '24px',
+              border: '2px solid #00ff00',
+              borderRadius: '8px',
+              textAlign: 'center',
+              boxShadow: '0 0 15px rgba(0, 255, 0, 0.5)',
+              color: '#00ff00',
+              fontFamily: '"Courier New", Courier, monospace',
+          }}>
+            <h3 style={{ margin: 0, fontSize: '1.2em' }}>是否进行下一次任务</h3>
+            <div style={{ marginTop: '20px' }}>
+            <button 
+                onClick={() => setShowMissionConfirm(false)}
+                style={{
+                  backgroundColor: '#330000',
+                  border: '1px solid #ff0000',
+                  color: '#ff0000',
+                  padding: '8px 16px',
+                  margin: '0 10px',
+                  cursor: 'pointer',
+                  borderRadius: '4px'
+                }}
+              >
+                否
+              </button>
+              <button 
+                onClick={handleConfirmYes}
+                style={{
+                  backgroundColor: '#003300',
+                  border: '1px solid #00ff00',
+                  color: '#00ff00',
+                  padding: '8px 16px',
+                  margin: '0 10px',
+                  cursor: 'pointer',
+                  borderRadius: '4px'
+                }}
+              >
+                是
+              </button>
+          
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Non-Konva components are here, positioned over the canvas */}
       {!connected && (
         <ConnectionStatus
