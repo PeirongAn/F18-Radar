@@ -46,7 +46,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     }
   };
   const scale = getScale();
-
+  
   // 计算实际显示位置 = 原始位置 + 当前偏移量
   const displayPosition = {
     x: position.x + offset.x,
@@ -181,7 +181,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
         opacity={0.6}
         lineCap="round"
       />
-
+      
       {/* 目标三角形 - 底边在前方(右侧)，顶点在后(左侧) */}
       <Line
         points={[

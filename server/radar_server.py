@@ -270,6 +270,11 @@ scan_angle = 60    # 扫描角度 (度)
 # 任务ID计数器
 task_counter = 0
 
+# --- 威胁评估权重配置 ---
+# 您可以调整这些权重来改变距离和朝向在威胁判断中的重要性
+DISTANCE_WEIGHT = 0.6  # 距离权重
+HEADING_WEIGHT = 0.4   # 朝向权重
+
 # 当前会话状态
 current_session = {
     'task_id': None,
@@ -327,7 +332,7 @@ def record_task_settings_to_db(task_id, scenario, user_id, event_owner, session_
 def record_operation_to_db(operation, session_state):
     """将单个操作的写入操作放入队列。"""
     if session_state.get('is_practice', False):
-        # print(f"큐에 추가 안함 (연습 모드): record_operation {operation.get('operationType')}")
+        print(f"record_operation {operation.get('operationType')}")
         return
 
     sql = """
@@ -366,80 +371,132 @@ def generate_task_id():
     task_counter += 1
     return task_id
 
-# 初始化未知目标数据，使用与mockUnknownTargets.ts相同的数据结构
+# 初始化未知目标数据，引入基于距离和朝向的威胁评估逻辑
 def initialize_targets(difficulty_config):
-    """根据传入的难度配置初始化目标。"""
-    global unknown_targets, scan_angle, radar_range
+    """根据传入的难度配置初始化目标，并基于威胁评估来决定敌友。"""
+    global unknown_targets, scan_angle, radar_range, own_heading
     
-    # 从传入的配置中获取目标数量
     total_targets = difficulty_config.get('target_count', 5)
-    
-    num_friends = total_targets - 2
-    num_enemies = 2
+    num_enemies = 2  # 我们总是将威胁分数最高的2个目标设为敌机
 
-    # 创建空的目标列表
-    unknown_targets = []
-    
-    # --- 核心修改：在极坐标系下生成目标，确保在雷达扇形区域内 ---
-    
-    # 生成友机
-    for i in range(num_friends):
-        # 1. 在雷达扫描角度内随机生成一个角度
+    # 1. 生成所有目标，初始时都视为"未知"
+    potential_targets = []
+    for i in range(total_targets):
         angle = random.uniform(-scan_angle / 2, scan_angle / 2)
-        
-        # 2. 在雷达量程内随机生成一个距离 (海里)
-        # 为了避免目标过于靠近中心点，我们从量程的10%开始生成
         distance = random.uniform(radar_range * 0.1, radar_range)
+        speed = random.uniform(3, 12)  # 速度范围更广
+        direction = random.uniform(0, 2 * np.pi) # 初始朝向是完全随机的
         
-        # 3. 随机生成速度
-        speed = random.uniform(3, 6)
-        
-        # 4. 生成朝向 (暂时保持现有逻辑，可根据需要调整)
-        direction = random.uniform(0, 2 * np.pi)
-        
-        unknown_targets.append({
-            "id": f"friend-{i+1}",
-            "position": {"x": angle, "y": distance}, # x是角度, y是距离
-            "history": [],
+        potential_targets.append({
+            "id": f"target-{i+1}", # 临时ID
+            "position": {"x": angle, "y": distance},
             "speed": speed,
-            "direction": direction,
-            "type": "friend"
+            "direction": direction, # 弧度制
+            "last_update": time.time() # 新增：记录上次更新时间
         })
+
+    # 2. 对每个"未知"目标进行威胁评估
+    evaluated_targets = []
+    for target in potential_targets:
+        distance = target['position']['y']
+        
+        # 计算目标航向与朝向我方(原点)的夹角
+        # 目标的绝对角度 (0度朝上)
+        target_angle_rad = target['position']['x'] * (np.pi / 180)
+        # 朝向我方的矢量角度 (从目标指向原点)
+        inbound_heading_rad = target_angle_rad + np.pi # 角度反向
+        
+        # 计算两个航向之间的最小夹角 (0-180度)
+        angle_diff_rad = abs((target['direction'] - inbound_heading_rad + np.pi) % (2 * np.pi) - np.pi)
+        angle_diff_deg = np.rad2deg(angle_diff_rad)
+
+        # a. 计算距离分数 (0-1)
+        distance_score = 1 - (distance / radar_range)
+        
+        # b. 计算朝向分数 (0-1)
+        heading_score = 1 - (angle_diff_deg / 180)
+        
+        # c. 计算加权总分
+        threat_score = (distance_score * DISTANCE_WEIGHT) + (heading_score * HEADING_WEIGHT)
+        
+        target['threat_score'] = threat_score
+        evaluated_targets.append(target)
+        
+        # --- 新增：为调试打印详细的计算过程 ---
+        print(f"  [Threat Eval for {target['id']}]")
+        print(f"    - Distance: {distance:.1f}nm -> Score: {distance_score:.2f} (raw)")
+        print(f"    - Heading Diff: {angle_diff_deg:.1f}° -> Score: {heading_score:.2f} (raw)")
+        print(f"    - Weighted Score: ({distance_score:.2f} * {DISTANCE_WEIGHT}) + ({heading_score:.2f} * {HEADING_WEIGHT}) = {threat_score:.2f}")
+        # --- 结束新增 ---
+        
+    # 3. 根据威胁分数排序，分数最高的为敌机
+    evaluated_targets.sort(key=lambda t: t['threat_score'], reverse=True)
     
-    # 生成敌机
-    for i in range(num_enemies):
-        # 1. 在雷达扫描角度内随机生成一个角度
-        angle = random.uniform(-scan_angle / 2, scan_angle / 2)
+    # 4. 分配最终的ID和类型
+    final_targets = []
+    for i, target in enumerate(evaluated_targets):
+        if i < num_enemies:
+            target['type'] = 'army'
+            target['id'] = f"enemy-{i+1}"
+        else:
+            target['type'] = 'friend'
+            target['id'] = f"friend-{i - num_enemies + 1}"
         
-        # 2. 在雷达量程内随机生成一个距离 (海里)
-        distance = random.uniform(radar_range * 0.1, radar_range)
+        final_targets.append(target)
         
-        # 3. 随机生成速度
-        speed = random.uniform(8, 12)
-        
-        # 4. 生成朝向 (暂时保持现有逻辑)
-        direction = random.uniform(0, 2 * np.pi)
-        
-        unknown_targets.append({
-            "id": f"enemy-{i+1}",
-            "position": {"x": angle, "y": distance}, # x是角度, y是距离
-            "history": [],
-            "speed": speed,
-            "direction": direction,
-            "type": "army"
-        })
+    unknown_targets = final_targets
     
     print(f"已初始化 {len(unknown_targets)} 个未知目标 (Difficulty: {difficulty_config.get('name')})")
-    # 打印目标信息用于调试
     for target in unknown_targets:
-        print(f"目标 {target['id']}: 角度({target['position']['x']:.1f}°), "
-              f"距离({target['position']['y']:.1f}nm), 类型 {target['type']}")
+        print(f"  -> ID: {target['id']}, Type: {target['type']}, Threat Score: {target['threat_score']:.2f}, "
+              f"Pos: ({target['position']['x']:.1f}°, {target['position']['y']:.1f}nm)")
 
 # 获取要发送给前端的数据
 def get_radar_data(include_targets=False):
     global unknown_targets, own_heading, radar_azimuth, radar_range, scan_angle
     
     try:
+        current_time = time.time()
+
+        # 更新所有目标的位置和朝向
+        for target in unknown_targets:
+            delta_t = current_time - target.get('last_update', current_time)
+            
+            # 简单的线性移动模型
+            # 将速度从 (海里/秒) 转换为 (雷达距离单位/秒)
+            # 假设1度角位移和1海里距离位移在视觉上近似
+            speed_x = target['speed'] * np.cos(target['direction']) * 0.1 # 减小横向移动幅度
+            speed_y = target['speed'] * np.sin(target['direction']) * 0.1 # 减小纵向移动幅度
+            
+            target['position']['x'] += speed_x * delta_t
+            target['position']['y'] -= speed_y * delta_t # Y轴向下是距离减小
+            
+            # 随机轻微调整航向，模拟机动
+            target['direction'] += random.uniform(-0.05, 0.05)
+            
+            # 确保航向在 [0, 2*pi] 范围内
+            target['direction'] = target['direction'] % (2 * np.pi)
+
+            # --- 新增: 计算并更新相对航向 ---
+            # 1. 将我机航向从度转换为弧度
+            own_heading_rad = np.deg2rad(own_heading)
+            
+            # 2. 计算航向差值
+            diff_rad = target['direction'] - own_heading_rad
+            
+            # 3. 归一化到 [-pi, pi]
+            if diff_rad > np.pi:
+                diff_rad -= 2 * np.pi
+            elif diff_rad < -np.pi:
+                diff_rad += 2 * np.pi
+
+            # 4. 将结果从弧度转为度，并添加到目标数据中
+            target['relative_heading'] = np.rad2deg(diff_rad)
+            # --- 结束新增 ---
+
+            target['last_update'] = current_time
+
+
         print("【调试】开始生成雷达数据...")
         
         # 从配置中获取音频设置
@@ -560,8 +617,8 @@ def should_include_targets(message=None):
 
 # 生成随机天线高度指令
 def generate_antenna_adjustment():
-    # 随机选择上移或下移3格
-    direction = random.choice([-3, 3])
+    # 从-3,-2,-1,1,2,3中随机选择一个调整值
+    direction = random.choice([-3, -2, -1, 1, 2, 3])
     target_elevation = direction
     
     # 更新当前会话状态
@@ -649,25 +706,6 @@ def generate_sa_threats(difficulty_config):
         for i in range(n):
             chosen_types.append(random.choice(secondary_types))
     
-    # 备选方案2：混合Primary和Secondary类型（取消注释以启用）
-    # primary_types = [t for t in SA_ICON_TYPES if t.startswith('Primary')]
-    # all_types = secondary_types + primary_types
-    # chosen_types = []
-    # 
-    # # 确保至少有70%是Secondary类型
-    # secondary_count = max(1, int(n * 0.7))
-    # primary_count = n - secondary_count
-    # 
-    # # 选择Secondary威胁
-    # for i in range(secondary_count):
-    #     chosen_types.append(random.choice(secondary_types))
-    # 
-    # # 选择Primary威胁
-    # for i in range(primary_count):
-    #     chosen_types.append(random.choice(primary_types))
-    # 
-    # # 随机打乱顺序
-    # random.shuffle(chosen_types)
     
     # 生成威胁
     for i, threat_type in enumerate(chosen_types):
@@ -723,15 +761,19 @@ async def auto_send_sa_emergency(websocket, threats, user_id, event_owner, sessi
     print(f"[自动] 已发送SAEmergency事件: {emergency_msg['event']}")
     # 记录临机事件日志
     try:
-        record_operation_to_db({
-            'task_id': current_session.get('task_id'),
-            'operationType': 'sa_emergency',
-            'timestamp': int(time.time() * 1000),
-            'isActive': False,
-            'parameters': emergency_msg,
-            'user_id': user_id,
-            'event_owner': event_owner
-        }, session_state)
+        # 只有在非练习模式下才记录数据库
+        if not session_state.get('is_practice', False):
+            record_operation_to_db({
+                'task_id': current_session.get('task_id'),
+                'operationType': 'sa_emergency',
+                'timestamp': int(time.time() * 1000),
+                'isActive': False,
+                'parameters': emergency_msg,
+                'user_id': user_id,
+                'event_owner': event_owner
+            }, session_state)
+        else:
+            print("练习模式，跳过 sa_emergency 数据库记录。")
     except Exception as e:
         print(f"记录SAEmergency日志失败: {e}")
 
@@ -782,15 +824,19 @@ async def handle_client_message(message_str, session_state, websocket=None):
             task_id = generate_task_id()
             current_session['task_id'] = task_id
             
-            record_operation_to_db({
-                'task_id': task_id,
-                'operationType': 'task_start',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'isActive': True,
-                'parameters': {'include_ai': is_ai_active_request},
-                'user_id': user_id,
-                'event_owner': event_owner
-            }, session_state)
+            # 只有在非练习模式下才记录数据库
+            if not session_state.get('is_practice', False):
+                record_operation_to_db({
+                    'task_id': task_id,
+                    'operationType': 'task_start',
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'isActive': True,
+                    'parameters': {'include_ai': is_ai_active_request},
+                    'user_id': user_id,
+                    'event_owner': event_owner
+                }, session_state)
+            else:
+                print("练习模式，跳过 task_start 数据库记录。")
 
             record_task_settings_to_db(task_id, current_scenario, user_id, event_owner, session_state)
             initialize_targets(current_scenario['difficulty_config'])
@@ -825,16 +871,21 @@ async def handle_client_message(message_str, session_state, websocket=None):
             if client_range == required_range and client_scan_angle == required_scan_angle:
                 # 参数正确，进入天线调整阶段
                 print("雷达参数验证成功，发送天线调整指令。")
-                record_operation_to_db({
-                    'task_id': current_session.get('task_id'),
-                    'operationType': 'settings_update',
-                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                    'receive_timestamp': message.get('receive_timestamp'),
-                    'isActive': True,
-                    'parameters': message, 
-                    'user_id': message.get('user_id', ''),
-                    'event_owner': client_event_owner
-                }, session_state)
+                # 只有在非练习模式下才记录数据库
+                if not session_state.get('is_practice', False):
+                    record_operation_to_db({
+                        'task_id': current_session.get('task_id'),
+                        'operationType': 'settings_update',
+                        'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                        'receive_timestamp': message.get('receive_timestamp'),
+                        'isActive': True,
+                        'parameters': message, 
+                        'user_id': message.get('user_id', ''),
+                        'event_owner': client_event_owner
+                    }, session_state)
+                else:
+                    print("练习模式，跳过 settings_update 数据库记录。")
+
                 validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
                 antenna_command = generate_antenna_adjustment()
                 return [validation_response, antenna_command]
@@ -849,16 +900,20 @@ async def handle_client_message(message_str, session_state, websocket=None):
             
             validation_response, is_valid = handle_antenna_adjustment(message)
             if is_valid:
-                record_operation_to_db({
-                    'task_id': current_session.get('task_id'),
-                    'operationType': 'antenna_adjusted',
-                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                        'receive_timestamp': message.get('receive_timestamp'),
-                    'isActive': True,
-                    'parameters': {'elevation': message.get('elevation')},
-                        'user_id': message.get('user_id', ''),
-                        'event_owner': client_event_owner
-                    }, session_state)
+                # 只有在非练习模式下才记录数据库
+                if not session_state.get('is_practice', False):
+                    record_operation_to_db({
+                        'task_id': current_session.get('task_id'),
+                        'operationType': 'antenna_adjusted',
+                        'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                            'receive_timestamp': message.get('receive_timestamp'),
+                        'isActive': True,
+                        'parameters': {'elevation': message.get('elevation')},
+                            'user_id': message.get('user_id', ''),
+                            'event_owner': client_event_owner
+                        }, session_state)
+                else:
+                    print("练习模式，跳过 antenna_adjusted 数据库记录。")
 
                 return validation_response, True 
             else:
@@ -869,40 +924,54 @@ async def handle_client_message(message_str, session_state, websocket=None):
             target_id = message.get('target_id')
             iff_mode = message.get('iff_mode', False)
             is_enemy = any(target['id'] == target_id and target['type'] == 'army' for target in unknown_targets)
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': 'target_selected',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),
-                'isActive': not iff_mode,
-                'parameters': {
-                    'target_id': target_id,
-                    'action': message.get('action', 'select'),
-                    'iff_mode': iff_mode,
-                    'is_enemy': is_enemy
-                },
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner # Pass event_owner
-            }, session_state)
+            
+            # 只有在非练习模式下才记录数据库
+            if not session_state.get('is_practice', False):
+                record_operation_to_db({
+                    'task_id': current_session.get('task_id'),
+                    'operationType': 'target_selected',
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'receive_timestamp': message.get('receive_timestamp'),
+                    'isActive': not iff_mode,
+                    'parameters': {
+                        'target_id': target_id,
+                        'action': message.get('action', 'select'),
+                        'iff_mode': iff_mode,
+                        'is_enemy': is_enemy
+                    },
+                    'user_id': message.get('user_id', ''),
+                    'event_owner': client_event_owner # Pass event_owner
+                }, session_state)
+            else:
+                print("练习模式，跳过 target_selected 数据库记录。")
+
             return []
 
         elif message_type == 'threat_clicked':
             print("消息类型: threat_clicked")
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': 'threat_clicked',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'isActive': True,
-                'receive_timestamp': message.get('receive_timestamp'),
-                'parameters': {
-                    'threat_id': message.get('threat_id'),
-                    'label': message.get('label'),
-                    'priority': message.get('priority'),
-                    'extra': message.get('extra', {})
-                },
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner # Pass event_owner
-            }, session_state)
+
+            # 只有在非练习模式下才记录数据库
+            if not session_state.get('is_practice', False):
+                record_operation_to_db({
+                    'task_id': current_session.get('task_id'),
+                    'operationType': 'threat_clicked',
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'isActive': True,
+                    'receive_timestamp': message.get('receive_timestamp'),
+                    'parameters': {
+                        'threat_id': message.get('threat_id'),
+                        'label': message.get('label'),
+                        'priority': message.get('priority'),
+                        'is_highest_priority': message.get('is_highest_priority'),
+                        'is_correct': message.get('is_correct'),
+                        'correct_answer': message.get('correct_answer'),
+                        'extra': message.get('extra', {})
+                    },
+                    'user_id': message.get('user_id', ''),
+                    'event_owner': client_event_owner # Pass event_owner
+                }, session_state)
+            else:
+                print("练习模式，跳过 threat_clicked 数据库记录。")
             return []
         
         # For record_operation and record_bulk_operations, event_owner should be part of each 'operation' item
@@ -948,16 +1017,18 @@ async def handle_client_message(message_str, session_state, websocket=None):
                 return [{"type": "all_tasks_completed", "task_type": task_type, "message": "当前模式的SA任务已完成。"}]
 
             current_session[f'{task_type}_scenario'] = current_scenario
-            
-            record_operation_to_db({
-                'task_id': current_session.get('task_id'),
-                'operationType': message_type,
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'isActive': True, 
-                'parameters': {}, 
-                'user_id': user_id, 
-                'event_owner': event_owner
-            }, session_state)
+            print(f"current_scenario: {session_state}")
+            # 只有在非练习模式下才记录数据库
+            if not session_state.get('is_practice', False):
+                record_operation_to_db({
+                    'task_id': current_session.get('task_id'),
+                    'operationType': message_type,
+                    'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                    'isActive': True, 
+                    'parameters': {}, 
+                    'user_id': user_id, 
+                    'event_owner': event_owner
+                }, session_state)
             
             threats = generate_sa_threats(current_scenario['difficulty_config'])
             

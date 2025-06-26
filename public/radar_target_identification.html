@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>雷达目标敌我识别策略</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; padding: 20px; line-height: 1.6; color: #333; background-color: #fdfdfd; padding-top: 80px; /* 为返回按钮留出空间 */ }
+        .container { max-width: 800px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h1, h2 { color: #1a1a1a; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 30px; }
+        h1 { font-size: 2em; }
+        p, li { color: #444; font-size: 1.1em; }
+        .formula-box { background-color: #e9f5ff; border: 2px solid #b3d7ff; padding: 20px; margin: 25px 0; border-radius: 8px; font-size: 1.2em; color: #0056b3; }
+        .formula-box code { font-family: 'Courier New', Courier, monospace; font-weight: bold; }
+        .weight-emphasis { font-weight: bold; color: #0056b3; }
+        .highlight { color: #d9534f; font-weight: bold; }
+        .summary { background-color: #fcf8e3; border-left: 5px solid #f0ad4e; padding: 15px; margin-top: 20px; border-radius: 4px; }
+        .dimension { margin-bottom: 25px; padding-left: 20px; border-left: 3px solid #ccc; }
+        .dimension h3 { color: #007bff; margin-top: 0; }
+        .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: #007bff;
+            color: white;
+            padding: 10px 18px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+        .back-button:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>雷达目标敌我自动识别策略</h1>
+        <p>
+            在雷达初次探测到一批未知目标时，为了能够快速评估战场态势，系统会执行一套自动的敌我识别程序。该程序的核心是为每个未知目标计算一个 <strong class="highlight">“威胁分数” (Threat Score)</strong>，并以此作为判定的主要依据。
+        </p>
+
+        <h2>核心评估维度</h2>
+        <p>
+            威胁分数的计算主要基于两个关键的动态维度：目标的<strong>距离</strong>和其<strong>飞行航向</strong>。
+        </p>
+
+        <div class="dimension">
+            <h3>1. 距离分数 (Distance Score)</h3>
+            <p>
+                这是一个非常直观的指标：目标离我机越近，其潜在威胁就越大。距离分数是一个归一化的值（0到1之间），距离越近，分数越高。
+            </p>
+        </div>
+
+        <div class="dimension">
+            <h3>2. 航向分数 (Heading Score)</h3>
+            <p>
+                这个维度评估的是目标的飞行意图。系统会计算目标的当前航向与"直接朝向我机"的航向之间的夹角。
+            </p>
+            <ul>
+                <li>如果一个目标正 <strong class="highlight">"迎头"</strong> 向我飞来，它的航向分数会非常高。</li>
+                <li>如果一个目标正在 <strong class="highlight">"远离"</strong> 我方，或者与我方航向基本平行，其航向分数则会很低。</li>
+            </ul>
+        </div>
+
+        <h2>加权计分与最终判定</h2>
+        <p>
+            系统在综合评估时，并不会简单地将两个分数相加，而是为它们分配了不同的重要性权重，以反映在空战中不同因素的优先级。
+        </p>
+        <div class="formula-box">
+            <code>总威胁分数 = (距离分数 * <span class="weight-emphasis">60%</span>) + (航向分数 * <span class="weight-emphasis">40%</span>)</code>
+        </div>
+        <p>
+            这个公式表明，在当前策略下，我们认为目标的 <strong class="highlight">距离比其航向更重要</strong>，占据了60%的权重。
+        </p>
+
+        <div class="summary">
+            <h2>最终识别规则</h2>
+            <p>
+                在计算出所有未知目标的"总威胁分数"后，系统会将它们从高到低进行排序。
+            </p>
+            <p>
+                最终，<strong>得分最高的2个目标将被自动识别为"敌机"(Enemy/Army)</strong>，并以相应的符号在雷达上标出。其余所有目标则被识别为"友机"(Friend)。
+            </p>
+        </div>
+    </div>
+</body>
+</html> 

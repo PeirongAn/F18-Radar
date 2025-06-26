@@ -14,12 +14,13 @@ export interface RadarTarget {
   id: string;
   position: { x: number, y: number };
   speed: number;
-  direction: number;
+  direction: number; // 这是弧度
   type: 'friend' | 'army';
   quality?: number; // Make quality optional
   threat_level?: number; // Make threat_level optional
   history: { x: number, y: number }[];
   selected?: boolean;
+  relative_heading?: number; // 新增：相对航向（度）
 }
 
 export interface RadarData {
@@ -173,7 +174,7 @@ class GlobalWebSocketManager {
         // 否则，如果 rawData 中有一个名为 emergency 的字段，则使用它
         emergencyData = rawData.emergency;
       }
-
+      
       // 创建一个新的数据对象
       const newData: RadarData = {
         // 对于列表数据，如果新消息中没有，则保留旧值
@@ -350,8 +351,8 @@ export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
 
 // 定义不同任务类型的进度状态接口
 interface AllRepetitionInfos {
-  RADAR_TARGETING: RepetitionInfo | null;
-  SA_THREAT_RESPONSE: RepetitionInfo | null;
+  RADAR_TARGETING: RepetitionInfo | 'ALL_COMPLETED' | null;
+  SA_THREAT_RESPONSE: RepetitionInfo | 'ALL_COMPLETED' | null;
 }
 
 // 修改后的useRadarData hook使用全局WebSocket管理器
@@ -499,7 +500,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     console.log("View reset command sent, data stream paused, and local state cleared.");
   }, [sendMessage]);
 
-
+  
   // 处理接收到的消息
   const handleHookMessage = useCallback((message: any) => {
     if (!message || !message.type) return;
@@ -643,10 +644,10 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   }, [wsUrl, handleHookMessage]);
   
   const sendResetSA = useCallback(() => {
-    sendMessage({ type: 'ResetSA', timestamp: Date.now() });
+    sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice });
   }, [sendMessage]);
 
-
+  
   return { 
     connected, 
     radarData, 

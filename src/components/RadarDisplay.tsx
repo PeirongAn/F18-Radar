@@ -147,7 +147,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     if (!radarData?.externalTargets) {
       return undefined;
     }
-
+    
     // --- 坐标系转换逻辑 ---
     // 1. 定义屏幕坐标系的原点 (O)，即雷达的底边中点，代表自己的位置。
     const originX = (framePositions.startX + framePositions.endX) / 2;
@@ -183,13 +183,14 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       const screenY = originY + offsetY;
 
       // 返回包含最终屏幕坐标的新目标对象。
+      // 明确返回值的类型为 RadarTarget，以保留所有原始字段
       return {
-        ...target,
-        position: {
+      ...target,
+      position: {
           x: screenX,
           y: screenY
         }
-      };
+      } as RadarTarget;
     });
   }, [radarData?.externalTargets, framePositions, range, radarConfig]);
   
@@ -311,7 +312,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     };
 
     window.addEventListener('resetIFF', handleResetIFF);
-
+    
     return () => {
       window.removeEventListener('resetIFF', handleResetIFF);
     };
@@ -384,17 +385,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 创建rendererProps
   const rendererProps = {
-    width,
-    height,
-    radarConfig,
-    framePositions,
-    tdcPosition,
-    scanAngle: scanMode.scanAngle,
-    centerOffset: scanMode.centerOffset,
-    onTDCPositionSet,
-    range,
-    scanCount,
-    maxScanCount,
+            width,
+            height,
+            radarConfig,
+            framePositions,
+            tdcPosition,
+            scanAngle: scanMode.scanAngle,
+            centerOffset: scanMode.centerOffset,
+            onTDCPositionSet,
+            range,
+            scanCount,
+            maxScanCount,
     displayMode,
     hiMedToggle,
     isSilent,
@@ -411,6 +412,23 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     return undefined;
   }, [radarStore.lockedTargetId, processedExternalTargets]);
   
+  // 新增：创建一个符合LiveTarget props要求的对象
+  const liveTargetForRender = useMemo(() => {
+    if (!lockedTargetObject) {
+      return null;
+    }
+    // 将 RadarTarget 转换为 LiveTarget 需要的格式
+    // 并为可选属性提供默认值
+    return {
+      ...lockedTargetObject,
+      x: lockedTargetObject.position.x,
+      y: lockedTargetObject.position.y,
+      quality: lockedTargetObject.quality ?? 0.8,
+      threat_level: lockedTargetObject.threat_level ?? 0,
+      relative_heading: lockedTargetObject.relative_heading ?? 0,
+    };
+  }, [lockedTargetObject]);
+  
   return (
     <div style={{ position: 'relative', width, height }}>
       <Stage width={width} height={height}>
@@ -420,13 +438,13 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
           
           {/* 渲染文本信息 */}
           {renderText({ ...rendererProps, heading: radarData?.own_heading, range, scanAngle: scanMode.scanAngle })}
-
+          
           {/* 扫描线 */}
           {radarData && !isSilent && isStarted && (
-            <ScanLine
-              azimuth={radarData.radar_azimuth}
-              radarConfig={radarConfig}
-              framePositions={framePositions}
+            <ScanLine 
+              azimuth={radarData.radar_azimuth} 
+              radarConfig={radarConfig} 
+              framePositions={framePositions} 
               scanMode={scanMode}
               scanControl={scanControl}
               onScanCycleComplete={handleScanCycleComplete}
@@ -435,9 +453,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
           )}
           
           {/* 渲染锁定目标 */}
-          {lockedTargetObject && (
+          {liveTargetForRender && (
             <LiveTarget
-              target={lockedTargetObject as RadarTarget}
+              target={liveTargetForRender}
               radarConfig={radarConfig}
               scanAngle={scanMode.scanAngle}
             />

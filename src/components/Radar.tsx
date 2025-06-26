@@ -416,10 +416,53 @@ const Radar: React.FC<RadarProps> = (({
       const availableTargets = radarData.externalTargets;
       
       if (availableTargets.length > 0) {
-        // 寻找id以enemy开头的目标
-        const enemyTarget = availableTargets.find((target: { id: string; }) => target.id.startsWith('enemy'));
-        const targetToSelect = enemyTarget || availableTargets[0];
-        const targetDisplayPosition = radarStore.targetDisplayPositions.get(targetToSelect.id);
+        let targetToSelect: (typeof availableTargets)[0] | undefined;
+
+        // 最新的、更精确的逻辑
+        if (config.decision_probabilities && config.decision_probabilities.length > 0) {
+          // 新增：从准确率数组中随机抽取一个作为本次决策的准确率
+          const accuracy = config.decision_probabilities[Math.floor(Math.random() * config.decision_probabilities.length)];
+          const randomChoice = Math.random();
+
+          const enemyTargets = availableTargets.filter((t: { id: string }) => t.id.startsWith('enemy'));
+          const friendlyTargets = availableTargets.filter((t: { id: string }) => !t.id.startsWith('enemy'));
+          console.log(`[AI Engine] Decision probabilities: ${config.decision_probabilities}, ${randomChoice}`);
+          // 根据准确率，决定是从敌机池选还是友机池选
+          if (randomChoice < accuracy) {
+            // 决定 "准确" 选择: 从敌机池里选
+            if (enemyTargets.length > 0) {
+              targetToSelect = enemyTargets[Math.floor(Math.random() * enemyTargets.length)];
+              console.log(`[AI Engine] Decision: ACCURATE. Choosing from enemy pool. Selected: ${targetToSelect.id}`);
+            } else {
+              // 敌机池是空的，只能从友机池选
+              targetToSelect = friendlyTargets[Math.floor(Math.random() * friendlyTargets.length)];
+              console.log(`[AI Engine] Decision: ACCURATE. Enemy pool empty, fallback to friendly pool. Selected: ${targetToSelect?.id}`);
+            }
+          } else {
+            // 决定 "失误" 选择: 从友机池里选
+            if (friendlyTargets.length > 0) {
+              targetToSelect = friendlyTargets[Math.floor(Math.random() * friendlyTargets.length)];
+               console.log(`[AI Engine] Decision: INACCURATE. Choosing from friendly pool. Selected: ${targetToSelect.id}`);
+            } else {
+              // 友机池是空的，只能从敌机池选
+              targetToSelect = enemyTargets[Math.floor(Math.random() * enemyTargets.length)];
+              console.log(`[AI Engine] Decision: INACCURATE. Friendly pool empty, fallback to enemy pool. Selected: ${targetToSelect?.id}`);
+            }
+          }
+        } else {
+          // 旧逻辑：如果没配置概率，则默认优先选择敌机
+          const enemyTarget = availableTargets.find((target: { id:string }) => target.id.startsWith('enemy'));
+          targetToSelect = enemyTarget || availableTargets[0];
+          console.log(`[AI Engine] Legacy decision: Chose ${targetToSelect?.id}`);
+        }
+
+        if (!targetToSelect) {
+          console.warn("[AI Engine] Could not select any target.");
+          return;
+        }
+
+        const finalTargetToSelect = targetToSelect;
+        const targetDisplayPosition = radarStore.targetDisplayPositions.get(finalTargetToSelect.id);
         
         // 使用tdc_select_delay_ms作为统一的延迟参数
         const actionTimeout = setTimeout(() => {
@@ -431,14 +474,14 @@ const Radar: React.FC<RadarProps> = (({
             setTdcPosition(targetDisplayPosition);
 
             // 第二步：选择目标并设置锁定线
-            console.log(`[AI Engine] AI is selecting target: ${targetToSelect.id}`);
+            console.log(`[AI Engine] AI is selecting target: ${finalTargetToSelect.id}`);
             if (onTargetSelect) {
               // 计算锁定线的X坐标（使用目标的x坐标）
               const lockX = targetDisplayPosition.x;
               
               // 调用目标选择回调，传入锁定线位置
               onTargetSelect({ 
-                targetId: targetToSelect.id, 
+                targetId: finalTargetToSelect.id, 
                 lockX: lockX,
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
               });
@@ -447,12 +490,12 @@ const Radar: React.FC<RadarProps> = (({
             }
           } else {
             // 如果没有位置信息，使用屏幕中心作为默认lockX
-            console.log(`[AI Engine] Selecting target without position: ${targetToSelect.id}`);
+            console.log(`[AI Engine] Selecting target without position: ${finalTargetToSelect.id}`);
             if (onTargetSelect) {
               // 使用屏幕中心的X坐标作为默认锁定线位置
               const centerX = (framePositions.startX + framePositions.endX) / 2;
               onTargetSelect({ 
-                targetId: targetToSelect.id,
+                targetId: finalTargetToSelect.id,
                 lockX: centerX, // 添加默认的lockX值
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
               });

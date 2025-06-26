@@ -344,6 +344,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const [missiles, setMissiles] = useState<MissileData[]>([]);
   const [threatList, setThreatList] = useState<ThreatData[]>([]);
   
+  // 添加一个状态，用于判断是否已经进行过选择
+  const hasSelectionBeenMade = useMemo(() => threatList.length > 0, [threatList]);
+
   // 添加refs控制日志写入
   const hasInitLogRef = useRef(false);
   const lastEmergencyRef = useRef<string | null>(null);
@@ -429,20 +432,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
   }, [radarData?.saThreats]);
 
-  // saThreats变化时，重置威胁列表，优先级为中等
+  // saThreats变化时，只负责写入初始化日志，不再自动填充威胁列表
   useEffect(() => {
     console.log('【SAPage】saThreats changed:', saThreats);
     if (saThreats.length > 0) {
-      setThreatList(saThreats.map((t: { id: any; type: any; label: any; }) => ({
-        id: t.id,
-        type: t.type,
-        label: t.label,
-        source: t.label,
-        distance: 0,
-        heading: 0,
-        priority: 'medium',
-      })));
-      
       // 修改日志写入逻辑：确保初始化日志写入
       if (!hasInitLogRef.current && onAddMessage) {
         console.log('【SAPage】Writing SA init log...'); // 调试日志
@@ -450,6 +443,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         audioManager.play('saInit');
         hasInitLogRef.current = true;
       }
+    } else {
+      // 当威胁列表从服务器清空时（例如任务重置），本地也清空
+      setThreatList([]);
     }
   }, [saThreats, onAddMessage]);
 
@@ -516,15 +512,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             y
           };
           setMissiles(prev => [...prev, newMissile]);
-          setThreatList(prev => [{
-            id: newMissile.id,
-            type: 'missile_lock',
-            label: data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
-            source: data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹',
-            distance: Math.floor(r / 100),
-            heading: Math.floor((angle * 180 / Math.PI + 90) % 360),
-            priority: 'high',
-          }, ...prev]);
           if (onAddMessage) {
             console.log('Writing missile warning log...');
             onAddMessage('sa_missile', `警告！导弹来袭！类型：${data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹'}`);
@@ -665,6 +652,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     threat: any;
     score: number;
     isMissile: boolean;
+    originalIndex: number; // 新增：用于打破平局的原始索引
   }
 
   // 计算所有威胁的分数并排序
@@ -678,36 +666,57 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     };
 
     const allThreats: ThreatWithScore[] = [];
+    const effectiveCenterY = config.centerY - 50; // 正确的圆心Y坐标
 
     // 2. 计算导弹的威胁分数
-    missiles.forEach(missile => {
-      const distance = Math.sqrt(Math.pow(missile.x - config.centerX, 2) + Math.pow(missile.y - config.centerY, 2));
+    missiles.forEach((missile, index) => {
+      const distance = Math.sqrt(Math.pow(missile.x - config.centerX, 2) + Math.pow(missile.y - effectiveCenterY, 2));
       const weight = getTypeWeight('missile');
       const score = weight / (distance + 1e-6);
       allThreats.push({
         threat: missile,
         score,
         isMissile: true,
+        originalIndex: index, // 存储原始索引
       });
     });
 
     // 3. 计算常规威胁的分数
-    saThreats.forEach((threat: { type: string; }, index: string | number) => {
+    saThreats.forEach((threat: { type: string; }, index: number) => {
       const pos = iconPositions[index];
       if (pos) {
-        const distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - config.centerY, 2));
+        const distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - effectiveCenterY, 2));
         const weight = getTypeWeight(threat.type);
         const score = weight / (distance + 1e-6);
         allThreats.push({
           threat,
           score,
           isMissile: false,
+          originalIndex: index, // 存储原始索引
         });
       }
     });
 
-    return allThreats.sort((a, b) => b.score - a.score);
+    // 修改排序逻辑：当分数相同时，使用类型和原始索引作为"打破平局"的规则
+    return allThreats.sort((a, b) => {
+      const scoreDiff = b.score - a.score;
+      // 使用一个极小值(epsilon)来比较浮点数
+      if (Math.abs(scoreDiff) > 1e-9) {
+        return scoreDiff;
+      }
+      // 如果分数相同，导弹优先
+      if (a.isMissile !== b.isMissile) {
+        return a.isMissile ? -1 : 1;
+      }
+      // 如果类型也相同，则比较原始索引
+      return a.originalIndex - b.originalIndex;
+    });
   }, [missiles, saThreats, iconPositions, config.centerX, config.centerY]);
+
+  // 创建一个从威胁ID到其排序后索引的映射，方便快速查找
+  const threatIdToSortedIndexMap = useMemo(() => 
+    new Map(threatsWithScore.map((item, index) => [item.threat.id, index]))
+  , [threatsWithScore]);
 
   // 获取当前最高优先级威胁的函数
   const getCurrentHighestPriorityThreat = useCallback(() => {
@@ -737,6 +746,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       };
     }
   }, [threatsWithScore]);
+
+  // 将对"选中"和"最高优先级"目标的引用移动到这里
+  const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
+  const selectedThreatId = useMemo(() => threatList[0]?.id, [threatList]);
 
   // 点击icon将其加入威胁列表首位但保持原优先级
   const handleThreatIconClick = useCallback((threat: any) => {
@@ -799,11 +812,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
       // 在用户选择后记录威胁分数
       const logMessage = threatsWithScore
-        .map(item => {
+        .map((item, index) => {
           const label = item.isMissile
             ? (item.threat as MissileData).type === 'MissileUp' ? '上升导弹' : '下降导弹'
             : (item.threat as any).label;
-          return `${label}: ${item.score.toFixed(2)}`;
+          return `${label}[${index}]: ${item.score.toFixed(2)}`;
         })
         .join('; ');
       onAddMessage('info', `(评估) ${logMessage}`);
@@ -845,8 +858,24 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const renderMissiles = () => {
     return missiles.map(missile => {
       const Icon = missile.type === 'MissileUp' ? MissileUpIcon : MissileDownIcon;
+      const isSelected = missile.id === selectedThreatId;
+      const isHighestPriority = missile.id === highestPriorityThreat?.id;
+
       return (
         <Group key={missile.id} onClick={() => handleThreatIconClick(missile)}>
+          {/* 只有在做出选择后才渲染虚线框 */}
+          {hasSelectionBeenMade && (isSelected || isHighestPriority) && (
+            <Rect
+              x={missile.x - 5}
+              y={missile.y - 5}
+              width={30 + 10} // missile icon size is 30
+              height={30 + 10}
+              stroke={isHighestPriority ? '#ff4136' : '#ffd700'} // 红色代表最高威胁，黄色代表选中
+              strokeWidth={2}
+              dash={[6, 3]} // 虚线样式
+              cornerRadius={5}
+            />
+          )}
           <Icon
             x={missile.x}
             y={missile.y}
@@ -1001,7 +1030,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     return () => {
       if (animationId) {
         cancelAnimationFrame(animationId);
-        console.log(`🎯 仪表盘旋转动画已停止`);
+        // console.log(`🎯 仪表盘旋转动画已停止`);
       }
       if (stateChangeTimeout) {
         window.clearTimeout(stateChangeTimeout);
@@ -1109,6 +1138,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   strokeWidth={1}
                 />
                 
+                {/* 在第二个圆的圆心位置添加一个小圆点 */}
+                <Circle
+                  x={config.centerX}
+                  y={config.centerY - 50}
+                  radius={3}
+                  fill={config.lineColor}
+                />
+                
                 {/* 第三个圆（只显示120度弧线，去掉中心线） */}
                 <Group>
                   <Arc
@@ -1178,10 +1215,24 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                     return null;
                   }
                   
-                  // console.log(`✅ 渲染威胁: ${threat.type} (${threat.label}) at (${iconPositions[idx].x}, ${iconPositions[idx].y})`);
-                  
+                  const isSelected = threat.id === selectedThreatId;
+                  const isHighestPriority = threat.id === highestPriorityThreat?.id;
+
                   return (
                     <Group key={threat.id} onClick={() => handleThreatIconClick(threat)}>
+                       {/* 只有在做出选择后才渲染虚线框 */}
+                      {hasSelectionBeenMade && (isSelected || isHighestPriority) && (
+                        <Rect
+                          x={iconPositions[idx].x - 5}
+                          y={iconPositions[idx].y - 5}
+                          width={ICON_SIZE + 10}
+                          height={ICON_SIZE + 10}
+                          stroke={isHighestPriority ? '#ff4136' : '#ffd700'} // 红色代表最高威胁，黄色代表选中
+                          strokeWidth={2}
+                          dash={[6, 3]} // 虚线样式
+                          cornerRadius={5}
+                        />
+                      )}
                       <IconComp
                         x={iconPositions[idx].x}
                         y={iconPositions[idx].y}
@@ -1192,7 +1243,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                       <Text
                         x={iconPositions[idx].x + ICON_SIZE + 5}
                         y={iconPositions[idx].y + ICON_SIZE / 2 - 8}
-                        text={threat.label}
+                        text={`${threat.label} [${threatIdToSortedIndexMap.get(threat.id)}]`}
                         fontSize={14}
                         fill="#00ff00"
                         fontFamily="monospace"

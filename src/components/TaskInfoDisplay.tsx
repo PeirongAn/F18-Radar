@@ -1,19 +1,30 @@
 import React from 'react';
 
+// 从 useRadarData 导入任务类型定义
+type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
+
 interface TaskInfoDisplayProps {
   current: number;
   total: number;
   scenario_index?: number;
   scenario_total?: number;
   is_practice?: boolean;
+  task_type?: TaskType; // 新增：任务类型
 }
 
-const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scenario_index, scenario_total, is_practice }) => {
+const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scenario_index, scenario_total, is_practice, task_type }) => {
   const remaining = total - current;
   
+  // 根据任务类型确定说明文件的链接
+  const rulesHref = task_type === 'RADAR_TARGETING' 
+    ? '/radar_target_identification.html' 
+    : task_type === 'SA_THREAT_RESPONSE'
+    ? '/threat_calculation_rules.html'
+    : null;
+
   return (
     <div 
-      className="absolute top-4 left-4 bg-black bg-opacity-50 border border-green-700 rounded-md p-2 shadow-lg z-50"
+      className="absolute top-4 left-4 bg-black bg-opacity-75 border border-green-700 rounded-md p-3 shadow-lg z-50 flex flex-col space-y-2"
       style={{ fontFamily: '"Courier New", Courier, monospace' }}
     >
       <div className="text-green-400 text-sm">
@@ -24,6 +35,18 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
         <p>重复进度: <span className="font-bold text-white">{current} / {total}</span></p>
         <p>本轮剩余: <span className="font-bold text-white">{remaining}</span></p>
       </div>
+      
+      {/* 新增：策略说明按钮 */}
+      {rulesHref && (
+        <a 
+          href={rulesHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 text-center bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1 px-2 rounded transition-colors duration-200"
+        >
+          策略说明
+        </a>
+      )}
     </div>
   );
 };

@@ -4,31 +4,31 @@
     {
       "level": "L0",
       "desc": "低级智能体，延时最长，自动处理最慢",
-      "threat_select_delay_ms": 300,
-      "tdc_select_delay_ms": 3000,
-      "decision_probabilities": [0.3, 0.5, 0.2]
+      "threat_select_delay_ms": 1000,
+      "tdc_select_delay_ms": 1000,
+      "decision_probabilities": [0.3, 0.5]
     },
     {
       "level": "L1",
       "desc": "中级智能体，延时适中",
-      "threat_select_delay_ms": 200,
-      "tdc_select_delay_ms": 800,
-      "decision_probabilities": [0.7, 0.3]
+      "threat_select_delay_ms": 500,
+      "tdc_select_delay_ms": 500,
+      "decision_probabilities": [0.7, 0.9]
     },
     {
       "level": "L2",
       "desc": "高级智能体，延时最短，自动处理最快",
       "threat_select_delay_ms": 100,
-      "tdc_select_delay_ms": 400,
+      "tdc_select_delay_ms": 100,
       "decision_probabilities": [1.0]
     }
   ],
   "game_settings": {
     "current_difficulty": "low",
     "audio_enabled": true,
-    "max_repetitions": 5,
+    "max_repetitions": 10,
     "is_practice_mode": false,
-    "practice_repetitions": 3,
+    "practice_repetitions": 1,
     "difficulty_levels": {
       "high": {
         "name": "高",

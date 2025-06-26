@@ -2,8 +2,18 @@ import React from 'react';
 import { Group, Line, Text } from 'react-konva';
 import { RadarTarget } from '../hooks/useRadarData';
 
+// 创建一个新的类型来代表传递给LiveTarget的 "扁平化" 后的对象
+// 它继承了RadarTarget的所有属性，但保证x, y, quality, threat_level, relative_heading是存在的
+interface LiveTargetObject extends RadarTarget {
+  x: number;
+  y: number;
+  quality: number;
+  threat_level: number;
+  relative_heading: number;
+}
+
 interface LiveTargetProps {
-  target: RadarTarget;
+  target: LiveTargetObject;
   radarConfig: any;
   scanAngle?: number;
 }
@@ -31,12 +41,17 @@ const LiveTarget: React.FC<LiveTargetProps> = ({ target, radarConfig, scanAngle 
   const scale = getScale();
 
   // 根据目标质量计算透明度
+  // 由于LiveTargetObject中quality是必须的，所以无需担心undefined
   const alpha = 0.5 + target.quality * 0.5;
   const color = getThreatColor(target.threat_level);
 
   // 将后端的笛卡尔坐标系角度 (direction) 转换为屏幕坐标系下的旋转角度（单位：度）
   // 我们的基础图标(>)的朝向是左边, 所以需要增加180度来对齐0度朝右的标准。
   const rotationDegrees = -target.direction * 180 / Math.PI + 180;
+
+  // 新增：计算相对航向指示器的旋转角度
+  // relative_heading 是后端算好的，直接使用即可。0度代表同向。
+  const relativeRotationDegrees = target.relative_heading;
 
   return (
     <Group 
@@ -66,6 +81,18 @@ const LiveTarget: React.FC<LiveTargetProps> = ({ target, radarConfig, scanAngle 
         stroke={color}
         strokeWidth={1}
       />
+
+      {/* 新增：相对航向指示器 */}
+      {/* 这个Group是相对于父Group旋转的，所以它的旋转是基于目标的朝向的 */}
+      <Group rotation={relativeRotationDegrees}>
+         {/* 在目标三角形前方绘制一条短线作为指示器 */}
+         <Line
+            points={[5, 0, 15, 0]} // 从目标前方延伸出一条线
+            stroke="#00ff00" // 使用亮绿色以示区别
+            strokeWidth={2}
+         />
+      </Group>
+
     </Group>
   );
 };

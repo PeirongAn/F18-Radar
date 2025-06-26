@@ -248,9 +248,24 @@ const App: React.FC = observer(() => {
 
   // 根据当前视图决定要显示哪个任务的进度
   const infoToShow = useMemo(() => {
-    const taskType = activeDisplay === 'radar' ? 'RADAR_TARGETING' : 'SA_THREAT_RESPONSE';
-    return repetitionInfos[taskType];
+    if (activeDisplay === 'radar') {
+      const info = repetitionInfos['RADAR_TARGETING'];
+      if (!info || typeof info === 'string') return null;
+      return { ...info, task_type: 'RADAR_TARGETING' as const };
+    }
+    if (activeDisplay === 'navigation') {
+      const info = repetitionInfos['SA_THREAT_RESPONSE'];
+      if (!info || typeof info === 'string') return null;
+      return { ...info, task_type: 'SA_THREAT_RESPONSE' as const };
+    }
+    return null;
   }, [activeDisplay, repetitionInfos]);
+
+  const allTasksCompleted = useMemo(() => {
+    const radarCompleted = repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED';
+    const saCompleted = repetitionInfos['SA_THREAT_RESPONSE'] === 'ALL_COMPLETED';
+    return radarCompleted && saCompleted;
+  }, [repetitionInfos]);
 
   return (
     <div className="min-h-screen bg-black text-gray-300">
@@ -360,6 +375,7 @@ const App: React.FC = observer(() => {
           scenario_index={infoToShow.scenario_index}
           scenario_total={infoToShow.scenario_total}
           is_practice={infoToShow.is_practice}
+          task_type={infoToShow.task_type}
         />
       )}
     </div>
