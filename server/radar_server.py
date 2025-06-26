@@ -369,7 +369,7 @@ def generate_task_id():
 # 初始化未知目标数据，使用与mockUnknownTargets.ts相同的数据结构
 def initialize_targets(difficulty_config):
     """根据传入的难度配置初始化目标。"""
-    global unknown_targets
+    global unknown_targets, scan_angle, radar_range
     
     # 从传入的配置中获取目标数量
     total_targets = difficulty_config.get('target_count', 5)
@@ -377,34 +377,29 @@ def initialize_targets(difficulty_config):
     num_friends = total_targets - 2
     num_enemies = 2
 
-    # 定义雷达显示区域的边界（可以根据实际显示区域调整）
-    min_x, max_x = -100, 100
-    min_y, max_y = -100, 100
-    
-    # 根据新的逻辑，雷达中心位于显示区域的底部中心
-    radar_center_x = 0
-    radar_center_y = -100
-    
     # 创建空的目标列表
     unknown_targets = []
     
+    # --- 核心修改：在极坐标系下生成目标，确保在雷达扇形区域内 ---
+    
     # 生成友机
     for i in range(num_friends):
-        # 随机生成位置
-        x = random.uniform(min_x, max_x)
-        y = random.uniform(min_y, max_y)
+        # 1. 在雷达扫描角度内随机生成一个角度
+        angle = random.uniform(-scan_angle / 2, scan_angle / 2)
         
-        # 随机生成速度（友机速度较慢）
+        # 2. 在雷达量程内随机生成一个距离 (海里)
+        # 为了避免目标过于靠近中心点，我们从量程的10%开始生成
+        distance = random.uniform(radar_range * 0.1, radar_range)
+        
+        # 3. 随机生成速度
         speed = random.uniform(3, 6)
         
-        # 再次修正：逻辑交换，友机朝向中心点（模拟返航）
-        base_direction = np.arctan2(radar_center_y - y, radar_center_x - x)
-        offset = random.uniform(-np.pi / 6, np.pi / 6)  # +/- 30度
-        direction = base_direction + offset
+        # 4. 生成朝向 (暂时保持现有逻辑，可根据需要调整)
+        direction = random.uniform(0, 2 * np.pi)
         
         unknown_targets.append({
             "id": f"friend-{i+1}",
-            "position": {"x": x, "y": y},
+            "position": {"x": angle, "y": distance}, # x是角度, y是距离
             "history": [],
             "speed": speed,
             "direction": direction,
@@ -413,21 +408,21 @@ def initialize_targets(difficulty_config):
     
     # 生成敌机
     for i in range(num_enemies):
-        # 随机生成位置
-        x = random.uniform(min_x, max_x)
-        y = random.uniform(min_y, max_y)
+        # 1. 在雷达扫描角度内随机生成一个角度
+        angle = random.uniform(-scan_angle / 2, scan_angle / 2)
         
-        # 随机生成速度（敌机速度较快）
+        # 2. 在雷达量程内随机生成一个距离 (海里)
+        distance = random.uniform(radar_range * 0.1, radar_range)
+        
+        # 3. 随机生成速度
         speed = random.uniform(8, 12)
         
-        # 再次修正：逻辑交换，敌机远离中心点（模拟飞越）
-        base_direction = np.arctan2(y - radar_center_y, x - radar_center_x)
-        offset = random.uniform(-np.pi / 6, np.pi / 6)  # +/- 30度
-        direction = base_direction + offset
+        # 4. 生成朝向 (暂时保持现有逻辑)
+        direction = random.uniform(0, 2 * np.pi)
         
         unknown_targets.append({
             "id": f"enemy-{i+1}",
-            "position": {"x": x, "y": y},
+            "position": {"x": angle, "y": distance}, # x是角度, y是距离
             "history": [],
             "speed": speed,
             "direction": direction,
@@ -437,8 +432,8 @@ def initialize_targets(difficulty_config):
     print(f"已初始化 {len(unknown_targets)} 个未知目标 (Difficulty: {difficulty_config.get('name')})")
     # 打印目标信息用于调试
     for target in unknown_targets:
-        print(f"目标 {target['id']}: 位置({target['position']['x']:.1f}, {target['position']['y']:.1f}), "
-              f"速度 {target['speed']:.1f}, 类型 {target['type']}")
+        print(f"目标 {target['id']}: 角度({target['position']['x']:.1f}°), "
+              f"距离({target['position']['y']:.1f}nm), 类型 {target['type']}")
 
 # 获取要发送给前端的数据
 def get_radar_data(include_targets=False):

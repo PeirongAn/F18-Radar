@@ -317,10 +317,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       />
     );
     
-    // 每5秒输出一次调试信息
-    if (Math.floor(Date.now() / 5000) % 5 === 0) {
-      console.log(`📊 刻度数值更新: 左侧=${leftDisplayValue}(索引${leftScaleIndex}), 右侧=${rightDisplayValue}(索引${rightScaleIndex}), 旋转角度=${dynamicRotation.toFixed(1)}°`);
-    }
+    // // 每5秒输出一次调试信息
+    // if (Math.floor(Date.now() / 5000) % 5 === 0) {
+    //   console.log(`📊 刻度数值更新: 左侧=${leftDisplayValue}(索引${leftScaleIndex}), 右侧=${rightDisplayValue}(索引${rightScaleIndex}), 旋转角度=${dynamicRotation.toFixed(1)}°`);
+    // }
     
     return scaleMarkers;
   };
@@ -966,7 +966,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const rotationDuration = 8000; // 旋转持续时间：8秒
     const pauseDuration = 2000; // 暂停持续时间：2秒
     
-    console.log(`🎯 仪表盘开始间歇式旋转，旋转${rotationDuration/1000}秒，暂停${pauseDuration/1000}秒`);
+    // console.log(`🎯 仪表盘开始间歇式旋转，旋转${rotationDuration/1000}秒，暂停${pauseDuration/1000}秒`);
     
     const animate = (currentTime: number) => {
       if (lastTime === 0) lastTime = currentTime;
@@ -989,7 +989,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       isRotating = !isRotating;
       const nextDuration = isRotating ? rotationDuration : pauseDuration;
       
-      console.log(`🎯 仪表盘${isRotating ? '开始旋转' : '暂停旋转'}，下次切换: ${nextDuration/1000}秒后`);
+      // console.log(`🎯 仪表盘${isRotating ? '开始旋转' : '暂停旋转'}，下次切换: ${nextDuration/1000}秒后`);
       
       stateChangeTimeout = window.setTimeout(toggleRotationState, nextDuration);
     };
@@ -1178,7 +1178,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                     return null;
                   }
                   
-                  console.log(`✅ 渲染威胁: ${threat.type} (${threat.label}) at (${iconPositions[idx].x}, ${iconPositions[idx].y})`);
+                  // console.log(`✅ 渲染威胁: ${threat.type} (${threat.label}) at (${iconPositions[idx].x}, ${iconPositions[idx].y})`);
                   
                   return (
                     <Group key={threat.id} onClick={() => handleThreatIconClick(threat)}>

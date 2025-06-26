@@ -359,7 +359,6 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   const [connected, setConnected] = useState<boolean>(false);
   const [radarData, setRadarData] = useState<any>({});
   const [error, setError] = useState<string | null>(null);
-  const [taskId, setTaskId] = useState<number | null>(null);
   const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
   const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
   const [saThreats, setSaThreats] = useState<any[]>([]); // 重新添加 saThreats 状态
@@ -438,7 +437,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     };
     sendMessage(initMessage);
     console.log('System initialization message sent:', initMessage);
-    setTaskId(new Date().getTime());
+    // Set a temporary task ID, the real one comes from the server in init_settings
+    radarStore.setTaskId(new Date().getTime());
   }, [sendMessage]);
   
   // 发送参数设置给服务器
@@ -515,19 +515,25 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
 
     // Handle other message types
     if (message.type === 'init_settings') {
+      // Play sound only if it's a new task and the correct type
+      if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING') {
+        audioManager.play('radarRange');
+      }
+
       console.log('[useRadarData] Processing full init_settings from server:', message);
       
       // 1. 初始化AI和任务状态
       agentStore.initializeFromServer(message);
       
       // 2. 设置任务ID
-      setTaskId(message.task_id);
+      radarStore.setTaskId(message.task_id);
 
       // 3. 设置雷达参数供UI自动配置
       setInitSettings(message.settings);
-      
+
       // 4. 设置任务重复信息
       if (message.task_type && message.repetition_info) {
+       
         setRepetitionInfos(prev => ({
           ...prev,
           [message.task_type]: message.repetition_info,
@@ -539,12 +545,16 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       recordOperation({ operationType: 'init_settings_received', timestamp: ts, isActive: false, parameters: message.settings });
       setInitSettingsTimestamp(ts);
 
+
     } else if (message.type === 'settings_validation') {
       if ((window as any).__settingsTimeoutRef) clearTimeout((window as any).__settingsTimeoutRef.current);
       const ts = Date.now();
       recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
     } else if (message.type === 'adjust_antenna') {
-      audioManager.play('radarHeight'); // 播放提示音
+      // Only play sound if an adjustment is not already pending
+      if (!antennaAdjustmentRequired) {
+        audioManager.play('radarHeight'); // 播放提示音
+      }
       if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
       console.log('[useRadarData] Received adjust_antenna message:', message);
       const ts = Date.now();
@@ -646,7 +656,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     clearAndResetView,
     clearInitSettings,
     resetAntennaAdjustment,
-    taskId,
+    taskId: radarStore.taskId,
     initializeSystem,
     submitSettings,
     recordOperation,

@@ -102,6 +102,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 添加任务确认弹窗状态
   const [showMissionConfirm, setShowMissionConfirm] = React.useState(false);
+  const [missionResultMessage, setMissionResultMessage] = React.useState(''); // State to hold the result message
   const [radarAzimuth, setRadarAzimuth] = React.useState<number>(0);
   const [ownHeading, setOwnHeading] = React.useState<number>(0);
   
@@ -143,24 +144,68 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 从本地状态获取externalTargets并处理坐标
   const processedExternalTargets = React.useMemo(() => {
-    console.log('RadarDisplay - processedExternalTargets 计算被调用');
-    console.log('RadarDisplay - radarData.externalTargets:', radarData?.externalTargets);
-    
     if (!radarData?.externalTargets) {
-      console.log('RadarDisplay - 未找到 radarData.externalTargets 或为空');
       return undefined;
     }
-    
-    console.log('RadarDisplay - 处理 radarData.externalTargets:', radarData.externalTargets);
-    // 对每个目标的坐标进行处理，将偏移量调整为相对于屏幕中心的实际坐标
-    return radarData.externalTargets.map(target => ({
-      ...target,
-      position: {
-        x: centerX + target.position.x, // 将x偏移量调整为相对于屏幕中心的坐标
-        y: centerY + target.position.y  // 将y偏移量调整为相对于屏幕中心的坐标
-      }
-    }));
-  }, [radarData?.externalTargets, centerX, centerY]); // 添加updateCounter作为依赖
+
+    // --- 坐标系转换逻辑 ---
+    // 1. 定义屏幕坐标系的原点 (O)，即雷达的底边中点，代表自己的位置。
+    const originX = (framePositions.startX + framePositions.endX) / 2;
+    const originY = framePositions.endY;
+
+    // 2. 计算距离的比例尺：每海里(nm)对应多少屏幕像素(px)。
+    // 这是通过用雷达显示区域的像素高度除以当前的最大量程(range)得到的。
+    const pixelsPerNm = radarConfig.mainBoxHeight / range;
+
+    // 3. 遍历从服务器收到的所有目标，将其极坐标转换为屏幕的笛卡尔坐标。
+    return radarData.externalTargets.map(target => {
+      // 从目标数据中获取角度 (azimuth) 和距离 (distance)。
+      const angleDegrees = target.position.x; // X 代表角度
+      const distanceNm = target.position.y;   // Y 代表距离（海里）
+
+      // 步骤 A: 将角度从度(degrees)转换为弧度(radians)，因为三角函数需要使用弧度。
+      const angleRadians = angleDegrees * (Math.PI / 180);
+
+      // 步骤 B: 将距离从海里(nm)转换为屏幕像素(px)。
+      const distancePixels = distanceNm * pixelsPerNm;
+
+      // 步骤 C: 使用三角函数计算目标相对于原点(O)的X和Y方向的像素偏移量。
+      // 标准极坐标中0度朝右，因此 x = r * cos(θ), y = r * sin(θ)。
+      // 在我们的雷达中，0度朝上，因此我们需要进行调整：
+      // - X方向的偏移量由 sin(θ) 决定。
+      // - Y方向的偏移量由 cos(θ) 决定。
+      const offsetX = distancePixels * Math.sin(angleRadians);
+      // Y轴需要取反，因为在屏幕坐标系中，Y值向下增加，而我们希望目标向上移动。
+      const offsetY = -distancePixels * Math.cos(angleRadians); 
+
+      // 步骤 D: 计算出目标在屏幕上的最终绝对坐标。
+      const screenX = originX + offsetX;
+      const screenY = originY + offsetY;
+
+      // 返回包含最终屏幕坐标的新目标对象。
+      return {
+        ...target,
+        position: {
+          x: screenX,
+          y: screenY
+        }
+      };
+    });
+  }, [radarData?.externalTargets, framePositions, range, radarConfig]);
+  
+  // Effect to update the store with the latest target positions
+  useEffect(() => {
+    if (processedExternalTargets) {
+      const positionsMap = new Map<string, { x: number; y: number }>();
+      processedExternalTargets.forEach(target => {
+        positionsMap.set(target.id, target.position);
+      });
+      radarStore.setTargetDisplayPositions(positionsMap);
+    } else {
+      // If there are no targets, clear the map in the store
+      radarStore.setTargetDisplayPositions(new Map());
+    }
+  }, [processedExternalTargets]);
   
   // 处理按下Enter键时的TDC和目标选择逻辑
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -236,6 +281,16 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {
+    if (lockedTargetObject) {
+      // 'army' is considered the correct type for this task (enemy)
+      if (lockedTargetObject.type === 'army') {
+        setMissionResultMessage('结果: 正确');
+      } else {
+        setMissionResultMessage('结果: 错误');
+      }
+    } else {
+      setMissionResultMessage('结果: 未锁定目标');
+    }
     setIffMode(prev => !prev);
     setShowMissionConfirm(true);
   };
@@ -463,6 +518,14 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
               color: '#00ff00',
               fontFamily: '"Courier New", Courier, monospace',
           }}>
+            <p style={{
+              margin: '0 0 10px 0',
+              fontSize: '1.2em',
+              fontWeight: 'bold',
+              color: missionResultMessage === '结果: 正确' ? '#00cc00' : missionResultMessage === '结果: 错误' ? '#ff4444' : '#ffffff'
+            }}>
+              {missionResultMessage}
+            </p>
             <h3 style={{ margin: 0, fontSize: '1.2em' }}>是否进行下一次任务</h3>
             <div style={{ marginTop: '20px' }}>
             <button 

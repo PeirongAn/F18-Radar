@@ -420,7 +420,7 @@ const Radar: React.FC<RadarProps> = (({
         const enemyTarget = availableTargets.find((target: { id: string; }) => target.id.startsWith('enemy'));
         const targetToSelect = enemyTarget || availableTargets[0];
         const targetDisplayPosition = radarStore.targetDisplayPositions.get(targetToSelect.id);
-
+        
         // 使用tdc_select_delay_ms作为统一的延迟参数
         const actionTimeout = setTimeout(() => {
           if (!agentStore.isAIActive) return;
@@ -442,12 +442,6 @@ const Radar: React.FC<RadarProps> = (({
                 lockX: lockX,
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
               });
-
-              // 更新TDC位置到锁定线
-              setTdcPosition(prev => ({
-                ...prev,
-                x: lockX
-              }));
 
               console.log(`[AI Engine] Target locked at X: ${lockX}`);
             }

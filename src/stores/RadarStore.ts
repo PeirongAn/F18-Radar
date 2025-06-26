@@ -1,4 +1,4 @@
-import { makeObservable, observable, action, ObservableSet } from 'mobx';
+import { makeAutoObservable, observable, action, ObservableSet } from 'mobx';
 import agentStore from './AgentStore'; // Restore the import for agentStore
 
 
@@ -53,7 +53,6 @@ export class RadarStore {
   // AI相关状态
   lockedTargetId: string | undefined = undefined; // 当前系统锁定的目标ID (AI或手动)
   lockScreenX: number | undefined = undefined; // 锁定目标时，TDC在屏幕上的X坐标
-  lockedTargetX: number | undefined = undefined;
   
   // 存储目标在屏幕上的动态显示位置
   targetDisplayPositions: Map<string, TargetDisplayPosition> = new Map();
@@ -68,56 +67,30 @@ export class RadarStore {
   completedTaskTypes: ObservableSet<TaskType> = observable.set();
 
   constructor() {
-    makeObservable(this, {
-      isStarted: observable,
-      isSystemInitializing: observable,
-      isAwaitingSettings: observable,
+    makeAutoObservable(this, {
       userId: observable,
-      taskId: observable,
-      antennaAdjustmentRequired: observable,
-      radarRange: observable,
-      scanAngle: observable,
-      settingsValidationTimestamp: observable,
+      isStarted: observable,
       isPractice: observable,
-      currentAntennaElevation: observable,
-      targetAntennaElevation: observable,
-      saEmergency: observable,
-      saEmergencyHistory: observable,
-      lastSAEmergencyTimestamp: observable,
+      lockedTargetId: observable,
+      lockScreenX: observable,
       targetDisplayPositions: observable,
       completionModalInfo: observable,
       completedTaskTypes: observable,
-      setRadarDataHook: action,
-      startSystem: action,
-      setTaskId: action,
-      setAntennaAdjustmentRequired: action,
-      updateRadarParams: action,
-      submitSettings: action,
-      resetSystem: action,
-      setCurrentAntennaElevation: action,
-      setTargetAntennaElevation: action,
       setUserId: action,
-      triggerSAEmergency: action,
-      resetSAEmergency: action,
-      setTargetDisplayPosition: action,
-      removeTargetDisplayPosition: action,
-      clearAllTargetDisplayPositions: action,
+      startSystem: action,
       setLockedTargetId: action,
       setLockScreenX: action,
+      setTargetDisplayPositions: action,
       showCompletionModal: action,
       hideCompletionModal: action,
       addCompletedTaskType: action,
+      setRadarDataHook: action,
     });
     console.log('RadarStore initialized with User ID:', this.userId);
   }
   
-  // 初始化radar data hook引用
   setRadarDataHook(hook: RadarDataHook) {
     this.radarDataHook = hook;
-    // 确保 settingsValidationTimestamp 被正确设置
-    if (hook.settingsValidationTimestamp !== undefined) {
-      this.settingsValidationTimestamp = hook.settingsValidationTimestamp;
-    }
   }
   
   // 系统启动
@@ -227,7 +200,7 @@ export class RadarStore {
   }
 
   setUserId = (userId: string) => {
-    console.log(`[RadarStore] User ID set to: ${userId}`);
+    // console.log(`[RadarStore] User ID set to: ${userId}`);
     this.userId = userId;
   }
 
@@ -298,6 +271,13 @@ export class RadarStore {
       this.completedTaskTypes.add(taskType);
       console.log(`[RadarStore] Task type ${taskType} marked as completed.`);
     }
+  }
+
+  setTargetDisplayPositions(positions: Map<string, TargetDisplayPosition>) {
+    this.targetDisplayPositions.clear();
+    positions.forEach((value, key) => {
+      this.targetDisplayPositions.set(key, value);
+    });
   }
 }
 
