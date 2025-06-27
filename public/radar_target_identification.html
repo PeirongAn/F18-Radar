@@ -46,7 +46,7 @@
 
         <h2>核心评估维度</h2>
         <p>
-            威胁分数的计算主要基于两个关键的动态维度：目标的<strong>距离</strong>和其<strong>飞行航向</strong>。
+            威胁分数的计算是动态且复杂的，它综合了两个关键维度：目标的<strong>距离</strong>和<strong>飞行航向</strong>。
         </p>
 
         <div class="dimension">
@@ -59,23 +59,23 @@
         <div class="dimension">
             <h3>2. 航向分数 (Heading Score)</h3>
             <p>
-                这个维度评估的是目标的飞行意图。系统会计算目标的当前航向与"直接朝向我机"的航向之间的夹角。
+                这个维度评估的是目标的飞行意图，但它只关注一个关键的攻击扇区。系统会计算目标的当前航向与"直接朝向我机"的航向之间的夹角。
             </p>
             <ul>
-                <li>如果一个目标正 <strong class="highlight">"迎头"</strong> 向我飞来，它的航向分数会非常高。</li>
-                <li>如果一个目标正在 <strong class="highlight">"远离"</strong> 我方，或者与我方航向基本平行，其航向分数则会很低。</li>
+                <li>只有当夹角在 <strong class="highlight">±30度</strong> 以内时，该目标才会有航向得分。夹角越小，分数越高。</li>
+                <li>如果目标的飞行方向偏离"朝向我机"超过30度，那么它的航向分将被视为 <strong class="highlight">0</strong>，表明它当前不构成直接的航向威胁。</li>
             </ul>
         </div>
 
         <h2>加权计分与最终判定</h2>
         <p>
-            系统在综合评估时，并不会简单地将两个分数相加，而是为它们分配了不同的重要性权重，以反映在空战中不同因素的优先级。
+            系统在综合评估时，为这两个维度分配了不同的重要性权重，以构建一个更全面的威胁模型。
         </p>
         <div class="formula-box">
             <code>总威胁分数 = (距离分数 * <span class="weight-emphasis">60%</span>) + (航向分数 * <span class="weight-emphasis">40%</span>)</code>
         </div>
         <p>
-            这个公式表明，在当前策略下，我们认为目标的 <strong class="highlight">距离比其航向更重要</strong>，占据了60%的权重。
+            这个公式表明，在当前策略下，我们认为目标的 <strong class="highlight">距离依然是最重要的因素</strong>，但其是否在攻击航向上也占有相当大的比重。
         </p>
 
         <div class="summary">

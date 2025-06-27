@@ -2,15 +2,13 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Stage, Layer, Group, Line } from 'react-konva';
 import { observer } from 'mobx-react-lite';
 import { renderMainFrame, renderText } from './RadarRenderers';
-import useRadarData, { RadarTarget } from '../hooks/useRadarData';
+import { RadarTarget } from '../hooks/useRadarData';
 import ScanLine from './ScanLine';
 import ConnectionStatus from './ConnectionStatus';
 import VelocityVector from './VelocityVector';
 import HorizonHUD from './HorizonHUD';
 import { UnknownTargetManager } from './UnknownTargetManager';
-import LiveTarget from './LiveTarget';
 import radarStore from '../stores/RadarStore';
-import agentStore from '../stores/AgentStore';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -452,14 +450,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
             />
           )}
           
-          {/* 渲染锁定目标 */}
-          {liveTargetForRender && (
-            <LiveTarget
-              target={liveTargetForRender}
-              radarConfig={radarConfig}
-              scanAngle={scanMode.scanAngle}
-            />
-          )}
+         
           
           {/* 渲染未知目标 - 使用UnknownTargetManager */}
           {showUnknownTargets && processedExternalTargets && (

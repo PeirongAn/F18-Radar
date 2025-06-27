@@ -11,6 +11,7 @@ export interface UnknownTargetData {
   direction: number;                // 运动方向（弧度）
   type: 'friend' | 'army'; // 目标类型
   selected?: boolean;               // 添加选中状态标记
+  trail_length?: number;            // 新增：拖尾长度
 }
 
 interface UnknownTargetProps {
@@ -175,7 +176,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     >
       {/* 拖尾 - 从顶点向后延伸 */}
       <Line
-        points={[-15, 0, -40, 0]} // 从顶点(-15,0)向后延伸
+        points={[-15, 0, -15 - (data.trail_length ?? 25), 0]} // 优先使用trail_length, 否则使用默认值25
         stroke={color}
         strokeWidth={1.5}
         opacity={0.6}

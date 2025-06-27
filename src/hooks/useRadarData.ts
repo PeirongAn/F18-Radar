@@ -21,6 +21,7 @@ export interface RadarTarget {
   history: { x: number, y: number }[];
   selected?: boolean;
   relative_heading?: number; // 新增：相对航向（度）
+  trail_length?: number; // 新增：拖尾长度
 }
 
 export interface RadarData {

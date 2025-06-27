@@ -272,8 +272,9 @@ task_counter = 0
 
 # --- 威胁评估权重配置 ---
 # 您可以调整这些权重来改变距离和朝向在威胁判断中的重要性
-DISTANCE_WEIGHT = 0.6  # 距离权重
-HEADING_WEIGHT = 0.4   # 朝向权重
+DISTANCE_WEIGHT = 0.5  # 距离权重
+HEADING_WEIGHT = 0.3   # 朝向权重
+TRAJECTORY_WEIGHT = 0.2 # 新增：轨迹权重
 
 # 当前会话状态
 current_session = {
@@ -326,7 +327,7 @@ def record_task_settings_to_db(task_id, scenario, user_id, event_owner, session_
         scenario['difficulty_name']
     )
     db_writer_queue.put((sql, params))
-    print(f"큐에 추가: record_task_settings for task_id {task_id}")
+    print(f"record_task_settings for task_id {task_id}")
 
 
 def record_operation_to_db(operation, session_state):
@@ -400,7 +401,7 @@ def initialize_targets(difficulty_config):
     for target in potential_targets:
         distance = target['position']['y']
         
-        # 计算目标航向与朝向我方(原点)的夹角
+        # --- 航向评估 ---
         # 目标的绝对角度 (0度朝上)
         target_angle_rad = target['position']['x'] * (np.pi / 180)
         # 朝向我方的矢量角度 (从目标指向原点)
@@ -410,23 +411,33 @@ def initialize_targets(difficulty_config):
         angle_diff_rad = abs((target['direction'] - inbound_heading_rad + np.pi) % (2 * np.pi) - np.pi)
         angle_diff_deg = np.rad2deg(angle_diff_rad)
 
+        # --- 轨迹评估 ---
+        # 计算目标速度在朝向我机方向上的分量（径向速度）
+        # 正值表示靠近，负值表示远离
+        radial_velocity = target['speed'] * np.cos(angle_diff_rad)
+
         # a. 计算距离分数 (0-1)
         distance_score = 1 - (distance / radar_range)
         
-        # b. 计算朝向分数 (0-1)
-        heading_score = 1 - (angle_diff_deg / 180)
+        # b. 计算朝向分数 (0-1)，聚焦于+/-30度扇区
+        if angle_diff_deg <= 30:
+            heading_score = 1 - (angle_diff_deg / 30)
+        else:
+            heading_score = 0 # 超过30度夹角，威胁航向得分为0
         
-        # c. 计算加权总分
-        threat_score = (distance_score * DISTANCE_WEIGHT) + (heading_score * HEADING_WEIGHT)
+        # c. 计算加权总分 (已移除轨迹分数)
+        threat_score = (distance_score * DISTANCE_WEIGHT) + \
+                       (heading_score * HEADING_WEIGHT)
+                        # (trajectory_score * TRAJECTORY_WEIGHT)
         
         target['threat_score'] = threat_score
         evaluated_targets.append(target)
         
         # --- 新增：为调试打印详细的计算过程 ---
         print(f"  [Threat Eval for {target['id']}]")
-        print(f"    - Distance: {distance:.1f}nm -> Score: {distance_score:.2f} (raw)")
-        print(f"    - Heading Diff: {angle_diff_deg:.1f}° -> Score: {heading_score:.2f} (raw)")
-        print(f"    - Weighted Score: ({distance_score:.2f} * {DISTANCE_WEIGHT}) + ({heading_score:.2f} * {HEADING_WEIGHT}) = {threat_score:.2f}")
+        print(f"    - Distance: {distance:.1f}nm -> Score: {distance_score:.2f}")
+        print(f"    - Heading Diff: {angle_diff_deg:.1f}° -> Score: {heading_score:.2f} (Focus on ±30°)")
+        print(f"    - Weighted Score: ({distance_score:.2f}*{DISTANCE_WEIGHT}) + ({heading_score:.2f}*{HEADING_WEIGHT}) = {threat_score:.2f}")
         # --- 结束新增 ---
         
     # 3. 根据威胁分数排序，分数最高的为敌机
@@ -442,6 +453,9 @@ def initialize_targets(difficulty_config):
             target['type'] = 'friend'
             target['id'] = f"friend-{i - num_enemies + 1}"
         
+        # 新增：根据速度计算拖尾长度
+        target['trail_length'] = target['speed'] * 2 # 拖尾长度与速度成正比，系数可调整
+
         final_targets.append(target)
         
     unknown_targets = final_targets
