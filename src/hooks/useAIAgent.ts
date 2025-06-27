@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import agentStore from "../stores/AgentStore";
 
 interface UseAIAgentOptions {
@@ -17,15 +17,30 @@ export function useAIAgent({
   const timerRef = useRef<number | null>(null);
   const lastHandledRef = useRef<string | null>(null);
   const prevIsActiveRef = useRef(isActive);
+  const callCountRef = useRef(0);
 
-  // 生成emergency唯一标识
-  const emergencyId = emergency ? JSON.stringify({ event: emergency.event, missileType: emergency.missileType }) : '';
+  // 生成emergency唯一标识，使用稳定的标识符
+  const emergencyId = useMemo(() => {
+    if (!emergency) return '';
+    
+    // 使用receivedAt作为唯一标识符，这是每次接收时生成的唯一时间戳
+    const timestamp = emergency.receivedAt || emergency.timestamp || emergency.id || `${emergency.event}_${emergency.missileType}`;
+    
+    const id = JSON.stringify({ 
+      event: emergency.event, 
+      missileType: emergency.missileType,
+      timestamp: timestamp
+    });
+    
+    // console.log("[AI Agent] Generated emergencyId:", id, "for emergency:", emergency);
+    return id;
+  }, [emergency?.event, emergency?.missileType, emergency?.timestamp, emergency?.id, emergency?.receivedAt]);
 
   useEffect(() => {
     // 当AI从 `false` 变为 `true` 时触发
     if (isActive && !prevIsActiveRef.current && getBestThreat) {
-      console.log("[AI Agent] AI activated. Performing initial threat assessment.");
       const delay = agentStore.currentAILevelConfig?.threat_select_delay_ms ?? 1500;
+      console.log("[AI Agent] AI activated. Performing initial threat assessment.2 WITH", delay);
       
       timerRef.current = window.setTimeout(() => {
         const threat = getBestThreat();
@@ -47,10 +62,15 @@ export function useAIAgent({
   }, [isActive, getBestThreat, onHandleEmergency]);
 
   useEffect(() => {
+    // 添加调用计数
+    const callCount = callCountRef.current;
+    callCountRef.current += 1;
+    console.log(`[AI Agent] useEffect #2 called ${callCount} times, emergencyId: ${emergencyId}, lastHandledRef: ${lastHandledRef.current}`);
+    
     if (isActive && emergency && lastHandledRef.current !== emergencyId) {
+      console.log("[AI Agent] AI activated. Performing initial threat assessment. 1 WITH", isActive, emergencyId, lastHandledRef.current);
       // 从 agentStore.currentAILevelConfig 获取延迟，并提供默认值
       const delay = agentStore.currentAILevelConfig?.threat_select_delay_ms ?? 1500; // 默认1500ms
-
       timerRef.current = window.setTimeout(() => {
         if (getBestThreat) {
           const threat = getBestThreat();

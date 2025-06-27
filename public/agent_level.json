@@ -27,7 +27,6 @@
     "current_difficulty": "low",
     "audio_enabled": true,
     "max_repetitions": 1,
-    "is_practice_mode": false,
     "practice_repetitions": 1,
     "difficulty_levels": {
       "high": {
@@ -37,7 +36,7 @@
       },
       "low": {
         "name": "低",
-        "threat_count": 4,
+        "threat_count": 5,
         "target_count": 5
       }
      

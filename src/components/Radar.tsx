@@ -19,6 +19,7 @@ interface TargetSelectParams {
   lockX?: number;
   iffMode?: boolean; // AI可能不直接处理IFF模式，但类型需匹配
   externalTargetsTimestamp?: number | null; // AI获取数据的方式不同，可能为null
+  event_owner?: 'AI' | 'manual';
 }
 
 export interface RadarProps {
@@ -420,8 +421,17 @@ const Radar: React.FC<RadarProps> = (({
 
         // 最新的、更精确的逻辑
         if (config.decision_probabilities && config.decision_probabilities.length > 0) {
-          // 新增：从准确率数组中随机抽取一个作为本次决策的准确率
-          const accuracy = config.decision_probabilities[Math.floor(Math.random() * config.decision_probabilities.length)];
+          // 新增：根据数组长度生成准确率（从正确池子选择的概率）
+          let accuracy = 1.0; // 默认值
+          if (config.decision_probabilities.length === 1) {
+            // 只有一个值，直接使用
+            accuracy = config.decision_probabilities[0];
+          } else if (config.decision_probabilities.length >= 2) {
+            // 有两个或多个值，第一个是最小值，第二个是最大值，在范围内随机生成
+            const min = config.decision_probabilities[0];
+            const max = config.decision_probabilities[1];
+            accuracy = parseFloat((Math.random() * (max - min) + min).toFixed(2));
+          }
           const randomChoice = Math.random();
 
           const enemyTargets = availableTargets.filter((t: { id: string }) => t.id.startsWith('enemy'));
@@ -483,7 +493,8 @@ const Radar: React.FC<RadarProps> = (({
               onTargetSelect({ 
                 targetId: finalTargetToSelect.id, 
                 lockX: lockX,
-                externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
+                externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
+                event_owner: 'AI', // AI操作
               });
 
               console.log(`[AI Engine] Target locked at X: ${lockX}`);
@@ -497,7 +508,8 @@ const Radar: React.FC<RadarProps> = (({
               onTargetSelect({ 
                 targetId: finalTargetToSelect.id,
                 lockX: centerX, // 添加默认的lockX值
-                externalTargetsTimestamp: radarData?.externalTargetsTimestamp 
+                externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
+                event_owner: 'AI', // AI操作
               });
               
               console.log(`[AI Engine] Target locked at center X: ${centerX} (fallback)`);
@@ -580,10 +592,11 @@ const Radar: React.FC<RadarProps> = (({
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
     if (onTargetSelect) {
-      onTargetSelect(params);
-      
-      // 移除重复的IFF激活逻辑，现在统一在App.tsx的handleTargetSelect中处理
-      // IFF激活逻辑已移至App.tsx，避免重复触发
+      // 用户手动操作
+      onTargetSelect({ ...params, event_owner: 'manual' });
+      if (agentStore.isAIActive) {
+        agentStore.setAIActive(false);
+      }
     }
   };
 
@@ -838,8 +851,8 @@ const Radar: React.FC<RadarProps> = (({
             resetIFF={resetIffRef}
           />
           
-          {/* 接管控制按钮 - 位置更靠近操作区域 */}
-          {agentStore.isAIActive && (
+          {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}
+          {/* {agentStore.isAIActive && (
             <button 
               className="absolute bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded shadow-lg transition-colors duration-200"
               style={{
@@ -852,7 +865,7 @@ const Radar: React.FC<RadarProps> = (({
             >
               接管控制 (F10)
             </button>
-          )}
+          )} */}
         </div>
         
         {/* 右侧按钮 */}

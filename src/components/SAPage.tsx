@@ -52,12 +52,15 @@ interface ButtonProps {
 }
 
 const Button: React.FC<ButtonProps> = ({ label, onClick }) => {
+  // 为"查看结果"按钮使用更宽的样式
+  const isResultButton = label === '查看结果';
+  
   return (
     <button
-      className="w-12 h-10 bg-gray-900 text-green-400 border-2 border-white rounded font-mono hover:bg-gray-800 focus:outline-none"
+      className={`${isResultButton ? 'w-20 h-10' : 'w-12 h-10'} bg-gray-900 text-green-400 border-2 border-white rounded font-mono hover:bg-gray-800 focus:outline-none text-xs`}
       onClick={onClick}
     >
-    
+      {label}
     </button>
   );
 };
@@ -326,13 +329,67 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   };
 
   // 创建按钮标签
-  const topButtons = Array(5).fill(0).map((_, i) => `T${i + 1}`);
-  const leftButtons = Array(5).fill(0).map((_, i) => `L${i + 1}`);
+  const topButtons = Array(5).fill(0).map((_, i) => i === 2 ? '查看结果' : `T${i + 1}`);
+  const leftButtons = Array(5).fill(0).map((_, i) => i === 1 ? '重置' : `T${i + 1}`);
   const rightButtons = Array(5).fill(0).map((_, i) => `R${i + 1}`);
   
   // 按钮点击处理函数
   const handleButtonClick = (label: string) => {
     console.log(`按钮 ${label} 被点击`);
+    
+    
+    // 当点击第3个按钮（查看结果）时，显示选择结果
+    if (label === '查看结果' && userSelection) {
+      const { threat, isCorrect } = userSelection;
+      
+      // 获取正确的威胁标签
+      const getThreatLabel = (threat: any): string => {
+        if (threat.type === 'MissileUp') return '上升导弹';
+        if (threat.type === 'MissileDown') return '下降导弹';
+        return threat.label || '未知威胁';
+      };
+
+      if (isCorrect) {
+        setCompletedThreat(`✅ 正确！${getThreatLabel(threat)}`);
+      } else {
+        const highestPriorityThreat = getCurrentHighestPriorityThreat();
+        const correctThreatLabel = highestPriorityThreat ? highestPriorityThreat.label : '未知威胁';
+        setCompletedThreat(`❌ 错误！正确答案是：${correctThreatLabel}`);
+      }
+      
+      setShowTaskComplete(true);
+      
+      // 如果选择错误，需要确保最高优先级威胁也显示红色边框
+      if (!isCorrect) {
+        // 将正确答案也添加到威胁列表中，确保显示红色边框
+        const highestPriorityThreat = getCurrentHighestPriorityThreat();
+        if (highestPriorityThreat) {
+          const getOriginalPriority = (threat: any): 'high' | 'medium' | 'low' => {
+            if (threat.type?.toLowerCase().includes('missile')) return 'high';
+            if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) return 'high';
+            return 'medium';
+          };
+          
+          setThreatList(prev => {
+            const newList = [...prev.filter(t => t.id !== highestPriorityThreat.id)];
+            // 将正确答案添加到列表中（但不放在第一位）
+            newList.push({
+              id: highestPriorityThreat.id,
+              type: highestPriorityThreat.type,
+              label: highestPriorityThreat.label,
+              source: highestPriorityThreat.label,
+              distance: 0,
+              heading: 0,
+              priority: getOriginalPriority(highestPriorityThreat),
+            });
+            return newList;
+          });
+        }
+      }
+      
+      // 清除用户选择状态
+      setUserSelection(null);
+    }
   };
 
   // 计算按钮容器尺寸
@@ -357,6 +414,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 添加任务结束弹窗状态
   const [showTaskComplete, setShowTaskComplete] = useState(false);
   const [completedThreat, setCompletedThreat] = useState<string>('');
+  
+  // 添加用户选择状态（但不立即显示结果）
+  const [userSelection, setUserSelection] = useState<{threat: any, isCorrect: boolean} | null>(null);
 
   // 添加接管按钮处理函数
   const handleTakeControl = useCallback(() => {
@@ -408,6 +468,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setSaThreats([]);
     setShowTaskComplete(false); // 关闭任务完成弹窗
     setCompletedThreat(''); // 清空已完成威胁
+    setUserSelection(null); // 清空用户选择
     setDynamicRotation(0); // 重置仪表盘旋转
     
     // 重置控制标志
@@ -458,14 +519,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         // 记录前端接收SAEmergency的本地时间戳
         const receiveTimestamp = Date.now();
         lastEmergencyReceiveTimestampRef.current = receiveTimestamp;
-        // 上报日志到后端
-        sendMessage && sendMessage({
-          type: 'sa_emergency_received',
-          receive_timestamp: receiveTimestamp,
-          event: data.event,
-          missileType: data.missileType,
-          saThreats: data.saThreats
-        });
+        // // 上报日志到后端
+        // sendMessage && sendMessage({
+        //   type: 'sa_emergency_received',
+        //   receive_timestamp: receiveTimestamp,
+        //   event: data.event,
+        //   missileType: data.missileType,
+        //   saThreats: data.saThreats
+        // });
         if (data.event === 'missile') {
           audioManager.play(data.missileType === 'MissileUp' ? 'missileUp' : 'missileDown');
           
@@ -751,108 +812,76 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
   const selectedThreatId = useMemo(() => threatList[0]?.id, [threatList]);
 
-  // 点击icon将其加入威胁列表首位但保持原优先级
-  const handleThreatIconClick = useCallback((threat: any) => {
-    // 获取当前最高优先级威胁
-    const highestPriorityThreat = getCurrentHighestPriorityThreat();
-    
-    // 检查被点击的威胁是否是当前最高优先级威胁
-    const isClickedHighestPriority = highestPriorityThreat && 
-      (threat.id === highestPriorityThreat.id);
+  useEffect(()=> {
+    console.log('[AI Agent]xxxxxxx', threatList)
+  }, [threatList])
 
-    // 确定威胁的原始优先级（基于类型）
+  // 点击icon将其加入威胁列表首位但保持原优先级
+  const handleThreatIconClick = useCallback((threat: any, eventOwner: string) => {
+    console.log('[AI Agent] handleThreatIconClick', threat, eventOwner)
+    const highestPriorityThreat = getCurrentHighestPriorityThreat();
+    const isClickedHighestPriority = highestPriorityThreat && (threat.id === highestPriorityThreat.id);
+
     const getOriginalPriority = (threat: any): 'high' | 'medium' | 'low' => {
-      if (threat.type?.toLowerCase().includes('missile')) {
-        return 'high';
-      } else if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) {
-        return 'high';
-      } else {
-        return 'medium'; // Secondary威胁默认为中等优先级
-      }
+      if (threat.type?.toLowerCase().includes('missile')) return 'high';
+      if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) return 'high';
+      return 'medium';
+    };
+
+    // 统一获取威胁标签的函数
+    const getThreatLabel = (threat: any): string => {
+      if (threat.type === 'MissileUp') return '上升导弹';
+      if (threat.type === 'MissileDown') return '下降导弹';
+      return threat.label || '未知威胁';
     };
 
     const originalPriority = getOriginalPriority(threat);
+    const threatLabel = getThreatLabel(threat);
 
-    // 更新威胁列表：移到首位但保持原始优先级
     setThreatList(prev => {
-      const idx = prev.findIndex(t => t.id === threat.id);
-      let newList = [...prev];
-      if (idx !== -1) {
-        newList.splice(idx, 1);
-      }
+      const newList = [...prev.filter(t => t.id !== threat.id)];
       newList.unshift({
         id: threat.id,
         type: threat.type,
-        label: threat.label,
-        source: threat.label,
+        label: threatLabel,
+        source: threatLabel,
         distance: 0,
         heading: 0,
-        priority: originalPriority, // 保持原始优先级
+        priority: originalPriority,
       });
       return newList;
     });
+
+    // 存储用户选择，但不立即显示弹窗
+    setUserSelection({
+      threat,
+      isCorrect: !!isClickedHighestPriority
+    });
     
-    // 统一显示弹窗，根据是否点击最高优先级威胁显示不同内容
-    if (isClickedHighestPriority) {
-      setCompletedThreat(`✅ 正确！${threat.label || '威胁目标'}`);
-      setShowTaskComplete(true);
-      console.log(`🎯 用户正确识别最高优先级威胁: ${threat.label} (ID: ${threat.id})`);
-    } else {
-      const correctThreatLabel = highestPriorityThreat ? highestPriorityThreat.label : '未知威胁';
-      setCompletedThreat(`❌ 错误！正确答案是：${correctThreatLabel}`);
-      setShowTaskComplete(true);
-      console.log(`❌ 用户点击了非最高优先级威胁: ${threat.label} (ID: ${threat.id})，正确答案是: ${correctThreatLabel}`);
+    // 发送威胁选择消息，区分人工和AI操作
+    if (sendMessage) {
+      
+      sendMessage({
+        type: 'threat_clicked',
+        threat_id: threat.id,
+        label: threatLabel,
+        priority: originalPriority,
+        is_highest_priority: !!isClickedHighestPriority,
+        timestamp: Date.now(),
+        receive_timestamp: lastEmergencyReceiveTimestampRef.current,
+        user_id: userId,
+        event_owner: eventOwner,
+        operation_type: 'icon_click', // 标识这是通过图标点击的操作
+      });
     }
     
     // 确保威胁处理日志写入
     if (onAddMessage) {
       const actor = agentStore.isAIActive ? '[AI]' : '[用户]';
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
-      onAddMessage('sa_threat', `${actor} 处理威胁：${threat.label || '威胁'}，优先级：${priorityText}，${isClickedHighestPriority ? '✅正确选择' : '❌选择错误'}`);
-
-      // 在用户选择后记录威胁分数
-      const logMessage = threatsWithScore
-        .map((item, index) => {
-          const label = item.isMissile
-            ? (item.threat as MissileData).type === 'MissileUp' ? '上升导弹' : '下降导弹'
-            : (item.threat as any).label;
-          return `${label}[${index}]: ${item.score.toFixed(2)}`;
-        })
-        .join('; ');
-      onAddMessage('info', `(评估) ${logMessage}`);
+      onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
-    
-    // 只有点击了当前最高优先级威胁时才发送threat_clicked事件
-    if (isClickedHighestPriority && sendMessage) {
-      sendMessage({
-        type: 'threat_clicked',
-        threat_id: threat.id,
-        label: threat.label,
-        priority: 'highest',  // 标记为最高优先级
-        is_highest_priority: true,  // 明确标记这是最高优先级威胁
-        is_correct: true,  // 标记为正确选择
-        timestamp: Date.now(),
-        receive_timestamp: lastEmergencyReceiveTimestampRef.current,
-        user_id: userId,
-        event_owner: agentStore.currentOperationOwner,
-      });
-    } else if (sendMessage) {
-      // 发送错误选择的事件
-      sendMessage({
-        type: 'threat_clicked',
-        threat_id: threat.id,
-        label: threat.label,
-        priority: originalPriority,  // 使用原始优先级
-        is_highest_priority: false,  // 明确标记这不是最高优先级威胁
-        is_correct: false,  // 标记为错误选择
-        correct_answer: highestPriorityThreat ? highestPriorityThreat.id : null,
-        timestamp: Date.now(),
-        receive_timestamp: lastEmergencyReceiveTimestampRef.current,
-        user_id: userId,
-        event_owner: agentStore.currentOperationOwner,
-      });
-    }
-  }, [getCurrentHighestPriorityThreat, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef, agentStore.currentOperationOwner, threatsWithScore]);
+  }, [getCurrentHighestPriorityThreat, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -862,15 +891,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const isHighestPriority = missile.id === highestPriorityThreat?.id;
 
       return (
-        <Group key={missile.id} onClick={() => handleThreatIconClick(missile)}>
+        <Group key={missile.id} onClick={() => handleThreatIconClick(missile, 'manual')}>
           {/* 只有在做出选择后才渲染虚线框 */}
-          {hasSelectionBeenMade && (isSelected || isHighestPriority) && (
+          {hasSelectionBeenMade && (isSelected || (showTaskComplete && isHighestPriority)) && (
             <Rect
               x={missile.x - 5}
               y={missile.y - 5}
               width={30 + 10} // missile icon size is 30
               height={30 + 10}
-              stroke={isHighestPriority ? '#ff4136' : '#ffd700'} // 红色代表最高威胁，黄色代表选中
+              stroke={showTaskComplete && isHighestPriority ? '#ff4136' : '#ffd700'} // 确认后最高威胁显示红色，否则黄色
               strokeWidth={2}
               dash={[6, 3]} // 虚线样式
               cornerRadius={5}
@@ -894,58 +923,77 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     dy: (Math.random() - 0.5) * 20  // -10~+10
   }));
 
+  // 稳定化AI处理函数
+  const handleEmergency = useCallback((threat: any) => {
+    if (threat) {
+      console.log(`[AI Agent] Handling emergency with provided threat: ${threat.id}, type: ${threat.type}`);
+      handleThreatIconClick(threat, 'AI');
+      return;
+    }
+
+    // 如果没有提供threat，则作为后备方案重新查找威胁
+    const bestThreat = threatList.find(threat => 
+      (threat.type && threat.type.toLowerCase().includes('missile')) || 
+      (threat.id && threat.id.includes('Primary'))
+    ) || threatList[0];
+
+    if (bestThreat) {
+      console.log(`[AI Agent] Handling emergency with fallback threat: ${bestThreat.id}, type: ${bestThreat.type}`);
+      handleThreatIconClick(bestThreat, 'AI');
+    }
+  }, [handleThreatIconClick, threatList]);
+
+  const getBestThreat = useCallback(() => {
+    if (threatsWithScore.length === 0) return null;
+
+    const level = agentStore.currentAILevel;
+    const probabilities = agentStore.currentAILevelConfig?.decision_probabilities || [1.0];
+    
+    // 根据配置生成准确率（从正确池子选择的概率）
+    let accuracy = 1.0; // 默认值
+    if (probabilities.length === 1) {
+      // 只有一个值，直接使用
+      accuracy = probabilities[0];
+    } else if (probabilities.length >= 2) {
+      // 有两个或多个值，第一个是最小值，第二个是最大值，在范围内随机生成
+      const min = probabilities[0];
+      const max = probabilities[1];
+      accuracy = parseFloat((Math.random() * (max - min) + min).toFixed(2));
+    }
+    
+    // 根据准确率决定选择：正确池子 vs 错误池子
+    const randomChoice = Math.random();
+    let choiceIndex = 0;
+    
+    if (randomChoice <= accuracy) {
+      // 从正确池子选择：选择最佳威胁（排序第一的）
+      choiceIndex = 0;
+    } else {
+      // 从错误池子选择：选择非最佳威胁
+      if (threatsWithScore.length > 1) {
+        choiceIndex = Math.floor(Math.random() * (threatsWithScore.length - 1)) + 1;
+      } else {
+        // 如果只有一个威胁，即使要选错误的，也只能选这个
+        choiceIndex = 0;
+      }
+    }
+    
+    const bestThreatInfo = threatsWithScore[choiceIndex];
+
+    if (!bestThreatInfo) return null;
+
+    console.log(`[AI Agent] Level: ${level}, Accuracy: ${accuracy}, Choice Index: ${choiceIndex}, Threat: ${bestThreatInfo.threat.label || bestThreatInfo.threat.type}`);
+
+    // 返回被选中威胁的原始对象，因为 handleThreatIconClick 需要它
+    return bestThreatInfo.threat;
+  }, [threatsWithScore, agentStore.currentAILevel, agentStore.currentAILevelConfig]);
+
   // 智能体自动处理临机事件
   useAIAgent({
     isActive: agentStore.isAIActive,
     emergency: radarData?.emergency,
-    onHandleEmergency: (threat) => {
-      if (threat) {
-        console.log(`[AI Agent] Handling emergency with provided threat: ${threat.id}, type: ${threat.type}`);
-        handleThreatIconClick(threat);
-        return;
-      }
-
-      // 如果没有提供threat，则作为后备方案重新查找威胁
-      const bestThreat = threatList.find(threat => 
-        (threat.type && threat.type.toLowerCase().includes('missile')) || 
-        (threat.id && threat.id.includes('Primary'))
-      ) || threatList[0];
-
-      if (bestThreat) {
-        console.log(`[AI Agent] Handling emergency with fallback threat: ${bestThreat.id}, type: ${bestThreat.type}`);
-        handleThreatIconClick(bestThreat);
-      }
-    },
-    getBestThreat: () => {
-      if (threatsWithScore.length === 0) return null;
-
-      const level = agentStore.currentAILevel;
-      const probabilities = agentStore.currentAILevelConfig?.decision_probabilities || [1.0];
-      let choiceIndex = 0;
-
-      // 根据配置的概率决定选择
-      const rand = Math.random();
-      let cumulativeProbability = 0;
-      for (let i = 0; i < probabilities.length; i++) {
-        cumulativeProbability += probabilities[i];
-        if (rand < cumulativeProbability) {
-          choiceIndex = i;
-          break;
-        }
-      }
-      
-      // 确保选择的索引不越界
-      choiceIndex = Math.min(choiceIndex, threatsWithScore.length - 1);
-      
-      const bestThreatInfo = threatsWithScore[choiceIndex];
-
-      if (!bestThreatInfo) return null;
-
-      console.log(`[AI Agent] Level: ${level}, Choice Index: ${choiceIndex}, Threat: ${bestThreatInfo.threat.label || bestThreatInfo.threat.type}`);
-
-      // 返回被选中威胁的原始对象，因为 handleThreatIconClick 需要它
-      return bestThreatInfo.threat;
-    }
+    onHandleEmergency: handleEmergency,
+    getBestThreat: getBestThreat
   });
 
   const [isStarted, setIsStarted] = useState(false);
@@ -1070,20 +1118,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   label={label}
                   onClick={idx === 1 ? handleResetSA : () => handleButtonClick(label)}
                 />
-                {/* 在L2按钮(idx === 1)下方添加RESET标签 */}
-                {idx === 1 && (
-                  <div className="text-green-400 text-xs font-mono text-center mt-1">
-                    RESET
-                  </div>
-                )}
+              
               </div>
             ))}
           </div>
           
           {/* 雷达显示 - 仅包含雷达相关元素 */}
           <div className="sa-page bg-black relative" style={{ width, height }}>
-            {/* 接管控制按钮 - 位置更靠近操作区域 */}
-            {agentStore.isAIActive && (
+            {/* 接管控制按钮 - 位置更靠近操作区域 临时隐藏*/}
+            {/* {agentStore.isAIActive && (
               <button 
                 className="absolute bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded shadow-lg transition-colors duration-200 z-50"
                 style={{
@@ -1095,7 +1138,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               >
                 接管控制 (F10)
               </button>
-            )}
+            )} */}
             
             <Stage width={width} height={height}>
               <Layer>
@@ -1219,15 +1262,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   const isHighestPriority = threat.id === highestPriorityThreat?.id;
 
                   return (
-                    <Group key={threat.id} onClick={() => handleThreatIconClick(threat)}>
+                    <Group key={threat.id} onClick={() => handleThreatIconClick(threat, 'manual')}>
                        {/* 只有在做出选择后才渲染虚线框 */}
-                      {hasSelectionBeenMade && (isSelected || isHighestPriority) && (
+                      {hasSelectionBeenMade && (isSelected || (showTaskComplete && isHighestPriority)) && (
                         <Rect
                           x={iconPositions[idx].x - 5}
                           y={iconPositions[idx].y - 5}
                           width={ICON_SIZE + 10}
                           height={ICON_SIZE + 10}
-                          stroke={isHighestPriority ? '#ff4136' : '#ffd700'} // 红色代表最高威胁，黄色代表选中
+                          stroke={showTaskComplete && isHighestPriority ? '#ff4136' : '#ffd700'} // 确认后最高威胁显示红色，否则黄色
                           strokeWidth={2}
                           dash={[6, 3]} // 虚线样式
                           cornerRadius={5}
@@ -1265,20 +1308,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             style={{ height: sideContainerHeight }}
           >
             {/* 音频控制按钮 - 状态直接来自 agentStore */}
-            <div className="mb-4">
-              <button
-                className="w-12 h-10 border-2 border-white rounded font-mono text-xs transition-colors duration-200"
-                // {`w-12 h-10 border-2 border-white rounded font-mono text-xs transition-colors duration-200 ${
-                //   agentStore.audioEnabled 
-                //     ? 'bg-green-600 hover:bg-green-700 text-white' 
-                //     : 'bg-red-600 hover:bg-red-700 text-white'
-                // }`}
-                onClick={handleAudioToggle}
-                title="点击切换音频播放状态"
-              >
-                {/* 🔊{agentStore.audioEnabled ? 'ON' : 'OFF'} */}
-              </button>
-            </div>
+            
             
             {rightButtons.map(label => (
               <Button key={label} label={label} onClick={() => handleButtonClick(label)} />
@@ -1288,7 +1318,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       </div>
       
       {/* 威胁列表 */}
-      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{marginTop: '-80px'}}>
+      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{marginTop: '20px'}}>
         <div className="bg-gray-800 p-2 border-b border-gray-700">
           <h3 className="text-green-400 font-mono text-lg text-center">威胁列表</h3>
         </div>
@@ -1301,7 +1331,20 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           <div className="w-24">优先级</div>
         </div>
         
-        {threatList.map((threat, index) => (
+      {[
+        ...threatList, 
+        ...saThreats.filter((saThreat: any) => !threatList.some(t => t.id === saThreat.id)),
+        ...missiles.filter((missile: any) => !threatList.some(t => t.id === missile.id))
+          .map((missile: any) => ({
+            id: missile.id,
+            type: missile.type,
+            label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+            source: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+            distance: 0,
+            heading: 0,
+            priority: 'high' as const
+          }))
+      ].map((threat, index) => (
           <div 
             key={threat.id} 
             className={`p-2 border-b border-gray-800 font-mono text-sm flex items-center ${
@@ -1315,9 +1358,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             <div className="w-24 flex items-center">
               <span 
                 className="w-3 h-3 rounded-full mr-2" 
-                style={{ backgroundColor: threat.priority === 'high' ? '#ff0000' : threat.priority === 'medium' ? '#ffff00' : '#00ffff' }}
+                style={{ backgroundColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff' }}
               ></span>
-              <span className="text-white">{threat.priority === 'high' ? '高' : threat.priority === 'medium' ? '中' : '低'}</span>
+              <span className="text-white">{(threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低'}</span>
             </div>
           </div>
         ))}

@@ -10,8 +10,10 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
 import radarStore from './stores/RadarStore';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, toast } from 'react-hot-toast';
 import CompletionModal from './components/CompletionModal';
+import DifficultyChangeModal from './components/DifficultyChangeModal';
+import ScenarioCompletionModal from './components/ScenarioCompletionModal';
 
 // 日志类型声明，需与CommunicationLog保持一致
 
@@ -20,6 +22,7 @@ interface TargetSelectParams {
   lockX?: number;
   iffMode?: boolean;
   externalTargetsTimestamp?: number | null;
+  event_owner?: 'AI' | 'manual';
 }
 
 const App: React.FC = observer(() => {
@@ -30,6 +33,8 @@ const App: React.FC = observer(() => {
   const [includeAI, setIncludeAI] = useState<boolean>(false);
   const [isPractice, setIsPractice] = useState<boolean>(true);
   const [isStarted, setIsStarted] = useState<boolean>(false);
+  const [showDifficultyChangeModal, setShowDifficultyChangeModal] = useState(false);
+  const [showScenarioCompletionModal, setShowScenarioCompletionModal] = useState(false);
   
   // 添加雷达参数状态
   const [radarRange, setRadarRange] = useState<number>(20); // 默认20海里
@@ -37,6 +42,9 @@ const App: React.FC = observer(() => {
   
   // 使用MobX Store
   const { radarStore } = useStore();
+  
+  const previousDifficultyRef = React.useRef<string | undefined>();
+  const previousScenarioIndexRef = React.useRef<number | undefined>();
   
   // 使用useRadarData hook获取任务状态
   const { 
@@ -144,6 +152,7 @@ const App: React.FC = observer(() => {
         timestamp: Date.now(),
         target_id: params.targetId,
         action: 'select',
+        event_owner: params.event_owner,
       };
       // 只有当这些值有效时才添加到消息中
       if (params.iffMode !== undefined) {
@@ -153,7 +162,7 @@ const App: React.FC = observer(() => {
         messagePayload.receive_timestamp = params.externalTargetsTimestamp;
       }
       
-      console.log('[App.tsx] Sending target_selected:', messagePayload, 'with owner:', agentStore.currentOperationOwner);
+      console.log('[App.tsx] Sending target_selected:', messagePayload, 'with owner:', messagePayload.event_owner);
       if (sendMessage) {
         sendMessage(messagePayload);
       } else {
@@ -248,18 +257,59 @@ const App: React.FC = observer(() => {
 
   // 根据当前视图决定要显示哪个任务的进度
   const infoToShow = useMemo(() => {
+    let info = null;
+    let task_type: 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | null = null;
+
     if (activeDisplay === 'radar') {
-      const info = repetitionInfos['RADAR_TARGETING'];
-      if (!info || typeof info === 'string') return null;
-      return { ...info, task_type: 'RADAR_TARGETING' as const };
+      info = repetitionInfos['RADAR_TARGETING'];
+      task_type = 'RADAR_TARGETING';
+    } else if (activeDisplay === 'navigation') {
+      info = repetitionInfos['SA_THREAT_RESPONSE'];
+      task_type = 'SA_THREAT_RESPONSE';
     }
-    if (activeDisplay === 'navigation') {
-      const info = repetitionInfos['SA_THREAT_RESPONSE'];
-      if (!info || typeof info === 'string') return null;
-      return { ...info, task_type: 'SA_THREAT_RESPONSE' as const };
-    }
-    return null;
+
+    if (!info || typeof info === 'string' || !task_type) return null;
+
+    return { 
+      ...info,
+      task_type,
+      difficulty: (info as any).difficulty,
+      is_ai_active: (info as any).is_ai_active
+    };
   }, [activeDisplay, repetitionInfos]);
+
+  // 监听难度变化并发送通知
+  useEffect(() => {
+    const currentDifficulty = infoToShow?.difficulty;
+
+    // 仅当难度从一个已定义的值变为另一个已定义的值时，才显示通知
+    if (
+      previousDifficultyRef.current &&
+      currentDifficulty &&
+      currentDifficulty !== previousDifficultyRef.current
+    ) {
+      setShowDifficultyChangeModal(true);
+    }
+
+    // 更新上一个难度的引用
+    previousDifficultyRef.current = currentDifficulty;
+  }, [infoToShow?.difficulty]);
+
+  // 监听场景索引变化（仅AI模式）
+  useEffect(() => {
+    const currentScenarioIndex = infoToShow?.scenario_index;
+
+    if (
+      agentStore.isAIActive &&
+      previousScenarioIndexRef.current &&
+      currentScenarioIndex &&
+      currentScenarioIndex !== previousScenarioIndexRef.current
+    ) {
+      setShowScenarioCompletionModal(true);
+    }
+    
+    previousScenarioIndexRef.current = currentScenarioIndex;
+  }, [infoToShow?.scenario_index, agentStore.isAIActive]);
 
   const allTasksCompleted = useMemo(() => {
     const radarCompleted = repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED';
@@ -279,6 +329,14 @@ const App: React.FC = observer(() => {
         }}
       />
       <CompletionModal />
+      <DifficultyChangeModal 
+        isOpen={showDifficultyChangeModal} 
+        onClose={() => setShowDifficultyChangeModal(false)} 
+      />
+      <ScenarioCompletionModal 
+        isOpen={showScenarioCompletionModal}
+        onClose={() => setShowScenarioCompletionModal(false)}
+      />
       {/* 显示初始表单模态框 */}
       {showInitialForm && (
         <InitialFormModal 
@@ -327,8 +385,8 @@ const App: React.FC = observer(() => {
             ) : (
               <div className='flex justify-center'>
                 <SAPage 
-                  width={1000} 
-                  height={1000} 
+                  width={700} 
+                  height={700} 
                   onAddMessage={addMessage} 
                   userId={userId}
                   onResetSA={sendResetSA}
@@ -376,6 +434,7 @@ const App: React.FC = observer(() => {
           scenario_total={infoToShow.scenario_total}
           is_practice={infoToShow.is_practice}
           task_type={infoToShow.task_type}
+          difficulty={infoToShow.difficulty}
         />
       )}
     </div>

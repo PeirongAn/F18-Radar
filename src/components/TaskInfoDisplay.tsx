@@ -10,9 +10,10 @@ interface TaskInfoDisplayProps {
   scenario_total?: number;
   is_practice?: boolean;
   task_type?: TaskType; // 新增：任务类型
+  difficulty?: string;
 }
 
-const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scenario_index, scenario_total, is_practice, task_type }) => {
+const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scenario_index, scenario_total, is_practice, task_type, difficulty }) => {
   const remaining = total - current;
   
   // 根据任务类型确定说明文件的链接
@@ -29,6 +30,7 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
     >
       <div className="text-green-400 text-sm">
         <p>模式: <span className="font-bold text-white">{is_practice ? '练习模式' : '正式模式'}</span></p>
+        {difficulty && <p>难度: <span className="font-bold text-white">{difficulty}</span></p>}
         {scenario_index !== undefined && scenario_total !== undefined && (
           <p>场景类型: <span className="font-bold text-white">{scenario_index} / {scenario_total}</span></p>
         )}

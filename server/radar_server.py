@@ -169,8 +169,8 @@ class TaskScenarioManager:
 
         # AI模式
         ai_scenarios = []
-        for level_conf in all_levels:
-            for diff_name, diff_conf in all_difficulties.items():
+        for diff_name, diff_conf in all_difficulties.items():
+            for level_conf in all_levels:
                 for audio in audio_options:
                     ai_scenarios.append({
                         "is_ai_active": True, "audio_enabled": audio,
@@ -247,7 +247,9 @@ class TaskScenarioManager:
         repetition_info = {
             "current": self.repetition_counter,
             "total": self.max_repetitions,
-            "is_practice": self.is_practice
+            "is_practice": self.is_practice,
+            "difficulty": self.current_scenario.get('difficulty_name'),
+            "is_ai_active": self.current_scenario.get('is_ai_active')
         }
         # 将类型编号添加到repetition_info中
         if self.current_scenario.get("scenario_info"):
@@ -1050,7 +1052,11 @@ async def handle_client_message(message_str, session_state, websocket=None):
                 'type': 'sa_task_updated',
                 'saThreats': threats,
                 'repetition_info': current_scenario['repetition_info'],
-                'task_type': task_type
+                'task_type': task_type,
+                'is_ai_active': current_scenario['is_ai_active'],
+                'ai_level': current_scenario.get('ai_level_name'),
+                'ai_configs': CONFIG.get('levels', []),
+                'audio_enabled': current_scenario['audio_enabled']
             }
 
             if websocket:

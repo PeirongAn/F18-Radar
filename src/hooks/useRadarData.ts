@@ -45,6 +45,7 @@ export interface RadarData {
       type: string;
       label: string;
     }>;
+    receivedAt?: number; // 接收时间戳，用于生成唯一ID
   };
   // 新增: 允许服务端直接发送AI参数建议
   ai_param_recommendation?: ServerAIParameterRecommendation;
@@ -165,15 +166,17 @@ class GlobalWebSocketManager {
         emergencyData = {
             event: rawData.event,
             missileType: rawData.missileType,
-            saThreats: rawData.saThreats
-            // 确保这里包含了 RadarData['emergency'] 类型定义的所有必需和可选字段
-            // 如果原始的 rawData 中可能没有 missileType 或 saThreats，需要做相应处理，例如：
-            // missileType: rawData.missileType || undefined,
-            // saThreats: rawData.saThreats || undefined,
+            saThreats: rawData.saThreats,
+            // 添加接收时间戳作为唯一标识符
+            receivedAt: Date.now()
         };
       } else if (rawData.emergency) {
         // 否则，如果 rawData 中有一个名为 emergency 的字段，则使用它
-        emergencyData = rawData.emergency;
+        emergencyData = {
+          ...rawData.emergency,
+          // 添加接收时间戳作为唯一标识符
+          receivedAt: Date.now()
+        };
       }
       
       // 创建一个新的数据对象
@@ -271,43 +274,18 @@ class GlobalWebSocketManager {
     };
   }
   
-  // 发送消息
-  public sendMessage(message: any, retryCount: number = 3, retryDelay: number = 300) {
-    if (!this.ws) {
-      console.warn('【全局WS】无法发送消息：WebSocket未初始化');
-      return false;
-    }
-    
-    // 检查连接状态
-    if (this.ws.readyState !== WebSocket.OPEN) {
-      // 如果连接未就绪但尝试次数仍然有剩余
-      if (retryCount > 0 && this.ws.readyState === WebSocket.CONNECTING) {
-        console.log(`【全局WS】连接尚未就绪，将在${retryDelay}ms后重试发送消息(剩余${retryCount}次)`);
-        // 设置定时器延迟重试
-        setTimeout(() => {
-          this.sendMessage(message, retryCount - 1, retryDelay);
-        }, retryDelay);
-        return true; // 返回true表示消息将会被重试
-      }
-      
-      console.warn(`【全局WS】无法发送消息：WebSocket未连接(状态:${this.ws.readyState})`);
-      return false;
-    }
-    
-    try {
-      // Automatically add user_id and event_owner to all messages
-      const messageToSend = {
+  // 修改sendMessage以优先使用消息中自带的event_owner
+  public sendMessage(message: object) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const payload = {
+        event_owner: agentStore.currentOperationOwner,
         ...message,
-        user_id: radarStore.userId, // Assuming radarStore is accessible here or passed
-        event_owner: agentStore.currentOperationOwner
+        user_id: radarStore.userId,
       };
-      const messageStr = JSON.stringify(messageToSend);
-      this.ws.send(messageStr);
-      console.log('【全局WS】已发送消息:', messageToSend);
-      return true;
-    } catch (error) {
-      console.error('【全局WS】发送消息时出错:', error);
-      return false;
+      console.log('useRadarData sendMessage - Sending:', payload);
+      this.ws.send(JSON.stringify(payload));
+    } else {
+      console.error('WebSocket is not connected.');
     }
   }
   
@@ -410,11 +388,14 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   }, [initSettings]);
   
   // 使用全局WebSocket管理器发送消息
-  const sendMessage = useCallback((message: any) => {
-    const success = globalWS.sendMessage(message);
-    if (!success) {
-      console.warn('消息发送失败，WebSocket未连接或发送出错');
-    }
+  const sendMessage = useCallback((message: object) => {
+    // 确保在发送时，如果消息本身带有event_owner，则使用它
+    const payload = {
+      event_owner: agentStore.currentOperationOwner, // 默认值
+      ...message, // 传入的消息可以覆盖默认值
+      user_id: radarStore.userId, // 修正：从 radarStore 获取 userId
+    };
+    globalWS.sendMessage(payload);
   }, []);
   
   // 记录操作
@@ -431,6 +412,9 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   
   // 初始化系统，请求任务ID和初始设置
   const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean) => {
+    radarStore.setUserId(userId); // 修正：设置到 radarStore
+    agentStore.setAIActive(includeAI);
+
     const initMessage = {
       type: 'task_start',
       user_id: userId,
@@ -478,10 +462,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     const resetMessage = {
       type: 'reset_targets'
     };
-    const success = globalWS.sendMessage(resetMessage);
-    if (!success) {
-      console.warn('重置目标消息发送失败，WebSocket未连接');
-    }
+    globalWS.sendMessage(resetMessage);
     
     // 如果有本地缓存的目标数据，也一并清除
     if (radarData && radarData.externalTargets) {
@@ -583,6 +564,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
           [message.task_type]: message.repetition_info,
         }));
       }
+      //  初始化AI和任务状态
+      agentStore.initializeFromServer(message);
     } else if (message.type === 'all_tasks_completed') {
       console.log('[useRadarData] Received all_tasks_completed:', message);
       // 检查此任务类型是否已弹窗过

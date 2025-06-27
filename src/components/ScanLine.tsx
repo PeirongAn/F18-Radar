@@ -155,7 +155,7 @@ const ScanLine: React.FC<ScanLineProps> = ({
         if (!anim.cycleCompleted && onScanCycleComplete) {
           onScanCycleComplete();
           anim.cycleCompleted = true;
-          console.log("扫描完成一次从右到左的循环");
+          // console.log("扫描完成一次从右到左的循环");
         }
       }
     }
