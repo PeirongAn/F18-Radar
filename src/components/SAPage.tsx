@@ -573,6 +573,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           let angle, r, rawX, rawY;
           let attempts = 0;
           const maxAttempts = 10;
+          const effectiveCenterY = config.centerY - 50; // 统一使用正确的圆心Y坐标
           
           do {
             // 导弹更倾向于出现在上半圆区域（-π到0，即上方180度）
@@ -589,7 +590,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             r = radius2 + Math.random() * (radius3 - radius2) * 0.8; // 只使用80%的范围
             
             rawX = config.centerX + r * Math.cos(angle);
-            rawY = config.centerY + r * Math.sin(angle);
+            rawY = effectiveCenterY + r * Math.sin(angle);
             
             attempts++;
           } while (
@@ -634,6 +635,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // iconPositions 依赖 saThreats
   const iconPositions = React.useMemo(() => {
     const positions: Array<{x: number, y: number}> = [];
+    const effectiveCenterY = config.centerY - 50; // 统一使用正确的圆心Y坐标
     
     // 检查位置是否与已有位置冲突
     const isPositionConflicting = (newPos: {x: number, y: number}, existingPositions: Array<{x: number, y: number}>, minDistance: number = ICON_SIZE * 1.2) => {
@@ -656,7 +658,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         const angle = Math.random() * 2 * Math.PI;
         const r = radius2 + Math.random() * 40; // 在radius2附近分布，范围稍大一些
         const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
-        const y = config.centerY + r * Math.sin(angle) - ICON_SIZE / 2;
+        const y = effectiveCenterY + r * Math.sin(angle) - ICON_SIZE / 2;
         
         // 确保在屏幕范围内
         const clampedX = Math.max(ICON_SIZE, Math.min(width - ICON_SIZE, x));
@@ -696,7 +698,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         const r = radius2 + Math.random() * radiusRange;
         
         const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
-        const y = config.centerY + r * Math.sin(angle) - ICON_SIZE / 2;
+        const y = effectiveCenterY + r * Math.sin(angle) - ICON_SIZE / 2;
         
         // 确保在屏幕范围内
         const clampedX = Math.max(ICON_SIZE, Math.min(width - ICON_SIZE, x));
