@@ -222,16 +222,22 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       let closestTarget: RadarTarget | undefined;
       let minDistance = 30; // 设置一个阈值，只有距离小于这个值的目标才会被选中
       
+      // ✅ 修复：使用RadarStore中的实际显示位置进行距离计算
       processedExternalTargets.forEach(target => {
+        // 获取目标的实际显示位置（包含动画偏移）
+        const actualPosition = radarStore.targetDisplayPositions.get(target.id);
+        const targetPos = actualPosition || target.position; // 如果没有实际位置，使用原始位置作为备选
+        
         const distance = Math.sqrt(
-          Math.pow(target.position.x - tdcPosition.x, 2) + 
-          Math.pow(target.position.y - tdcPosition.y, 2)
+          Math.pow(targetPos.x - tdcPosition.x, 2) + 
+          Math.pow(targetPos.y - tdcPosition.y, 2)
         );
         
         if (distance < minDistance) {
           minDistance = distance;
           closestTarget = target;
         }
+        console.log(`[锁定检测] 目标 ${target.id}: 计算位置(${target.position.x.toFixed(1)}, ${target.position.y.toFixed(1)}) vs 实际位置(${targetPos.x.toFixed(1)}, ${targetPos.y.toFixed(1)}) 距离TDC: ${distance.toFixed(1)}px`);
       });
       
       if (closestTarget) {
@@ -253,22 +259,32 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       let closestTarget: RadarTarget | undefined;
       let minDistance = 30; // 30px search radius
 
+      // ✅ 修复：空格键锁定也使用实际显示位置
       processedExternalTargets.forEach(target => {
+        // 获取目标的实际显示位置（包含动画偏移）
+        const actualPosition = radarStore.targetDisplayPositions.get(target.id);
+        const targetPos = actualPosition || target.position; // 如果没有实际位置，使用原始位置作为备选
+        
         const distance = Math.sqrt(
-          Math.pow(target.position.x - tdcPosition.x, 2) +
-          Math.pow(target.position.y - tdcPosition.y, 2)
+          Math.pow(targetPos.x - tdcPosition.x, 2) +
+          Math.pow(targetPos.y - tdcPosition.y, 2)
         );
         if (distance < minDistance) {
           minDistance = distance;
           closestTarget = target;
         }
+        console.log(`[空格锁定] 目标 ${target.id}: 实际位置(${targetPos.x.toFixed(1)}, ${targetPos.y.toFixed(1)}) 距离TDC: ${distance.toFixed(1)}px`);
       });
 
       if (closestTarget) {
-        console.log('RadarDisplay - Spacebar: Found closest target:', closestTarget.id, 'at TDC X:', closestTarget.position.x);
+        // 使用实际显示位置作为锁定线位置
+        const actualPosition = radarStore.targetDisplayPositions.get(closestTarget.id);
+        const lockX = actualPosition ? actualPosition.x : closestTarget.position.x;
+        
+        console.log('RadarDisplay - Spacebar: Found closest target:', closestTarget.id, 'at actual X:', lockX);
         onTargetSelect({
           targetId: closestTarget.id,
-          lockX: closestTarget.position.x,
+          lockX: lockX,
           iffMode: iffMode,
           externalTargetsTimestamp: radarData?.externalTargetsTimestamp
         });
@@ -276,7 +292,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         console.log('RadarDisplay - Spacebar: No target found near TDC for auto-lock.');
       }
     }
-  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp]);
+  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions]);
   
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {

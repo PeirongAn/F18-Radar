@@ -215,7 +215,7 @@ const App: React.FC = observer(() => {
   const handleRadarParamsUpdate = (range: number, angle: number) => {
     setRadarRange(range);
     setScanAngle(angle);
-    console.log(`雷达参数已更新 - 范围: ${range}海里, 角度: ${angle}°`);
+    console.log(`雷达参数已更新 123- 范围: ${range}海里, 角度: ${angle}°`);
     radarStore.updateRadarParams(range, angle);
   };
 

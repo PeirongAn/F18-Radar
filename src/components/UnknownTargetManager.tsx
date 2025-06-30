@@ -68,14 +68,7 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
   const lineStartY = framePositions ? framePositions.startY : -1000;
   const lineEndY = framePositions ? framePositions.endY : 1000;
   
-  // 记录目标数据变化
-  useEffect(() => {
-    if (externalTargets && externalTargets.length > 0) {
-      console.log(`UnknownTargetManager: 渲染 ${externalTargets.length} 个目标`);
-    } else {
-      console.log('UnknownTargetManager: 清除所有目标');
-    }
-  }, [externalTargets]);
+
 
   // IFF模式下根据目标类型获取颜色
   const getTargetColor = (target: UnknownTargetData): string => {
