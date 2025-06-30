@@ -953,6 +953,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             color="#ff0000"
             strokeWidth={3}
           />
+          {/* 导弹图标中心点标记 - 黄色小圆点 */}
+          <Circle
+            x={missile.x + 15} // 导弹图标大小是30，所以中心点是 + 15
+            y={missile.y + 15}
+            radius={3}
+            fill="#ffff00"
+            stroke="#000000"
+            strokeWidth={1}
+          />
         </Group>
       );
     });
@@ -1323,6 +1332,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                         size={ICON_SIZE}
                         color={iconColors[Object.keys(ICON_MAP).indexOf(threat.type as keyof typeof ICON_MAP)]}
                         label={threat.label}
+                      />
+                      {/* 威胁图标中心点标记 - 黄色小圆点 */}
+                      <Circle
+                        x={iconPositions[idx].x + ICON_SIZE / 2}
+                        y={iconPositions[idx].y + ICON_SIZE / 2}
+                        radius={3}
+                        fill="#ffff00"
+                        stroke="#000000"
+                        strokeWidth={1}
                       />
                       <Text
                         x={iconPositions[idx].x + ICON_SIZE + 5}
