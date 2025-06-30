@@ -594,9 +594,6 @@ const Radar: React.FC<RadarProps> = (({
     if (onTargetSelect) {
       // 用户手动操作
       onTargetSelect({ ...params, event_owner: 'manual' });
-      if (agentStore.isAIActive) {
-        agentStore.setAIActive(false);
-      }
     }
   };
 
@@ -752,7 +749,7 @@ const Radar: React.FC<RadarProps> = (({
   const handleTakeControl = useCallback(() => {
     console.log('用户手动接管控制');
     // 禁用AI控制
-    agentStore.setAIActive(false);
+    agentStore.setAIActive(!agentStore.isAIActive);
     
     // 发送接管消息到服务器
     if (sendMessage) {

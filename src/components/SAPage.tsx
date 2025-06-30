@@ -422,7 +422,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const handleTakeControl = useCallback(() => {
     console.log('[SA页面] 用户手动接管控制');
     // 禁用AI控制
-    agentStore.setAIActive(false);
+    // agentStore.setAIActive(false);
     
     // 发送接管消息到服务器
     if (sendMessage) {
