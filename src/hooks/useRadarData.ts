@@ -15,9 +15,11 @@ export interface RadarTarget {
   position: { x: number, y: number };
   speed: number;
   direction: number; // 这是弧度
+  direction_degrees?: number; // 预处理的导航坐标系角度（度数）
   type: 'friend' | 'army';
   quality?: number; // Make quality optional
   threat_level?: number; // Make threat_level optional
+  threat_score?: number; // 后端计算的威胁评分
   history: { x: number, y: number }[];
   selected?: boolean;
   relative_heading?: number; // 新增：相对航向（度）

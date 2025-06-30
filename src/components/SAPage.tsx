@@ -349,6 +349,45 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         return threat.label || '未知威胁';
       };
 
+      // 生成所有威胁的得分信息日志
+      if (onAddMessage && threatsWithScore.length > 0) {
+        // 添加得分详情日志
+        onAddMessage('sa_threat', '=== 威胁得分排序详情 ===');
+        
+        const effectiveCenterY = config.centerY - 50; // 正确的圆心Y坐标
+        
+        threatsWithScore.forEach((threatInfo, index) => {
+          const threatLabel = getThreatLabel(threatInfo.threat);
+          const threatId = threatInfo.threat.id;
+          const originalIndex = threatInfo.originalIndex;
+          
+          // 计算与本机的距离（像素距离）
+          let distance = 0;
+          let threatNumber = '未知';
+          
+          if (threatInfo.isMissile) {
+            // 导弹距离计算
+            const missile = threatInfo.threat as MissileData;
+            distance = Math.sqrt(Math.pow(missile.x - config.centerX, 2) + Math.pow(missile.y - effectiveCenterY, 2));
+            threatNumber = `导弹${originalIndex + 1}`;
+          } else {
+            // 常规威胁距离计算
+            const pos = iconPositions[originalIndex];
+            if (pos) {
+              distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - effectiveCenterY, 2));
+            }
+            // 从威胁列表中查找对应的标号
+            const sortedIndex = threatIdToSortedIndexMap.get(threatId);
+            threatNumber = sortedIndex !== undefined ? `[${sortedIndex}]` : `威胁${originalIndex + 1}`;
+          }
+          
+          const scoreText = `排名${index + 1}: ${threatLabel} - 得分: ${threatInfo.score.toFixed(2)}${threatInfo.isMissile ? ' (导弹)' : ''} [ID: ${threatId}, 序号: ${originalIndex}, 标号: ${threatNumber}, 距离: ${distance.toFixed(1)}px]`;
+          onAddMessage('sa_threat', scoreText);
+        });
+        
+        onAddMessage('sa_threat', '========================');
+      }
+
       if (isCorrect) {
         setCompletedThreat(`✅ 正确！${getThreatLabel(threat)}`);
       } else {

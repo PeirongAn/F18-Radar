@@ -9,9 +9,11 @@ export interface UnknownTargetData {
   history: { x: number, y: number }[]; // 历史位置记录
   speed: number;                    // 目标速度
   direction: number;                // 运动方向（弧度）
+  direction_degrees?: number;       // 预处理的导航坐标系角度（度数）
   type: 'friend' | 'army'; // 目标类型
   selected?: boolean;               // 添加选中状态标记
   trail_length?: number;            // 新增：拖尾长度
+  threat_score?: number;            // 后端计算的威胁评分
 }
 
 interface UnknownTargetProps {
@@ -24,9 +26,10 @@ interface UnknownTargetProps {
     endY: number;
   };
   scanAngle?: number;
+  onTargetClick?: (target: UnknownTargetData) => void; // 添加点击事件回调
 }
 
-const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions, scanAngle = 60 }) => {
+const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions, scanAngle = 60, onTargetClick }) => {
   // 从props解构需要的属性
   const { id, direction, type, speed, selected, position } = data;
   
@@ -156,10 +159,16 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     return null;
   }
   
-  // 将后端的笛卡尔坐标系角度 (direction) 转换为屏幕坐标系下的旋转角度（单位：度）
-  // 屏幕坐标系Y轴向下，所以角度需要取反。
-  // 我们的基础图标(>)的朝向是左边, 所以需要增加180度来对齐0度朝右的标准。
-  const rotationDegrees = -data.direction * 180 / Math.PI + 180;
+  // 处理目标点击事件
+  const handleTargetClick = () => {
+    if (onTargetClick) {
+      onTargetClick(data);
+    }
+  };
+
+  // 使用后端预处理的导航坐标系角度，不再需要前端转换
+  // 后端已经将数学坐标系转换为导航坐标系角度（0°=北, 90°=东, 180°=南, 270°=西）
+  const rotationDegrees = data.direction_degrees || 0;
   
   return (
     // 使用计算出的显示位置，而不是原始position
@@ -167,9 +176,11 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
     <Group 
       x={displayPosition.x} 
       y={displayPosition.y}
-      rotation={rotationDegrees}
+      rotation={rotationDegrees - 90}
       scaleX={scale}
       scaleY={scale}
+      onClick={handleTargetClick}
+      onTap={handleTargetClick}
     >
       {/* 拖尾 - 从顶点向后延伸 */}
       <Line

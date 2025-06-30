@@ -59,11 +59,13 @@
         <div class="dimension">
             <h3>2. 航向分数 (Heading Score)</h3>
             <p>
-                这个维度评估的是目标的飞行意图，但它只关注一个关键的攻击扇区。系统会计算目标的当前航向与"直接朝向我机"的航向之间的夹角。
+                这个维度评估的是目标的飞行意图，采用连续变化的威胁评估模型。系统基于目标的绝对航向角度计算威胁分数。
             </p>
             <ul>
-                <li>只有当夹角在 <strong class="highlight">±30度</strong> 以内时，该目标才会有航向得分。夹角越小，分数越高。</li>
-                <li>如果目标的飞行方向偏离"朝向我机"超过30度，那么它的航向分将被视为 <strong class="highlight">0</strong>，表明它当前不构成直接的航向威胁。</li>
+                <li><strong class="highlight">0度（正北方向）</strong>：威胁分数最低（-1），表示目标正在远离或处于低威胁状态</li>
+                <li><strong class="highlight">180度（正南方向）</strong>：威胁分数最高（+1），表示目标处于最高威胁状态</li>
+                <li><strong class="highlight">90度和270度（东西方向）</strong>：威胁分数为中等（0），表示目标处于中等威胁状态</li>
+                <li>威胁分数使用余弦函数连续变化：<code>航向分数 = -cos(航向角度)</code></li>
             </ul>
         </div>
 
@@ -72,11 +74,28 @@
             系统在综合评估时，为这两个维度分配了不同的重要性权重，以构建一个更全面的威胁模型。
         </p>
         <div class="formula-box">
-            <code>总威胁分数 = (距离分数 * <span class="weight-emphasis">60%</span>) + (航向分数 * <span class="weight-emphasis">40%</span>)</code>
+            <code>总威胁分数 = (距离分数 * <span class="weight-emphasis">90%</span>) + (航向分数 * <span class="weight-emphasis">10%</span>)</code>
         </div>
         <p>
-            这个公式表明，在当前策略下，我们认为目标的 <strong class="highlight">距离依然是最重要的因素</strong>，但其是否在攻击航向上也占有相当大的比重。
+            这个公式表明，在当前策略下，我们认为目标的 <strong class="highlight">距离依然是最重要的因素</strong>，但其飞行航向的威胁程度也占有相当大的比重。航向评分采用连续变化模型，能够更精确地反映不同方向的威胁水平。
         </p>
+
+        <h2>连续威胁评估模型</h2>
+        <p>
+            新的航向评分系统摒弃了传统的分段评分方式，采用数学函数实现威胁值的平滑过渡：
+        </p>
+        <div class="formula-box">
+            <code>航向分数 = -cos(航向角度)</code>
+        </div>
+        <p>
+            这种连续变化的模型具有以下优势：
+        </p>
+        <ul>
+            <li><strong>平滑过渡</strong>：威胁值在-1到+1之间连续变化，避免了突变</li>
+            <li><strong>对称性</strong>：东西方向（90°/270°）威胁值相等，符合战术逻辑</li>
+            <li><strong>极值明确</strong>：正北（0°）威胁最小，正南（180°）威胁最大</li>
+            <li><strong>数学稳定</strong>：基于余弦函数，计算结果稳定可靠</li>
+        </ul>
 
         <div class="summary">
             <h2>最终识别规则</h2>

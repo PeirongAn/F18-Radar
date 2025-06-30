@@ -68,6 +68,7 @@ export interface RadarDisplayProps {
   radarData: import('../hooks/useRadarData').RadarData | null;
   error: string | null;
   onResetForNextMission?: () => void;
+  onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -93,7 +94,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   connected,
   radarData,
   error,
-  onResetForNextMission
+  onResetForNextMission,
+  onAddMessage
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -206,6 +208,55 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     }
   }, [processedExternalTargets]);
   
+  // 计算目标的距离和航向信息的通用函数
+  const calculateTargetInfo = useCallback((target: RadarTarget) => {
+    // 计算距离（海里）
+    // 后端的target.position实际上是极坐标：x=角度，y=距离（海里）
+    // 所以距离可以直接从y值获取，无需复杂的像素转换
+    const distanceNm = Math.abs(target.position.y); // 使用绝对值确保距离为正
+    
+    // 使用后端预处理的导航坐标系角度
+    // 后端已经将数学坐标系转换为导航坐标系角度（0°=北, 90°=东, 180°=南, 270°=西）
+    const directionDegrees = target.direction_degrees;
+    
+    // 直接使用后端计算的威胁评分，确保完全一致
+    const threatScore = target.threat_score;
+    
+    return {
+      distance: distanceNm,
+      direction: directionDegrees,
+      threatScore: threatScore
+    };
+  }, [framePositions, radarConfig, range]);
+
+  // 处理IFF模式下的目标点击
+  const handleTargetClickInIFF = useCallback((target: RadarTarget) => {
+    if (!iffMode) return;
+    
+    const targetInfo = calculateTargetInfo(target);
+    
+    // 添加目标详细信息到日志
+    if (onAddMessage) {
+      onAddMessage('info', '=== IFF模式目标信息 ===');
+      onAddMessage('info', `目标ID: ${target.id}`);
+      onAddMessage('info', `目标类型: ${target.type === 'army' ? '敌机' : '友机'}`);
+      onAddMessage('info', `距离: ${targetInfo.distance.toFixed(2)} 海里`);
+        onAddMessage('info', `屏幕坐标: (${target.position.x.toFixed(1)}, ${target.position.y.toFixed(1)})`);
+        if (target.speed !== undefined) {
+          onAddMessage('info', `速度: ${target.speed}`);
+        }
+              if (targetInfo.direction !== undefined) {
+        onAddMessage('info', `运动方向: ${targetInfo.direction.toFixed(1)}°`);
+      }
+      if (targetInfo.threatScore !== undefined) {
+        onAddMessage('info', `威胁评分: ${targetInfo.threatScore.toFixed(3)} (0°最小威胁，180°最大威胁)`);
+      }
+      onAddMessage('info', '======================');
+    }
+    
+    console.log(`[IFF模式] 点击目标 ${target.id}:`, targetInfo);
+  }, [iffMode, calculateTargetInfo, onAddMessage]);
+
   // 处理按下Enter键时的TDC和目标选择逻辑
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Enter' && processedExternalTargets && onTargetSelect) {
@@ -297,6 +348,27 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {
     if (lockedTargetObject) {
+      const targetInfo = calculateTargetInfo(lockedTargetObject);
+      
+      // 添加目标详细信息到日志
+      if (onAddMessage) {
+        onAddMessage('info', '=== 目标识别结果详情 ===');
+        onAddMessage('info', `目标ID: ${lockedTargetObject.id}`);
+        onAddMessage('info', `目标类型: ${lockedTargetObject.type === 'army' ? '敌机' : '友机'}`);
+        onAddMessage('info', `距离: ${targetInfo.distance.toFixed(2)} 海里`);
+        onAddMessage('info', `屏幕坐标: (${lockedTargetObject.position.x.toFixed(1)}, ${lockedTargetObject.position.y.toFixed(1)})`);
+        if (lockedTargetObject.speed !== undefined) {
+          onAddMessage('info', `速度: ${lockedTargetObject.speed}`);
+        }
+        if (targetInfo.direction !== undefined) {
+          onAddMessage('info', `运动方向: ${targetInfo.direction.toFixed(1)}°`);
+        }
+        if (targetInfo.threatScore !== undefined) {
+          onAddMessage('info', `威胁评分: ${targetInfo.threatScore.toFixed(3)} (0°最小威胁，180°最大威胁)`);
+        }
+        onAddMessage('info', '========================');
+      }
+      
       // 'army' is considered the correct type for this task (enemy)
       if (lockedTargetObject.type === 'army') {
         setMissionResultMessage('结果: 正确');
@@ -479,6 +551,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
               framePositions={framePositions}
               iffMode={iffMode}
               scanAngle={scanMode.scanAngle}
+              onTargetClick={handleTargetClickInIFF}
             />
           )}
           

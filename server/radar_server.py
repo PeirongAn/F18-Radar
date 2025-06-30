@@ -274,9 +274,8 @@ task_counter = 0
 
 # --- 威胁评估权重配置 ---
 # 您可以调整这些权重来改变距离和朝向在威胁判断中的重要性
-DISTANCE_WEIGHT = 0.5  # 距离权重
-HEADING_WEIGHT = 0.3   # 朝向权重
-TRAJECTORY_WEIGHT = 0.2 # 新增：轨迹权重
+DISTANCE_WEIGHT = 0.9  # 距离权重
+HEADING_WEIGHT = 0.1   # 朝向权重
 
 # 当前会话状态
 current_session = {
@@ -403,29 +402,19 @@ def initialize_targets(difficulty_config):
     for target in potential_targets:
         distance = target['position']['y']
         
-        # --- 航向评估 ---
-        # 目标的绝对角度 (0度朝上)
-        target_angle_rad = target['position']['x'] * (np.pi / 180)
-        # 朝向我方的矢量角度 (从目标指向原点)
-        inbound_heading_rad = target_angle_rad + np.pi # 角度反向
+        # --- 简化的航向评估 ---
+        # 将弧度转换为角度，并应用导航坐标系转换 (0-360度)
+        # 后端: 0°=东, π/2=南, π=西, 3π/2=北 (数学坐标系)
+        # 导航: 0°=北, 90°=东, 180°=南, 270°=西 (导航坐标系)
+        direction_deg = (target['direction'] * 180 / np.pi  ) % 360
         
-        # 计算两个航向之间的最小夹角 (0-180度)
-        angle_diff_rad = abs((target['direction'] - inbound_heading_rad + np.pi) % (2 * np.pi) - np.pi)
-        angle_diff_deg = np.rad2deg(angle_diff_rad)
-
-        # --- 轨迹评估 ---
-        # 计算目标速度在朝向我机方向上的分量（径向速度）
-        # 正值表示靠近，负值表示远离
-        radial_velocity = target['speed'] * np.cos(angle_diff_rad)
-
         # a. 计算距离分数 (0-1)
         distance_score = 1 - (distance / radar_range)
         
-        # b. 计算朝向分数 (0-1)，聚焦于+/-30度扇区
-        if angle_diff_deg <= 30:
-            heading_score = 1 - (angle_diff_deg / 30)
-        else:
-            heading_score = 0 # 超过30度夹角，威胁航向得分为0
+        # b. 连续变化的朝向分数：0度威胁最小，180度威胁最大
+        # 将角度映射到威胁值：使用余弦函数实现连续变化
+        # cos(0°) = 1 -> 威胁最小，cos(180°) = -1 -> 威胁最大
+        heading_score = -np.cos(np.deg2rad(direction_deg))  # 范围从-1到1，180度时最大
         
         # c. 计算加权总分 (已移除轨迹分数)
         threat_score = (distance_score * DISTANCE_WEIGHT) + \
@@ -438,7 +427,7 @@ def initialize_targets(difficulty_config):
         # --- 新增：为调试打印详细的计算过程 ---
         print(f"  [Threat Eval for {target['id']}]")
         print(f"    - Distance: {distance:.1f}nm -> Score: {distance_score:.2f}")
-        print(f"    - Heading Diff: {angle_diff_deg:.1f}° -> Score: {heading_score:.2f} (Focus on ±30°)")
+        print(f"    - Direction: {direction_deg:.1f}° -> Score: {heading_score:.2f} (0°最小威胁，180°最大威胁)")
         print(f"    - Weighted Score: ({distance_score:.2f}*{DISTANCE_WEIGHT}) + ({heading_score:.2f}*{HEADING_WEIGHT}) = {threat_score:.2f}")
         # --- 结束新增 ---
         
@@ -457,6 +446,9 @@ def initialize_targets(difficulty_config):
         
         # 新增：根据速度计算拖尾长度
         target['trail_length'] = target['speed'] * 2 # 拖尾长度与速度成正比，系数可调整
+        
+        # 预计算导航坐标系角度供前端使用
+        target['direction_degrees'] = (target['direction'] * 180 / np.pi) % 360
 
         final_targets.append(target)
         
@@ -492,6 +484,9 @@ def get_radar_data(include_targets=False):
             
             # 确保航向在 [0, 2*pi] 范围内
             target['direction'] = target['direction'] % (2 * np.pi)
+            
+            # 将后端弧度转换为前端需要的导航坐标系角度（度数）
+            target['direction_degrees'] = (target['direction'] * 180 / np.pi) % 360
 
             # --- 新增: 计算并更新相对航向 ---
             # 1. 将我机航向从度转换为弧度

@@ -381,6 +381,7 @@ const App: React.FC = observer(() => {
                 onTargetSelect={handleTargetSelect}
                 isStarted={isStarted} // 传递系统启动状态
                 onRadarParamsUpdate={handleRadarParamsUpdate} // 添加参数更新回调
+                onAddMessage={addMessage} // 添加日志记录功能
               />
             ) : (
               <div className='flex justify-center'>
