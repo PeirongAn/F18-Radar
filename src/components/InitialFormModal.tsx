@@ -87,17 +87,37 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
             </div>
           </div>
           
-          <div className="flex justify-between items-center mb-8">
-            <label className="flex items-center cursor-pointer">
+          <div className="mb-6">
+            <label className="block text-green-400 font-mono mb-2">
+              任务模式
+            </label>
+            <div className="flex space-x-6">
+              <label className="flex items-center cursor-pointer">
                 <input
-                  type="checkbox"
-                  className="form-checkbox h-5 w-5 text-green-500 rounded focus:ring-green-500 border-gray-600 bg-gray-800"
-                  checked={isPractice}
-                  onChange={(e) => setIsPractice(e.target.checked)}
+                  type="radio"
+                  name="taskMode"
+                  value="practice"
+                  checked={isPractice === true}
+                  onChange={() => setIsPractice(true)}
+                  className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
                 />
-                <span className="ml-2 text-green-400 font-mono">练习模式</span>
+                <span className="ml-2 text-green-400 font-mono">练习</span>
               </label>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="radio"
+                  name="taskMode"
+                  value="formal"
+                  checked={isPractice === false}
+                  onChange={() => setIsPractice(false)}
+                  className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
+                />
+                <span className="ml-2 text-green-400 font-mono">正式</span>
+              </label>
+            </div>
+          </div>
 
+          <div className="mb-8">
             <label className="flex items-center cursor-pointer">
               <input
                 type="checkbox"

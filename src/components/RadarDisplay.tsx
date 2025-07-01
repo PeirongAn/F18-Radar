@@ -69,6 +69,7 @@ export interface RadarDisplayProps {
   error: string | null;
   onResetForNextMission?: () => void;
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
+  onClearMessages?: () => void; // 添加清空日志功能
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -95,7 +96,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   radarData,
   error,
   onResetForNextMission,
-  onAddMessage
+  onAddMessage,
+  onClearMessages
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -383,6 +385,12 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   };
   
   const handleConfirmYes = () => {
+    // 先清空日志
+    if (onClearMessages) {
+      onClearMessages();
+    }
+    
+    // 然后重置任务
     if (onResetForNextMission) {
       onResetForNextMission();
     }
@@ -599,12 +607,13 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
             left: 0,
             width: '100%',
             height: '100%',
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
+            // backgroundColor: 'rgba(0, 0, 0, 0.7)',
             display: 'flex',
             justifyContent: 'flex-end',
             alignItems: 'center',
             zIndex: 100,
             paddingRight: '60px',
+            marginLeft: '200px'
         }}>
           <div style={{
               backgroundColor: 'black',
@@ -626,7 +635,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
             </p>
             <h3 style={{ margin: 0, fontSize: '1.2em' }}>是否进行下一次任务</h3>
             <div style={{ marginTop: '20px' }}>
-            <button 
+            {/* <button 
                 onClick={() => setShowMissionConfirm(false)}
                 style={{
                   backgroundColor: '#330000',
@@ -639,7 +648,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
                 }}
               >
                 否
-              </button>
+              </button> */}
               <button 
                 onClick={handleConfirmYes}
                 style={{

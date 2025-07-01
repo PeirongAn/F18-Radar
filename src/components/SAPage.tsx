@@ -21,6 +21,7 @@ interface SAPageProps {
   width?: number;
   height?: number;
   onAddMessage?: (type: MessageType, content: string) => void;
+  onClearMessages?: () => void;
   userId?: string;
   onResetSA?: () => void;
   onResetTargets?: () => void;
@@ -83,7 +84,7 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, userId: originalUserId, onResetSA, onResetTargets }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onResetTargets }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
 
@@ -330,7 +331,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 创建按钮标签
   const topButtons = Array(5).fill(0).map((_, i) => i === 2 ? '查看结果' : `T${i + 1}`);
-  const leftButtons = Array(5).fill(0).map((_, i) => i === 1 ? '重置' : `T${i + 1}`);
+  const leftButtons = Array(5).fill(0).map((_, i) => i === 1 ? 'Next' : `T${i + 1}`);
   const rightButtons = Array(5).fill(0).map((_, i) => `R${i + 1}`);
   
   // 按钮点击处理函数
@@ -349,44 +350,21 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         return threat.label || '未知威胁';
       };
 
-      // 生成所有威胁的得分信息日志
-      if (onAddMessage && threatsWithScore.length > 0) {
-        // 添加得分详情日志
-        onAddMessage('sa_threat', '=== 威胁得分排序详情 ===');
+      // 启用威胁列表详细信息显示
+      setShowDetailedInfo(true);
+
+      // // 生成威胁排序日志（简化版本，详细信息在威胁列表中查看）
+      // if (onAddMessage && threatsWithScore.length > 0) {
+      //   onAddMessage('sa_threat', '=== 威胁排序完成，详细信息请查看威胁列表 ===');
         
-        const effectiveCenterY = config.centerY - 50; // 正确的圆心Y坐标
+      //   threatsWithScore.forEach((threatInfo, index) => {
+      //     const threatLabel = getThreatLabel(threatInfo.threat);
+      //     const scoreText = `排名${index + 1}: ${threatLabel} - 得分: ${threatInfo.score.toFixed(2)}${threatInfo.isMissile ? ' (导弹)' : ''}`;
+      //     onAddMessage('sa_threat', scoreText);
+      //   });
         
-        threatsWithScore.forEach((threatInfo, index) => {
-          const threatLabel = getThreatLabel(threatInfo.threat);
-          const threatId = threatInfo.threat.id;
-          const originalIndex = threatInfo.originalIndex;
-          
-          // 计算与本机的距离（像素距离）
-          let distance = 0;
-          let threatNumber = '未知';
-          
-          if (threatInfo.isMissile) {
-            // 导弹距离计算
-            const missile = threatInfo.threat as MissileData;
-            distance = Math.sqrt(Math.pow(missile.x - config.centerX, 2) + Math.pow(missile.y - effectiveCenterY, 2));
-            threatNumber = `导弹${originalIndex + 1}`;
-          } else {
-            // 常规威胁距离计算
-            const pos = iconPositions[originalIndex];
-            if (pos) {
-              distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - effectiveCenterY, 2));
-            }
-            // 从威胁列表中查找对应的标号
-            const sortedIndex = threatIdToSortedIndexMap.get(threatId);
-            threatNumber = sortedIndex !== undefined ? `[${sortedIndex}]` : `威胁${originalIndex + 1}`;
-          }
-          
-          const scoreText = `排名${index + 1}: ${threatLabel} - 得分: ${threatInfo.score.toFixed(2)}${threatInfo.isMissile ? ' (导弹)' : ''} [ID: ${threatId}, 序号: ${originalIndex}, 标号: ${threatNumber}, 距离: ${distance.toFixed(1)}px]`;
-          onAddMessage('sa_threat', scoreText);
-        });
-        
-        onAddMessage('sa_threat', '========================');
-      }
+      //   onAddMessage('sa_threat', '========================');
+      // }
 
       if (isCorrect) {
         setCompletedThreat(`✅ 正确！${getThreatLabel(threat)}`);
@@ -456,6 +434,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   
   // 添加用户选择状态（但不立即显示结果）
   const [userSelection, setUserSelection] = useState<{threat: any, isCorrect: boolean} | null>(null);
+  
+  // 添加状态控制是否显示威胁列表的详细信息（得分和距离）
+  const [showDetailedInfo, setShowDetailedInfo] = useState(false);
 
   // 添加接管按钮处理函数
   const handleTakeControl = useCallback(() => {
@@ -501,6 +482,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     // 核心修复：重置 MobX store 中的临机事件状态
     radarStore.resetSAEmergency();
 
+    // 清空系统日志
+    if (typeof onClearMessages === 'function') {
+      onClearMessages();
+    }
+
     // 清除所有本地状态
     setMissiles([]);
     setThreatList([]);
@@ -509,6 +495,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setCompletedThreat(''); // 清空已完成威胁
     setUserSelection(null); // 清空用户选择
     setDynamicRotation(0); // 重置仪表盘旋转
+    setShowDetailedInfo(false); // 重置详细信息显示状态
     
     // 重置控制标志
     hasInitLogRef.current = false;
@@ -516,13 +503,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     lastEmergencyRef.current = null;
     lastEmergencyReceiveTimestampRef.current = null;
     
-    // 记录重置日志
+    // 记录重置日志（在清空日志后重新记录）
     if (typeof onAddMessage === 'function') {
       onAddMessage('sa_init', 'SA系统已重置，所有威胁和状态已清空');
     }
     
     console.log('✅ SA系统重置完成');
-  }, [sendResetSA, onAddMessage]);
+  }, [sendResetSA, onAddMessage, onClearMessages]);
 
   // 主动同步saThreats
   useEffect(() => {
@@ -770,9 +757,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const allThreats: ThreatWithScore[] = [];
     const effectiveCenterY = config.centerY - 50; // 正确的圆心Y坐标
 
-    // 2. 计算导弹的威胁分数
+    // 2. 计算导弹的威胁分数 - 使用中心点位置
     missiles.forEach((missile, index) => {
-      const distance = Math.sqrt(Math.pow(missile.x - config.centerX, 2) + Math.pow(missile.y - effectiveCenterY, 2));
+      // 导弹的中心点位置（现在黄色圆点就在 missile.x, missile.y）
+      const missileCenterX = missile.x;
+      const missileCenterY = missile.y;
+      const distance = Math.sqrt(Math.pow(missileCenterX - config.centerX, 2) + Math.pow(missileCenterY - effectiveCenterY, 2));
       const weight = getTypeWeight('missile');
       const score = weight / (distance + 1e-6);
       allThreats.push({
@@ -783,11 +773,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       });
     });
 
-    // 3. 计算常规威胁的分数
+    // 3. 计算常规威胁的分数 - 使用中心点位置
     saThreats.forEach((threat: { type: string; }, index: number) => {
       const pos = iconPositions[index];
       if (pos) {
-        const distance = Math.sqrt(Math.pow(pos.x - config.centerX, 2) + Math.pow(pos.y - effectiveCenterY, 2));
+        // 威胁图标的中心点位置（黄色圆点位置）
+        const threatCenterX = pos.x + ICON_SIZE / 2;
+        const threatCenterY = pos.y + ICON_SIZE / 2;
+        const distance = Math.sqrt(Math.pow(threatCenterX - config.centerX, 2) + Math.pow(threatCenterY - effectiveCenterY, 2));
         const weight = getTypeWeight(threat.type);
         const score = weight / (distance + 1e-6);
         allThreats.push({
@@ -918,7 +911,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 确保威胁处理日志写入
     if (onAddMessage) {
-      const actor = agentStore.isAIActive ? '[AI]' : '[用户]';
+      const actor = eventOwner === 'AI' ? '[AI]' : '[用户]';
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
       onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
@@ -936,10 +929,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           {/* 只有在做出选择后才渲染虚线框 */}
           {hasSelectionBeenMade && (isSelected || (showTaskComplete && isHighestPriority)) && (
             <Rect
-              x={missile.x - 5}
-              y={missile.y - 5}
+              x={missile.x - 20}
+              y={missile.y - 25}
               width={30 + 10} // missile icon size is 30
-              height={30 + 10}
+              height={30 + 20}
               stroke={showTaskComplete && isHighestPriority ? '#ff4136' : '#ffd700'} // 确认后最高威胁显示红色，否则黄色
               strokeWidth={2}
               dash={[6, 3]} // 虚线样式
@@ -955,8 +948,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           />
           {/* 导弹图标中心点标记 - 黄色小圆点 */}
           <Circle
-            x={missile.x + 15} // 导弹图标大小是30，所以中心点是 + 15
-            y={missile.y + 15}
+            x={missile.x} // 导弹图标大小是30，所以中心点是 + 15
+            y={missile.y}
             radius={3}
             fill="#ffff00"
             stroke="#000000"
@@ -1194,8 +1187,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               <Layer>
                 {/* 第一个圆（中心圆） */}
                 <Circle
-                  x={config.centerX + centerPerturb.dx}
-                  y={config.centerY - 50 + centerPerturb.dy}
+                  x={config.centerX }
+                  y={config.centerY - 50 }
                   radius={radius1}
                   stroke={config.lineColor}
                   strokeWidth={1}
@@ -1377,57 +1370,101 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       </div>
       
       {/* 威胁列表 */}
-      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{marginTop: '20px'}}>
+      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{marginTop: '20px', marginLeft: '150px'}}>
         <div className="bg-gray-800 p-2 border-b border-gray-700">
           <h3 className="text-green-400 font-mono text-lg text-center">威胁列表</h3>
         </div>
         
         <div className="p-2 bg-gray-900 font-mono text-sm text-gray-300 flex border-b border-gray-800">
           <div className="w-8 text-center">#</div>
-          <div className="w-32">类型</div>
-          <div className="w-32">来源</div>
-          <div className="w-48">距离/方位</div>
-          <div className="w-24">优先级</div>
+          <div className="w-24">类型</div>
+          <div className="w-24">来源</div>
+          {showDetailedInfo && <div className="w-20 text-center">距离(px)</div>}
+          {showDetailedInfo && <div className="w-20 text-center">得分</div>}
+          <div className="w-16 text-center">优先级</div>
         </div>
         
-      {[
-        ...threatList, 
-        ...saThreats.filter((saThreat: any) => !threatList.some(t => t.id === saThreat.id)),
-        ...missiles.filter((missile: any) => !threatList.some(t => t.id === missile.id))
-          .map((missile: any) => ({
-            id: missile.id,
-            type: missile.type,
-            label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
-            source: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
-            distance: 0,
-            heading: 0,
-            priority: 'high' as const
-          }))
-      ].map((threat, index) => (
-          <div 
-            key={threat.id} 
-            className={`p-2 border-b border-gray-800 font-mono text-sm flex items-center ${
-              index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-950'
-            }`}
-          >
-            <div className="w-8 text-center text-gray-400">{index + 1}</div>
-            <div className="w-32 text-green-400">{TYPE_MAP[threat.type] || threat.type}</div>
-            <div className="w-32 text-yellow-400">{threat.label}</div>
-            <div className="w-48 text-blue-300">--</div>
-            <div className="w-24 flex items-center">
-              <span 
-                className="w-3 h-3 rounded-full mr-2" 
-                style={{ backgroundColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff' }}
-              ></span>
-              <span className="text-white">{(threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低'}</span>
+      {(() => {
+        const effectiveCenterY = config.centerY - 50;
+        
+        // 计算威胁距离和得分的函数
+        const calculateThreatInfo = (threat: any, threatIndex: number) => {
+          let distance = 0;
+          let score = 0;
+          
+          // 检查是否是导弹
+          const isMissile = threat.type === 'MissileUp' || threat.type === 'MissileDown';
+          
+          if (isMissile) {
+            // 导弹距离计算
+            const missile = missiles.find(m => m.id === threat.id);
+            if (missile) {
+              const missileCenterX = missile.x;
+              const missileCenterY = missile.y;
+              distance = Math.sqrt(Math.pow(missileCenterX - config.centerX, 2) + Math.pow(missileCenterY - effectiveCenterY, 2));
+              const weight = 210; // 导弹权重
+              score = weight / (distance + 1e-6);
+            }
+          } else {
+            // 常规威胁距离计算
+            const saIndex = saThreats.findIndex((st: any) => st.id === threat.id);
+            if (saIndex >= 0 && iconPositions[saIndex]) {
+              const pos = iconPositions[saIndex];
+              const threatCenterX = pos.x + ICON_SIZE / 2;
+              const threatCenterY = pos.y + ICON_SIZE / 2;
+              distance = Math.sqrt(Math.pow(threatCenterX - config.centerX, 2) + Math.pow(threatCenterY - effectiveCenterY, 2));
+              const weight = threat.type?.startsWith('Primary') ? 210 : 200;
+              score = weight / (distance + 1e-6);
+            }
+          }
+          
+          return { distance, score };
+        };
+        
+        return [
+          ...threatList, 
+          ...saThreats.filter((saThreat: any) => !threatList.some(t => t.id === saThreat.id)),
+          ...missiles.filter((missile: any) => !threatList.some(t => t.id === missile.id))
+            .map((missile: any) => ({
+              id: missile.id,
+              type: missile.type,
+              label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+              source: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+              distance: 0,
+              heading: 0,
+              priority: 'high' as const
+            }))
+        ].map((threat, index) => {
+          const { distance, score } = calculateThreatInfo(threat, index);
+          
+          return (
+            <div 
+              key={threat.id} 
+              className={`p-2 border-b border-gray-800 font-mono text-sm flex items-center ${
+                index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-950'
+              }`}
+            >
+              <div className="w-8 text-center text-gray-400">{index + 1}</div>
+              <div className="w-24 text-green-400 text-xs">{TYPE_MAP[threat.type] || threat.type}</div>
+              <div className="w-24 text-yellow-400 text-xs">{threat.label}</div>
+              {showDetailedInfo && <div className="w-20 text-center text-blue-300">{distance > 0 ? distance.toFixed(0) : '--'}</div>}
+              {showDetailedInfo && <div className="w-20 text-center text-orange-300">{score > 0 ? score.toFixed(2) : '--'}</div>}
+              <div className="w-16 flex items-center justify-center">
+                <span 
+                  className="w-3 h-3 rounded-full mr-1" 
+                  style={{ backgroundColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff' }}
+                ></span>
+                <span className="text-white text-xs">{(threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低'}</span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        });
+      })()}
       </div>
       
       {/* 任务结束弹窗 */}
       {showTaskComplete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style={{marginLeft: '200px'}}>
           <div className="bg-gray-800 border-2 border-green-400 rounded-lg p-6 max-w-md mx-4 text-center">
             <div className="text-green-400 text-2xl font-bold mb-2">
               ✅ 任务结束
@@ -1438,17 +1475,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             </div>
             <p className="text-white text-lg mb-6">是否进行下一个任务？</p>
             <div className="flex justify-center space-x-4">
-              <button
+              {/* <button
                 className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
                 onClick={() => setShowTaskComplete(false)}
               >
                 否
-              </button>
+              </button> */}
               <button
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
                 onClick={handleResetSA}
               >
-                是
+                确认
               </button>
             </div>
           </div>

@@ -326,6 +326,7 @@ export interface RepetitionInfo {
   scenario_index?: number;
   scenario_total?: number;
   is_practice?: boolean;
+  audio_enabled?: boolean;
 }
 
 export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
@@ -518,7 +519,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
 
       // 4. 设置任务重复信息
       if (message.task_type && message.repetition_info) {
-       
+        console.log('[useRadarData] Received repetition_info:', message.repetition_info);
         setRepetitionInfos(prev => ({
           ...prev,
           [message.task_type]: message.repetition_info,

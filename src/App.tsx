@@ -79,6 +79,12 @@ const App: React.FC = observer(() => {
     ]);
   }, []);
   
+  // 添加清空消息的功能
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+    messageIdRef.current = 0;
+  }, []);
+  
   // 同步 userId 到 radarStore
   useEffect(() => {
     radarStore.setUserId(userId);
@@ -259,7 +265,6 @@ const App: React.FC = observer(() => {
   const infoToShow = useMemo(() => {
     let info = null;
     let task_type: 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | null = null;
-
     if (activeDisplay === 'radar') {
       info = repetitionInfos['RADAR_TARGETING'];
       task_type = 'RADAR_TARGETING';
@@ -382,6 +387,7 @@ const App: React.FC = observer(() => {
                 isStarted={isStarted} // 传递系统启动状态
                 onRadarParamsUpdate={handleRadarParamsUpdate} // 添加参数更新回调
                 onAddMessage={addMessage} // 添加日志记录功能
+                onClearMessages={clearMessages} // 添加清空日志功能
               />
             ) : (
               <div className='flex justify-center'>
@@ -389,6 +395,7 @@ const App: React.FC = observer(() => {
                   width={700} 
                   height={700} 
                   onAddMessage={addMessage} 
+                  onClearMessages={clearMessages}
                   userId={userId}
                   onResetSA={sendResetSA}
                   onResetTargets={resetTargets}
@@ -412,14 +419,15 @@ const App: React.FC = observer(() => {
                 userId={userId} 
                 isStarted={isStarted} 
                 taskId={taskId}
+                currentTask={activeDisplay === 'navigation' ? 'sa' : 'radar'}
                 radarRange={radarRange}
                 scanAngle={scanAngle}
                 antennaAdjustmentRequired={antennaAdjustmentRequired}
-              targetAntennaElevation={targetAntennaElevation || undefined}
-              initSettings={initSettings}
-              connected={connected}
-              error={error}
-              operations={operations}
+                targetAntennaElevation={targetAntennaElevation || undefined}
+                initSettings={initSettings}
+                connected={connected}
+                error={error}
+                operations={operations}
                 onAddMessage={addMessage}
                 messages={messages}
               />
@@ -436,6 +444,7 @@ const App: React.FC = observer(() => {
           is_practice={infoToShow.is_practice}
           task_type={infoToShow.task_type}
           difficulty={infoToShow.difficulty}
+          audio_enabled={infoToShow.audio_enabled}
         />
       )}
     </div>

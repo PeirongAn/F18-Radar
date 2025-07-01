@@ -249,7 +249,8 @@ class TaskScenarioManager:
             "total": self.max_repetitions,
             "is_practice": self.is_practice,
             "difficulty": self.current_scenario.get('difficulty_name'),
-            "is_ai_active": self.current_scenario.get('is_ai_active')
+            "is_ai_active": self.current_scenario.get('is_ai_active'),
+            "audio_enabled": self.current_scenario.get('audio_enabled')
         }
         # 将类型编号添加到repetition_info中
         if self.current_scenario.get("scenario_info"):

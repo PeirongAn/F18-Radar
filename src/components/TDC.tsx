@@ -32,7 +32,7 @@ const TDC: React.FC<TDCProps> = ({ x, y, color, upperValue, lowerValue, onPositi
       />
       {/* 上方高度值 */}
       <Text
-        text={upperValue}
+        text="UR"
         x={8}
         y={-lineHeight/2 - 14}
         fill={color}
@@ -41,7 +41,7 @@ const TDC: React.FC<TDCProps> = ({ x, y, color, upperValue, lowerValue, onPositi
       />
       {/* 下方高度值 */}
       <Text
-        text={lowerValue}
+        text="DR"
         x={8}
         y={lineHeight/2 + 4}
         fill={color}

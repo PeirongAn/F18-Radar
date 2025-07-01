@@ -29,6 +29,7 @@ export interface RadarProps {
   isStarted?: boolean; // 添加系统是否已启动的属性
   onRadarParamsUpdate?: (range: number, scanAngle: number) => void; // 添加参数更新回调
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
+  onClearMessages?: () => void; // 添加清空日志功能
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -38,6 +39,7 @@ const Radar: React.FC<RadarProps> = (({
   isStarted = false, // 默认为未启动状态
   onRadarParamsUpdate,
   onAddMessage,
+  onClearMessages,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
   const { 
@@ -849,6 +851,7 @@ const Radar: React.FC<RadarProps> = (({
             onResetForNextMission={handleClearAndReset}
             resetIFF={resetIffRef}
             onAddMessage={onAddMessage}
+            onClearMessages={onClearMessages}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}

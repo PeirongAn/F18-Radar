@@ -14,6 +14,7 @@ interface CommunicationLogProps {
   userId?: string;
   isStarted?: boolean; // 系统是否已启动的标志
   taskId?: number | null;
+  currentTask?: 'radar' | 'sa'; // 当前任务类型
   messages: LogMessage[];
   onAddMessage?: (type: MessageType, content: string) => void;
   radarRange?: number;
@@ -30,6 +31,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   userId, 
   isStarted = false,
   taskId = null,
+  currentTask = 'radar',
   messages: incomingMessages,
   onAddMessage: onAddMessageProp,
   radarRange,
@@ -57,12 +59,12 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   useEffect(() => {
     if (isStarted && onAddMessageProp) {
       if (radarRange !== undefined && radarRange !== prevRangeRef.current) {
-        onAddMessageProp('system', `雷达范围已设置为: ${radarRange} 海里`);
+        // onAddMessageProp('system', `雷达范围已设置为: ${radarRange} 海里`);
         prevRangeRef.current = radarRange;
       }
       
       if (scanAngle !== undefined && scanAngle !== prevAngleRef.current) {
-        onAddMessageProp('system', `扫描角度已设置为: ${scanAngle}°`);
+        // onAddMessageProp('system', `扫描角度已设置为: ${scanAngle}°`);
         prevAngleRef.current = scanAngle;
       }
     }
@@ -74,7 +76,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       console.log('initSettings', initSettings);
     
       if (initSettings.range) {
-        onAddMessageProp('info', `服务器建议雷达范围: ${initSettings.range} 海里, 扫描角度: ${initSettings.scanAngle}°`);
+        onAddMessageProp('system', `服务器建议雷达范围: ${initSettings.range} 海里, 扫描角度: ${initSettings.scanAngle}°`);
       }
       initSettingsProcessedRef.current = true;
     }
@@ -84,7 +86,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
     if (isStarted && onAddMessageProp) {
       if (antennaAdjustmentRequired && !prevAntennaAdjustmentRef.current) {
         if (targetAntennaElevation !== undefined) {
-          onAddMessageProp('info', `需要调整天线${targetAntennaElevation > 0 ? '上移' : '下移'} ${Math.abs(targetAntennaElevation)}格，请使用b/t键进行调整`);
+          onAddMessageProp('system', `需要调整天线${targetAntennaElevation > 0 ? '上移' : '下移'} ${Math.abs(targetAntennaElevation)}格，请使用b/t键进行调整`);
         } else {
           onAddMessageProp('warning', '重置系统');
         }
@@ -102,7 +104,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
     onAddMessageProp('client', '正在连接到雷达服务器...');
       
     if (userId) {
-      onAddMessageProp('info', `飞行员 ${userId} 已登入系统`);
+      onAddMessageProp('system', `飞行员 ${userId} 已登入系统`);
     }
     
   }, [userId, isStarted, onAddMessageProp]);
@@ -180,12 +182,12 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   };
   
   const renderRadarParams = () => {
-    if (!isStarted) return null;
+    if (!isStarted || currentTask !== 'radar') return null;
     
     return (
       <div className="p-2 mb-2 bg-gray-800 rounded border border-gray-700">
         <h4 className="text-green-400 font-mono text-sm mb-1">雷达参数</h4>
-        <div className="flex justify-between text-xs">
+        {/* <div className="flex justify-between text-xs">
           <div>
             <span className="text-gray-400">范围: </span>
             <span className="text-green-300">{radarRange || '未设置'} 海里</span>
@@ -194,7 +196,12 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
             <span className="text-gray-400">扫描角度: </span>
             <span className="text-green-300">{scanAngle || '未设置'}°</span>
           </div>
-        </div>
+        </div> */}
+        {initSettings && (
+          <div className="mt-1 text-xs text-white font-bold">
+            请调整雷达范围{initSettings !== undefined ? ` 至 范围 ${initSettings.range}海里，扫描角度 ${initSettings.scanAngle}°` : ''}!
+          </div>
+        )}
         {antennaAdjustmentRequired && (
           <div className="mt-1 text-xs text-yellow-300 font-bold">
             请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
@@ -228,9 +235,16 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
     <div className="flex flex-col h-full">
       <div className="bg-gray-800 p-2 rounded-t-lg border-b border-gray-700">
         <h3 className="text-green-400 font-mono text-lg">系统通信日志</h3>
-        {taskId !== null && (
-          <div className="text-xs text-green-200">任务ID: {taskId}</div>
-        )}
+        <div className="flex justify-between text-xs">
+          {
+            userId && (
+              <div className="text-xs text-green-200">飞行员: {userId}</div>
+            )
+          }
+          {taskId !== null && (
+            <div className="text-xs text-green-200">任务ID: {taskId}</div>
+          )}
+        </div>
       </div>
       
       {renderRadarParams()}
@@ -243,10 +257,6 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
         {!isStarted ? (
           <div className="text-center py-10 text-gray-500 italic">
             等待系统启动...
-          </div>
-        ) : incomingMessages.length === 0 ? (
-          <div className="text-center py-10 text-gray-500 italic">
-            正在建立连接...
           </div>
         ) : (
           incomingMessages.map(msg => (
