@@ -748,8 +748,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const threatsWithScore = useMemo(() => {
     // 1. 定义威胁类型的权重
     const getTypeWeight = (type: string): number => {
-      if (type.toLowerCase().includes('missile')) return 210; // 导弹权重最高
-      if (type.startsWith('Primary')) return 210;           // Primary类型次之
+      if (type.toLowerCase().includes('missile')) return 240; // 导弹权重最高
+      if (type.startsWith('Primary')) return 240;           // Primary类型次之
       if (type.startsWith('Secondary')) return 200;         // Secondary类型权重较低
       return 80; // 其他未知类型
     };
@@ -757,23 +757,21 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const allThreats: ThreatWithScore[] = [];
     const effectiveCenterY = config.centerY - 50; // 正确的圆心Y坐标
 
-    // 2. 计算导弹的威胁分数 - 使用中心点位置
+    // 2. 先计算所有威胁的原始分数
+    const rawScores: number[] = [];
+
+    // 计算导弹的原始分数
     missiles.forEach((missile, index) => {
       // 导弹的中心点位置（现在黄色圆点就在 missile.x, missile.y）
       const missileCenterX = missile.x;
       const missileCenterY = missile.y;
       const distance = Math.sqrt(Math.pow(missileCenterX - config.centerX, 2) + Math.pow(missileCenterY - effectiveCenterY, 2));
       const weight = getTypeWeight('missile');
-      const score = weight / (distance + 1e-6);
-      allThreats.push({
-        threat: missile,
-        score,
-        isMissile: true,
-        originalIndex: index, // 存储原始索引
-      });
+      const rawScore = weight / Math.max(distance, 1);
+      rawScores.push(rawScore);
     });
 
-    // 3. 计算常规威胁的分数 - 使用中心点位置
+    // 计算常规威胁的原始分数
     saThreats.forEach((threat: { type: string; }, index: number) => {
       const pos = iconPositions[index];
       if (pos) {
@@ -782,13 +780,41 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         const threatCenterY = pos.y + ICON_SIZE / 2;
         const distance = Math.sqrt(Math.pow(threatCenterX - config.centerX, 2) + Math.pow(threatCenterY - effectiveCenterY, 2));
         const weight = getTypeWeight(threat.type);
-        const score = weight / (distance + 1e-6);
+        const rawScore = weight / Math.max(distance, 1);
+        rawScores.push(rawScore);
+      }
+    });
+
+    // 3. 找到最大分数用于归一化
+    const maxScore = Math.max(...rawScores, 1); // 避免除零
+
+    // 4. 重新计算并归一化分数
+    let scoreIndex = 0;
+
+    // 添加导弹威胁（归一化后）
+    missiles.forEach((missile, index) => {
+      const normalizedScore = parseFloat((rawScores[scoreIndex] / maxScore).toFixed(2));
+      allThreats.push({
+        threat: missile,
+        score: normalizedScore,
+        isMissile: true,
+        originalIndex: index, // 存储原始索引
+      });
+      scoreIndex++;
+    });
+
+    // 添加常规威胁（归一化后）
+    saThreats.forEach((threat: { type: string; }, index: number) => {
+      const pos = iconPositions[index];
+      if (pos) {
+        const normalizedScore = parseFloat((rawScores[scoreIndex] / maxScore).toFixed(2));
         allThreats.push({
           threat,
-          score,
+          score: normalizedScore,
           isMissile: false,
           originalIndex: index, // 存储原始索引
         });
+        scoreIndex++;
       }
     });
 

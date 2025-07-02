@@ -216,7 +216,8 @@ class MessageHandler:
                     'target_id': target_id,
                     'action': message.get('action', 'select'),
                     'iff_mode': iff_mode,
-                    'is_enemy': is_enemy
+                    'is_enemy': is_enemy,
+                    'is_correct': is_enemy or False,
                 },
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner
@@ -244,7 +245,7 @@ class MessageHandler:
                     'label': message.get('label'),
                     'priority': message.get('priority'),
                     'is_highest_priority': message.get('is_highest_priority'),
-                    'is_correct': message.get('is_correct'),
+                    'is_correct': message.get('is_highest_priority', False),
                     'correct_answer': message.get('correct_answer'),
                     'extra': message.get('extra', {})
                 },

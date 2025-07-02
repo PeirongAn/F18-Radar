@@ -111,13 +111,25 @@ class DatabaseManager:
             self.logger.debug(f"练习模式，跳过操作记录: {operation.get('operationType')}")
             return
 
+        # 从parameters中提取is_correct值
+        parameters = operation.get('parameters', {})
+        parameters_json = json.dumps(parameters)
+        
+        # 处理is_correct字段，支持true, false, not_set三个值
+        is_correct_value = parameters.get('is_correct', 'not_set')
+        if isinstance(is_correct_value, bool):
+            is_correct_str = 'true' if is_correct_value else 'false'
+        elif is_correct_value in ['true', 'false', 'not_set']:
+            is_correct_str = str(is_correct_value)
+        else:
+            is_correct_str = 'not_set'
+
         sql = """
             INSERT INTO user_operations (
                 task_id, operation_type, timestamp, receive_timestamp, is_active, 
-                parameters, user_id, event_owner
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                parameters, user_id, event_owner, is_correct
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        parameters_json = json.dumps(operation.get('parameters', {}))
         params = (
             operation.get('task_id'),
             operation.get('operationType'),
@@ -126,7 +138,8 @@ class DatabaseManager:
             1 if operation.get('isActive', False) else 0,
             parameters_json,
             operation.get('user_id'),
-            operation.get('event_owner')
+            operation.get('event_owner'),
+            is_correct_str
         )
         self.execute_async(sql, params)
     
@@ -169,6 +182,7 @@ class DatabaseManager:
                     parameters TEXT,
                     user_id TEXT,
                     event_owner TEXT,
+                    is_correct TEXT DEFAULT 'not_set',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -194,6 +208,12 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE user_operations ADD COLUMN event_owner TEXT")
             conn.commit()
             self.logger.info("event_owner 列添加成功")
+        
+        if 'is_correct' not in columns:
+            self.logger.info("正在添加 is_correct 列...")
+            cursor.execute("ALTER TABLE user_operations ADD COLUMN is_correct TEXT DEFAULT 'not_set'")
+            conn.commit()
+            self.logger.info("is_correct 列添加成功")
     
     def _create_task_settings_table(self, cursor, conn) -> None:
         """创建任务设置表"""

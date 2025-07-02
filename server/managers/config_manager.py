@@ -14,7 +14,8 @@ class ConfigManager:
     def load_config(self) -> None:
         """加载配置文件"""
         script_dir = os.path.dirname(__file__)
-        config_path = os.path.join(script_dir, '../public/agent_level.json')
+        config_path = os.path.join(script_dir, '..', '..', 'public', 'agent_level.json')
+        config_path = os.path.abspath(config_path)
         
         try:
             with open(config_path, 'r', encoding='utf-8') as f:

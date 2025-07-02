@@ -39,7 +39,11 @@
         "threat_count": 5,
         "target_count": 5
       }
-     
+    },
+    "execution_order": {
+      "difficulty_order": ["high", "low"],
+      "level_order": ["L0", "L1", "L2"],
+      "audio_options": [true, false]
     }
   }
 }
