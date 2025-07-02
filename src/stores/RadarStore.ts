@@ -49,6 +49,7 @@ export class RadarStore {
   saEmergency: { type: string, saThreats?: any[] } | null = null;
   saEmergencyHistory: Array<{ type: string, saThreats?: any[], timestamp: number }> = [];
   lastSAEmergencyTimestamp: number = 0;
+  adjustAntennaReceiveTimestamp: number | null = null; // 保存adjust_antenna消息的接收时间戳
 
   // AI相关状态
   lockedTargetId: string | undefined = undefined; // 当前系统锁定的目标ID (AI或手动)
@@ -181,7 +182,7 @@ export class RadarStore {
           type: 'antenna_adjusted', // 使用新的消息类型
           elevation: newElevation,
           timestamp: Date.now(),
-          receive_timestamp: Date.now(), // 或者从特定事件获取
+          receive_timestamp: this.adjustAntennaReceiveTimestamp || Date.now(), // 使用保存的接收时间戳
           // user_id is now added by globalWS.sendMessage
         };
         sendMessageCallback(message);
@@ -190,8 +191,11 @@ export class RadarStore {
     }
   }
   
-  setTargetAntennaElevation(elevation: number | null) {
+  setTargetAntennaElevation(elevation: number | null, receiveTimestamp?: number) {
     this.targetAntennaElevation = elevation;
+    if (receiveTimestamp !== undefined) {
+      this.adjustAntennaReceiveTimestamp = receiveTimestamp;
+    }
     if (elevation !== null) {
       console.log(`[RadarStore] Target antenna elevation set to: ${elevation}° by server.`);
     } else {

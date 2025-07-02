@@ -546,7 +546,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       const ts = Date.now();
       setAntennaAdjustmentRequired(true);
       setTargetAntennaElevation(message.targetElevation);
-      radarStore.setTargetAntennaElevation(message.targetElevation);
+      radarStore.setTargetAntennaElevation(message.targetElevation, ts); // 传递接收时间戳
       recordOperation({ operationType: 'antenna_adjustment_required', timestamp: ts, isActive: false, parameters: { targetElevation: message.targetElevation }});
       setSettingsValidationTimestamp(ts);
     } else if (message.type === 'agent_level_data') {

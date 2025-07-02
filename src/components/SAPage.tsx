@@ -1078,41 +1078,41 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     getBestThreat: getBestThreat
   });
 
-  const [isStarted, setIsStarted] = useState(false);
-  const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
-  const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
-  const [confirmAntennaAdjustmentHandled, setConfirmAntennaAdjustmentHandled] = useState(false);
+  // const [isStarted, setIsStarted] = useState(false);
+  // const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
+  // const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
+  // const [confirmAntennaAdjustmentHandled, setConfirmAntennaAdjustmentHandled] = useState(false);
 
-  useEffect(() => {
-    console.log('[AI Radar Antenna Effect Check]', {
-      isAIActive: agentStore.isAIActive,
-      isStarted,
-      antennaAdjustmentRequired,
-      targetAntennaElevation,
-    });
-    if (
-      agentStore.isAIActive &&
-      isStarted &&
-      antennaAdjustmentRequired &&
-      targetAntennaElevation !== null
-    ) {
-      console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${targetAntennaElevation}. AI is taking action.`);
+  // useEffect(() => {
+  //   console.log('[AI Radar Antenna Effect Check]', {
+  //     isAIActive: agentStore.isAIActive,
+  //     isStarted,
+  //     antennaAdjustmentRequired,
+  //     targetAntennaElevation,
+  //   });
+  //   if (
+  //     agentStore.isAIActive &&
+  //     isStarted &&
+  //     antennaAdjustmentRequired &&
+  //     targetAntennaElevation !== null
+  //   ) {
+  //     console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${targetAntennaElevation}. AI is taking action.`);
       
-      // Pass 'ai' as source and the sendMessage callback
-      radarStore.setCurrentAntennaElevation(targetAntennaElevation, 'ai', sendMessage);
+  //     // Pass 'ai' as source and the sendMessage callback
+  //     radarStore.setCurrentAntennaElevation(targetAntennaElevation, 'ai', sendMessage);
       
     
-      console.log(`[AI Radar] Antenna elevation automatically set to ${targetAntennaElevation} by AI and requirement cleared.`);
-    }
-  }, [
-    agentStore.isAIActive,
-    isStarted,
-    antennaAdjustmentRequired,
-    targetAntennaElevation,
-    sendMessage,
-    confirmAntennaAdjustmentHandled,
-    radarStore
-  ]);
+  //     console.log(`[AI Radar] Antenna elevation automatically set to ${targetAntennaElevation} by AI and requirement cleared.`);
+  //   }
+  // }, [
+  //   agentStore.isAIActive,
+  //   isStarted,
+  //   antennaAdjustmentRequired,
+  //   targetAntennaElevation,
+  //   sendMessage,
+  //   confirmAntennaAdjustmentHandled,
+  //   radarStore
+  // ]);
 
   useEffect(() => {
     // 仪表盘间歇式旋转 - 旋转一段时间后暂停，模拟真实雷达扫描
