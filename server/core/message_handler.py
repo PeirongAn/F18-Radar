@@ -225,7 +225,12 @@ class MessageHandler:
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         else:
             print("练习模式，跳过 target_selected 数据库记录。")
-
+        
+        # 标记雷达目标识别任务完成
+        task_manager = session_state.get('task_manager')
+        if task_manager:
+            task_manager.mark_task_completed()
+        
         return []
     
     async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -255,6 +260,12 @@ class MessageHandler:
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         else:
             print("练习模式，跳过 threat_clicked 数据库记录。")
+        
+        # 标记SA威胁应对任务完成
+        task_manager = session_state.get('sa_task_manager')
+        if task_manager:
+            task_manager.mark_task_completed()
+        
         return []
     
     async def _handle_record_operation(self, message: Dict[str, Any], session_state: Dict[str, Any], 

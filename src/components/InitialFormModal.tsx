@@ -128,6 +128,26 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
               <span className="ml-2 text-green-400 font-mono">启用智能辅助系统</span>
             </label>
           </div>
+
+          <div className="my-6 flex justify-center">
+            <a
+              href="/用户手册.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500/10 to-blue-500/10 border border-green-400/30 rounded-lg text-green-400 hover:text-green-300 hover:border-green-300/50 hover:bg-gradient-to-r hover:from-green-500/20 hover:to-blue-500/20 font-mono text-sm transition-all duration-300 ease-in-out transform hover:scale-105 hover:shadow-lg hover:shadow-green-500/20"
+            >
+              <span className="text-lg">📖</span>
+              <span>用户手册</span>
+              <svg 
+                className="w-4 h-4 opacity-70 group-hover:opacity-100 group-hover:translate-x-1 transition-all duration-300" 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+          </div>
           
           <button
             type="submit"
@@ -136,16 +156,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
             开始任务
           </button>
           
-          <div className="mt-4 text-center">
-            <a
-              href="/用户手册.html"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center text-green-400 hover:text-green-300 font-mono text-sm underline transition duration-200"
-            >
-              📖 查看用户手册
-            </a>
-          </div>
+         
         </form>
       </div>
     </div>
