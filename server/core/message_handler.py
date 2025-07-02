@@ -51,8 +51,8 @@ class MessageHandler:
                 return await self._handle_record_bulk_operations(message, session_state, client_event_owner)
             elif message_type in ['SwitchSA', 'ResetSA']:
                 return await self._handle_sa_operations(message, session_state, websocket)
-            elif message_type == 'reset_targets':
-                return await self._handle_reset_targets(message, session_state)
+            # elif message_type == 'reset_targets':
+            #     return await self._handle_reset_targets(message, session_state)
             else:
                 print(f"未知消息类型: {message_type}")
                 return []
@@ -292,7 +292,6 @@ class MessageHandler:
         # 为SA任务也创建一个持久化管理器
         task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice)
         session_state['sa_task_manager'] = task_manager
-
         event_owner = message.get('event_owner', 'manual')
         is_ai_active_request = (event_owner == 'AI')
         
@@ -302,7 +301,8 @@ class MessageHandler:
             return [{"type": "all_tasks_completed", "task_type": task_type, "message": "祝贺！所有SA威胁应对任务已完成。"}]
         if not current_scenario:
             return [{"type": "all_tasks_completed", "task_type": task_type, "message": "当前模式的SA任务已完成。"}]
-
+        task_id = generate_task_id()
+        self.current_session['task_id'] = task_id
         self.current_session[f'{task_type}_scenario'] = current_scenario
         
         # 记录操作
@@ -345,48 +345,48 @@ class MessageHandler:
             )
         return [response]
     
-    async def _handle_reset_targets(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """处理重置目标消息"""
-        print("消息类型: reset_targets ( advancing scenario counter )")
+    # async def _handle_reset_targets(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    #     """处理重置目标消息"""
+    #     print("消息类型: reset_targets ( advancing scenario counter )")
         
-        user_id = self.current_session.get('user_id', '')
-        if not user_id:
-            return [{"type": "error", "message": "Cannot reset_targets without a user session."}]
+    #     user_id = self.current_session.get('user_id', '')
+    #     if not user_id:
+    #         return [{"type": "error", "message": "Cannot reset_targets without a user session."}]
 
-        task_manager = session_state.get('task_manager')
-        if not task_manager:
-            return [{"type": "error", "message": "Task not started. Cannot reset targets."}]
+    #     task_manager = session_state.get('task_manager')
+    #     if not task_manager:
+    #         return [{"type": "error", "message": "Task not started. Cannot reset targets."}]
 
-        is_ai_active_request = self.current_session.get('RADAR_TARGETING_scenario', {}).get('is_ai_active', False)
-        event_owner = 'AI' if is_ai_active_request else 'manual'
+    #     is_ai_active_request = self.current_session.get('RADAR_TARGETING_scenario', {}).get('is_ai_active', False)
+    #     event_owner = 'AI' if is_ai_active_request else 'manual'
 
-        current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
-        if not current_scenario:
-            return [{"type": "all_tasks_completed", "task_type": "RADAR_TARGETING", "message": "Congratulations! All Radar Targeting scenarios have been completed."}]
+    #     current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+    #     if not current_scenario:
+    #         return [{"type": "all_tasks_completed", "task_type": "RADAR_TARGETING", "message": "Congratulations! All Radar Targeting scenarios have been completed."}]
 
-        self.current_session['RADAR_TARGETING_scenario'] = current_scenario
-        task_id = generate_task_id()
-        self.current_session['task_id'] = task_id
+    #     self.current_session['RADAR_TARGETING_scenario'] = current_scenario
+    #     task_id = generate_task_id()
+    #     self.current_session['task_id'] = task_id
         
-        db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
+    #     db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
 
-        # 根据新场景重新初始化目标
-        target_manager.initialize_targets(current_scenario['difficulty_config'])
+    #     # 根据新场景重新初始化目标
+    #     target_manager.initialize_targets(current_scenario['difficulty_config'])
         
-        # 构造一个init_settings消息，以便前端可以更新其状态（包括计数器）
-        response_message = {
-            "type": "init_settings",
-            "task_id": task_id,
-            "timestamp": time.time() * 1000,
-            "settings": {"range": 80, "scanAngle": 30},
-            "is_ai_active": current_scenario['is_ai_active'],
-            "ai_level": current_scenario['ai_level_name'],
-            "ai_configs": config_manager.get_ai_levels(),
-            "audio_enabled": current_scenario['audio_enabled'],
-            "repetition_info": current_scenario['repetition_info'],
-            "task_type": "RADAR_TARGETING"
-        }
-        return [response_message]
+    #     # 构造一个init_settings消息，以便前端可以更新其状态（包括计数器）
+    #     response_message = {
+    #         "type": "init_settings",
+    #         "task_id": task_id,
+    #         "timestamp": time.time() * 1000,
+    #         "settings": {"range": 80, "scanAngle": 30},
+    #         "is_ai_active": current_scenario['is_ai_active'],
+    #         "ai_level": current_scenario['ai_level_name'],
+    #         "ai_configs": config_manager.get_ai_levels(),
+    #         "audio_enabled": current_scenario['audio_enabled'],
+    #         "repetition_info": current_scenario['repetition_info'],
+    #         "task_type": "RADAR_TARGETING"
+    #     }
+    #     return [response_message]
     
     def _generate_antenna_adjustment(self) -> Dict[str, Any]:
         """生成随机天线高度指令"""

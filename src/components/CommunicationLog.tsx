@@ -25,6 +25,10 @@ interface CommunicationLogProps {
   connected?: boolean;
   error?: string | null;
   operations?: any[];
+  // SA任务相关状态
+  emergencyReceived?: boolean; // 是否收到临机事件
+  lastEmergencyType?: string; // 最后一次临机事件类型
+  lastEmergencyTime?: Date; // 最后一次临机事件时间
 }
 
 const CommunicationLog: React.FC<CommunicationLogProps> = ({ 
@@ -41,7 +45,10 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   initSettings,
   connected = false,
   error = null,
-  operations = []
+  operations = [],
+  emergencyReceived,
+  lastEmergencyType,
+  lastEmergencyTime
 }) => {
   const logContainerRef = useRef<HTMLDivElement>(null);
   const prevRangeRef = useRef<number | undefined>(undefined);
@@ -230,6 +237,58 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       </div>
     );
   };
+
+  const renderSAStatus = () => {
+    if (!isStarted || currentTask !== 'sa') return null;
+    
+    return (
+      <div className="p-2 mb-2 bg-gray-800 rounded border border-gray-700">
+        <h4 className="text-green-400 font-mono text-sm mb-1">SA任务状态</h4>
+        
+        <div className="grid grid-cols-1 gap-1 text-xs">
+          <div className="flex justify-between">
+            <span className="text-gray-400">任务状态: </span>
+            <span className="text-green-300">威胁评估中</span>
+          </div>
+          
+          <div className="flex justify-between">
+            <span className="text-gray-400">临机事件: </span>
+            <span className={emergencyReceived ? "text-red-400 font-bold animate-pulse" : "text-gray-500"}>
+              {emergencyReceived ? "已收到" : "等待中"}
+            </span>
+          </div>
+          
+          {emergencyReceived && lastEmergencyType && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">事件类型: </span>
+              <span className="text-yellow-300 font-bold">
+                {lastEmergencyType === 'missile' ? '导弹来袭' : 
+                 lastEmergencyType === 'upgrade' ? '威胁升级' : 
+                 lastEmergencyType === 'task_updated' ? '威胁任务更新' : lastEmergencyType}
+              </span>
+            </div>
+          )}
+          
+          {emergencyReceived && lastEmergencyTime && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">事件时间: </span>
+              <span className="text-cyan-300 text-xs">
+                {lastEmergencyTime.toLocaleTimeString()}
+              </span>
+            </div>
+          )}
+        </div>
+        
+        {emergencyReceived && (
+          <div className="mt-2 pt-1 border-t border-gray-700">
+            <div className="text-red-400 font-bold text-xs animate-pulse">
+              ⚠️ 请立即处理临机事件！
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
   
   return (
     <div className="flex flex-col h-full">
@@ -248,6 +307,8 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       </div>
       
       {renderRadarParams()}
+      
+      {renderSAStatus()}
       
       <div 
         ref={logContainerRef}

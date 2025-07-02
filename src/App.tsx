@@ -60,11 +60,19 @@ const App: React.FC = observer(() => {
     sendResetSA,
     repetitionInfos,
     resetTargets,
+    radarData,
+    lastMessage,
   } = useRadarData();
   
   // 统一管理通信日志
   const [messages, setMessages] = useState<LogMessage[]>([]);
   const messageIdRef = React.useRef(0);
+  
+  // SA任务临机事件状态
+  const [emergencyReceived, setEmergencyReceived] = useState<boolean>(false);
+  const [lastEmergencyType, setLastEmergencyType] = useState<string>('');
+  const [lastEmergencyTime, setLastEmergencyTime] = useState<Date | undefined>(undefined);
+  const lastEmergencyIdRef = React.useRef<string>('');
   
   // 使用useCallback包装addMessage函数
   const addMessage = useCallback((type: MessageType, content: string) => {
@@ -124,6 +132,38 @@ const App: React.FC = observer(() => {
       console.error('WebSocket连接失败，无法初始化系统:', error);
     }
   }, [isStarted, connected, error]);
+
+
+  
+  // 监听SA任务相关消息
+  useEffect(() => {
+    if (!lastMessage) return;
+    
+    // 生成消息ID来防止重复处理
+    const messageId = JSON.stringify({
+      type: lastMessage.type,
+      timestamp: lastMessage.timestamp || Date.now(),
+      event: lastMessage.event,
+      saThreats: lastMessage.saThreats?.length || 0
+    });
+
+    if (messageId !== lastEmergencyIdRef.current) {
+      console.log('[App.tsx] 检测到新的SA消息:', lastMessage);
+      
+      // 只有特定消息类型才认为是临机事件
+      if (lastMessage.type === 'SAEmergency') {
+        // SAEmergency 是具体的临机事件（导弹来袭等）
+        setEmergencyReceived(true);
+        setLastEmergencyType(lastMessage.event || 'unknown');
+        setLastEmergencyTime(new Date());
+        lastEmergencyIdRef.current = messageId;
+        
+        const eventText = lastMessage.event === 'missile' ? '导弹来袭' : 
+                         lastMessage.event === 'upgrade' ? '威胁升级' : '未知事件';
+        addMessage('sa_emergency', `收到临机事件：${eventText}`);
+      }
+    }
+  }, [lastMessage, addMessage]);
   
   // 处理目标选择
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
@@ -225,20 +265,53 @@ const App: React.FC = observer(() => {
     radarStore.updateRadarParams(range, angle);
   };
 
+  // 处理SA任务重置（包含临机事件状态重置）
+  const handleSATaskReset = useCallback(() => {
+    console.log('App.tsx - 执行SA任务完整重置');
+    
+    // 1. 重置临机事件状态
+    setEmergencyReceived(false);
+    setLastEmergencyType('');
+    setLastEmergencyTime(undefined);
+    lastEmergencyIdRef.current = '';
+    
+    // 2. 清空消息历史
+    clearMessages();
+    
+    // 3. 调用服务器重置
+    sendResetSA();
+    
+    console.log('✅ App.tsx - SA任务重置完成，包括临机事件状态');
+  }, [sendResetSA, clearMessages]);
+
   // 处理显示切换
   const handleDisplayChange = (display: 'radar' | 'navigation') => {
     setActiveDisplay(display);
+    // 切换视图时清空消息历史
+    clearMessages();
+    
+    // 如果切换到SA页面，重置临机事件状态
     if (display === 'navigation') {
-      sendMessage({
-        type: 'SwitchSA',
-        timestamp: Date.now(),
-        user_id: userId,
-        is_practice: isPractice,
-      });
+      setEmergencyReceived(false);
+      setLastEmergencyType('');
+      setLastEmergencyTime(undefined);
+      lastEmergencyIdRef.current = '';
+      
+      // 发送SwitchSA消息以加载SA任务数据
+      if (sendMessage) {
+        sendMessage({
+          type: 'SwitchSA',
+          timestamp: Date.now(),
+          user_id: userId,
+          is_practice: isPractice,
+        });
+      }
     } else if (display === 'radar') {
       // 当切换回雷达时，重新初始化雷达任务
       console.log(`切换到雷达视图。为用户重新初始化雷达任务: ${userId}, AI: ${includeAI}`);
-      initializeSystem(userId, includeAI, isPractice);
+      if (initializeSystem) {
+        initializeSystem(userId, includeAI, isPractice);
+      }
     }
   };
 
@@ -248,7 +321,7 @@ const App: React.FC = observer(() => {
       if (event.key === 'F12') {
         event.preventDefault(); // Prevent default browser action
         console.log("F12 pressed, resetting SA threats.");
-        sendResetSA(); // Call the reset function
+        handleSATaskReset(); // Call the complete reset function
       }
     };
 
@@ -259,7 +332,7 @@ const App: React.FC = observer(() => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [sendResetSA]); // Add sendResetSA to dependency array
+  }, [handleSATaskReset]); // Add handleSATaskReset to dependency array
 
   // 根据当前视图决定要显示哪个任务的进度
   const infoToShow = useMemo(() => {
@@ -398,7 +471,7 @@ const App: React.FC = observer(() => {
                   onAddMessage={addMessage} 
                   onClearMessages={clearMessages}
                   userId={userId}
-                  onResetSA={sendResetSA}
+                  onResetSA={handleSATaskReset}
                   onResetTargets={resetTargets}
                 />
               </div>
@@ -431,6 +504,9 @@ const App: React.FC = observer(() => {
                 operations={operations}
                 onAddMessage={addMessage}
                 messages={messages}
+                emergencyReceived={emergencyReceived}
+                lastEmergencyType={lastEmergencyType}
+                lastEmergencyTime={lastEmergencyTime}
               />
           </div>
         </div>

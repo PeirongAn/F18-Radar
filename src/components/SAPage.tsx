@@ -84,7 +84,7 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onResetTargets }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
 
@@ -476,9 +476,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const handleResetSA = useCallback(() => {
     console.log('====== SA系统重置 ======');
     
-    // 发送重置消息到服务器
-    sendResetSA();
-    
     // 核心修复：重置 MobX store 中的临机事件状态
     radarStore.resetSAEmergency();
 
@@ -498,10 +495,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setShowDetailedInfo(false); // 重置详细信息显示状态
     
     // 重置控制标志
-    hasInitLogRef.current = false;
-    lastThreatsLengthRef.current = 0;
-    lastEmergencyRef.current = null;
-    lastEmergencyReceiveTimestampRef.current = null;
+    if (onResetSA) {
+      onResetSA();
+    }
     
     // 记录重置日志（在清空日志后重新记录）
     if (typeof onAddMessage === 'function') {
@@ -509,7 +505,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
     
     console.log('✅ SA系统重置完成');
-  }, [sendResetSA, onAddMessage, onClearMessages]);
+  }, [sendResetSA, onAddMessage, onClearMessages, onResetSA]);
 
   // 主动同步saThreats
   useEffect(() => {
@@ -533,6 +529,23 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     } else {
       // 当威胁列表从服务器清空时（例如任务重置），本地也清空
       setThreatList([]);
+      
+      // 检测到服务器重置信号，重置内部ref变量
+      if (hasInitLogRef.current) {
+        console.log('【SAPage】检测到服务器重置，重置内部ref变量');
+        hasInitLogRef.current = false;
+        lastThreatsLengthRef.current = 0;
+        lastEmergencyRef.current = null;
+        lastEmergencyReceiveTimestampRef.current = null;
+        
+        // 重置其他状态
+        setMissiles([]);
+        setShowTaskComplete(false);
+        setCompletedThreat('');
+        setUserSelection(null);
+        setDynamicRotation(0);
+        setShowDetailedInfo(false);
+      }
     }
   }, [saThreats, onAddMessage]);
 
@@ -748,7 +761,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const threatsWithScore = useMemo(() => {
     // 1. 定义威胁类型的权重
     const getTypeWeight = (type: string): number => {
-      if (type.toLowerCase().includes('missile')) return 240; // 导弹权重最高
+      if (type.toLowerCase().includes('missile')) return 245; // 导弹权重最高
       if (type.startsWith('Primary')) return 240;           // Primary类型次之
       if (type.startsWith('Secondary')) return 200;         // Secondary类型权重较低
       return 80; // 其他未知类型
@@ -1155,12 +1168,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     };
   }, []);
 
-  const handleConfirmAndReset = () => {
-    if (onResetSA) {
-      onResetSA();
-    }
-    setShowTaskComplete(false);
-  };
+  // const handleConfirmAndReset = () => {
+  //   if (onResetSA) {
+  //     onResetSA();
+  //   }
+  //   setShowTaskComplete(false);
+  // };
 
   return (
     <div className="w-full h-full p-4 bg-black text-green-400 font-mono flex flex-col items-center relative">
@@ -1185,7 +1198,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               <div key={label} className="relative">
                 <Button
                   label={label}
-                  onClick={idx === 1 ? handleResetSA : () => handleButtonClick(label)}
+                  onClick={idx === 1 ? (onResetSA || handleResetSA) : () => handleButtonClick(label)}
                 />
               
               </div>
@@ -1396,7 +1409,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       </div>
       
       {/* 威胁列表 */}
-      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{marginTop: '20px', marginLeft: '150px'}}>
+      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{ marginLeft: '150px'}}>
         <div className="bg-gray-800 p-2 border-b border-gray-700">
           <h3 className="text-green-400 font-mono text-lg text-center">威胁列表</h3>
         </div>

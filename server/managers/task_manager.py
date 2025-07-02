@@ -2,6 +2,8 @@ import json
 from typing import Dict, Any, Optional, List
 from .database_manager import db_manager
 from .logger_manager import get_logger
+import time
+import random
 
 class TaskScenarioManager:
     """管理与数据库绑定的、持久化的用户任务场景"""
@@ -277,12 +279,34 @@ class TaskScenarioManager:
                 self._save_to_db()
         return self.current_scenario
 
-# 任务ID计数器
-task_counter = 0
+def generate_task_id_timestamp() -> int:
+    """生成新的任务ID"""
+    # 使用时间戳(毫秒) + 随机数确保唯一性
+    # 时间戳精确到毫秒，再加上随机数，几乎不可能重复
+    timestamp_ms = int(time.time() * 1000)
+    random_suffix = random.randint(100, 999)
+    task_id = int(f"{timestamp_ms}{random_suffix}")
+    
+    return task_id
 
 def generate_task_id() -> int:
-    """生成新的任务ID"""
-    global task_counter
-    task_id = task_counter
-    task_counter += 1
-    return task_id 
+    """从数据库查询最大task_id并生成新的唯一ID（备选方案）"""
+    try:
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            # 查询task_settings表中的最大task_id
+            cursor.execute("SELECT MAX(task_id) FROM task_settings")
+            result = cursor.fetchone()
+            max_id = result[0] if result and result[0] is not None else 0
+            
+            # 查询user_operations表中的最大task_id
+            cursor.execute("SELECT MAX(task_id) FROM user_operations")  
+            result = cursor.fetchone()
+            max_id_ops = result[0] if result and result[0] is not None else 0
+            
+            # 取两个表中的最大值，然后+1
+            return max(max_id, max_id_ops) + 1
+    except Exception as e:
+        # 如果数据库查询失败，回退到时间戳方案
+        get_logger("task_manager").warning(f"Failed to query max task_id from DB: {e}")
+        return generate_task_id_timestamp() 

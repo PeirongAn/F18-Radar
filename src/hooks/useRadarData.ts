@@ -665,6 +665,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     confirmAntennaAdjustmentHandled,
     repetitionInfos, // 导出新的字典状态
     saThreats, // 确保导出 saThreats
+    lastMessage: globalWS.getLastMessage(), // 导出最后一条消息
   };
 };
 

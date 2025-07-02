@@ -135,6 +135,17 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
           >
             开始任务
           </button>
+          
+          <div className="mt-4 text-center">
+            <a
+              href="/用户手册.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center text-green-400 hover:text-green-300 font-mono text-sm underline transition duration-200"
+            >
+              📖 查看用户手册
+            </a>
+          </div>
         </form>
       </div>
     </div>

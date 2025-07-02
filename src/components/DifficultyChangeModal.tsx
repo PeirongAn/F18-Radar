@@ -15,7 +15,7 @@ const DifficultyChangeModal: React.FC<DifficultyChangeModalProps> = ({ isOpen, o
       <div className="bg-gray-800 border border-green-700 rounded-lg p-6 shadow-xl text-center">
         <h2 className="text-xl text-green-400 font-bold mb-4">任务阶段更新</h2>
         <p className="text-white mb-6">
-          当前难度任务场景已完成，需要切换任务或联系主试。
+          当前难度任务场景已完成，需要联系主试。
         </p>
         <button
           onClick={onClose}
