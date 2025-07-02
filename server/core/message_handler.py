@@ -217,7 +217,7 @@ class MessageHandler:
                     'action': message.get('action', 'select'),
                     'iff_mode': iff_mode,
                     'is_enemy': is_enemy,
-                    'is_correct': is_enemy or False,
+                    'is_correct': (is_enemy and iff_mode) or False,
                 },
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner
