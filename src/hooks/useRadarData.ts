@@ -571,13 +571,18 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       agentStore.initializeFromServer(message);
     } else if (message.type === 'all_tasks_completed') {
       console.log('[useRadarData] Received all_tasks_completed:', message);
-      // 检查此任务类型是否已弹窗过
-      if (message.task_type && !radarStore.completedTaskTypes.has(message.task_type)) {
-        radarStore.showCompletionModal(message.message);
-        // 标记为已完成，防止重复弹窗
-        radarStore.addCompletedTaskType(message.task_type);
+      // 只有在正式模式下才显示任务完成弹窗
+      if (!radarStore.isPractice) {
+        // 检查此任务类型是否已弹窗过
+        if (message.task_type && !radarStore.completedTaskTypes.has(message.task_type)) {
+          radarStore.showCompletionModal(message.message);
+          // 标记为已完成，防止重复弹窗
+          radarStore.addCompletedTaskType(message.task_type);
+        } else {
+          console.log(`[useRadarData] Completion modal for ${message.task_type} has already been shown. Suppressing.`);
+        }
       } else {
-        console.log(`[useRadarData] Completion modal for ${message.task_type} has already been shown. Suppressing.`);
+        console.log('[useRadarData] Practice mode: Suppressing completion modal.');
       }
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore

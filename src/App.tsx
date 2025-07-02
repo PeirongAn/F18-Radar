@@ -291,7 +291,8 @@ const App: React.FC = observer(() => {
     if (
       previousDifficultyRef.current &&
       currentDifficulty &&
-      currentDifficulty !== previousDifficultyRef.current
+      currentDifficulty !== previousDifficultyRef.current &&
+      !infoToShow.is_ai_active
     ) {
       setShowDifficultyChangeModal(true);
     }
