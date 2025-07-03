@@ -86,7 +86,8 @@ class TaskScenarioManager:
                 cursor.execute(
                     """SELECT current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, is_completed,
                               ai_current_scenario_json, ai_repetition_counter, 
-                              manual_current_scenario_json, manual_repetition_counter 
+                              manual_current_scenario_json, manual_repetition_counter,
+                              is_ai_completed, is_manual_completed 
                        FROM user_progress WHERE user_id = ? AND task_type = ?""",
                     (self.user_id, self.task_type)
                 )
@@ -155,6 +156,8 @@ class TaskScenarioManager:
         
         # 获取当前的 is_completed 状态（从数据库或使用默认值）
         current_is_completed = False  # 默认为未完成
+        current_is_ai_completed = False  # 默认为未完成
+        current_is_manual_completed = False  # 默认为未完成
         ai_scenario_json = None
         ai_repetition = 0
         manual_scenario_json = None
@@ -165,7 +168,8 @@ class TaskScenarioManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """SELECT is_completed, ai_current_scenario_json, ai_repetition_counter,
-                              manual_current_scenario_json, manual_repetition_counter
+                              manual_current_scenario_json, manual_repetition_counter,
+                              is_ai_completed, is_manual_completed
                        FROM user_progress WHERE user_id = ? AND task_type = ?""",
                     (self.user_id, self.task_type)
                 )
@@ -176,6 +180,8 @@ class TaskScenarioManager:
                     ai_repetition = result[2] or 0
                     manual_scenario_json = result[3]
                     manual_repetition = result[4] or 0
+                    current_is_ai_completed = bool(result[5]) if len(result) > 5 else False
+                    current_is_manual_completed = bool(result[6]) if len(result) > 6 else False
         except Exception as e:
             self.logger.debug(f"Could not fetch current progress status, using defaults: {e}")
         
@@ -194,8 +200,9 @@ class TaskScenarioManager:
         sql = """
             INSERT OR REPLACE INTO user_progress 
             (user_id, task_type, current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, is_completed, 
-             ai_current_scenario_json, ai_repetition_counter, manual_current_scenario_json, manual_repetition_counter, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+             ai_current_scenario_json, ai_repetition_counter, manual_current_scenario_json, manual_repetition_counter,
+             is_ai_completed, is_manual_completed, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """
         params = (
             self.user_id,
@@ -208,7 +215,9 @@ class TaskScenarioManager:
             ai_scenario_json,  # AI模式的当前场景
             ai_repetition,     # AI模式的重复计数
             manual_scenario_json,  # 手动模式的当前场景
-            manual_repetition      # 手动模式的重复计数
+            manual_repetition,     # 手动模式的重复计数
+            current_is_ai_completed,  # AI模式的完成状态
+            current_is_manual_completed  # 手动模式的完成状态
         )
         db_manager.execute_async(sql, params)
         self.logger.debug(f"Progress save queued for user '{self.user_id}', task '{self.task_type}'")
@@ -223,9 +232,14 @@ class TaskScenarioManager:
             # 练习模式：检查内存缓存
             cache_key = (self.user_id, self.task_type)
             if cache_key in self._practice_memory_cache:
-                is_completed = self._practice_memory_cache[cache_key].get('is_completed', False)
-                print(f"Practice mode: Previous task completion status = {is_completed}")
-                return is_completed  # is_completed=True表示已完成，False表示未完成
+                # 根据当前场景的AI模式选择对应的完成状态
+                if self.current_scenario and self.current_scenario.get('is_ai_active', False):
+                    is_completed = self._practice_memory_cache[cache_key].get('is_ai_completed', False)
+                    print(f"Practice mode: Previous AI task completion status = {is_completed}")
+                else:
+                    is_completed = self._practice_memory_cache[cache_key].get('is_manual_completed', False)
+                    print(f"Practice mode: Previous manual task completion status = {is_completed}")
+                return is_completed
             return True  # 没有缓存表示没有上一个任务，视为已完成
         else:
             # 正式模式：检查数据库
@@ -233,14 +247,19 @@ class TaskScenarioManager:
                 with db_manager.get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute(
-                        "SELECT is_completed FROM user_progress WHERE user_id = ? AND task_type = ?",
+                        "SELECT is_completed, is_ai_completed, is_manual_completed FROM user_progress WHERE user_id = ? AND task_type = ?",
                         (self.user_id, self.task_type)
                     )
                     result = cursor.fetchone()
                     if result:
-                        is_completed = result[0]
-                        self.logger.debug(f"Formal mode: Previous task completion status = {is_completed}")
-                        return bool(is_completed)  # is_completed=True表示已完成，False表示未完成
+                        # 根据当前场景的AI模式选择对应的完成状态
+                        if self.current_scenario and self.current_scenario.get('is_ai_active', False):
+                            is_completed = bool(result[1]) if len(result) > 1 else bool(result[0])  # 优先使用is_ai_completed，回退到is_completed
+                            self.logger.debug(f"Formal mode: Previous AI task completion status = {is_completed}")
+                        else:
+                            is_completed = bool(result[2]) if len(result) > 2 else bool(result[0])  # 优先使用is_manual_completed，回退到is_completed
+                            self.logger.debug(f"Formal mode: Previous manual task completion status = {is_completed}")
+                        return is_completed
                     return True  # 没有记录表示没有上一个任务，视为已完成
             except Exception as e:
                 self.logger.error(f"Error checking previous task completion status: {e}", exc_info=True)
@@ -256,17 +275,35 @@ class TaskScenarioManager:
             # 练习模式：更新内存缓存
             cache_key = (self.user_id, self.task_type)
             if cache_key in self._practice_memory_cache:
+                # 根据当前场景的AI模式更新对应的完成状态
+                if self.current_scenario and self.current_scenario.get('is_ai_active', False):
+                    self._practice_memory_cache[cache_key]['is_ai_completed'] = is_completed
+                    self.logger.debug(f"Practice mode: Updated is_ai_completed={is_completed} for user '{self.user_id}', task '{self.task_type}'")
+                else:
+                    self._practice_memory_cache[cache_key]['is_manual_completed'] = is_completed
+                    self.logger.debug(f"Practice mode: Updated is_manual_completed={is_completed} for user '{self.user_id}', task '{self.task_type}'")
+                # 同时更新通用的is_completed字段以保持兼容性
                 self._practice_memory_cache[cache_key]['is_completed'] = is_completed
-                self.logger.debug(f"Practice mode: Updated is_completed={is_completed} for user '{self.user_id}', task '{self.task_type}'")
         else:
             # 正式模式：更新数据库
-            sql = """
-                UPDATE user_progress 
-                SET is_completed = ?, last_updated = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND task_type = ?
-            """
-            db_manager.execute_async(sql, (is_completed, self.user_id, self.task_type))
-            self.logger.debug(f"Formal mode: Queued is_completed={is_completed} update for user '{self.user_id}', task '{self.task_type}'")
+            if self.current_scenario and self.current_scenario.get('is_ai_active', False):
+                # 当前是AI模式，更新AI完成状态
+                sql = """
+                    UPDATE user_progress 
+                    SET is_ai_completed = ?, is_completed = ?, last_updated = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND task_type = ?
+                """
+                db_manager.execute_async(sql, (is_completed, is_completed, self.user_id, self.task_type))
+                self.logger.debug(f"Formal mode: Queued is_ai_completed={is_completed} update for user '{self.user_id}', task '{self.task_type}'")
+            else:
+                # 当前是手动模式，更新手动完成状态
+                sql = """
+                    UPDATE user_progress 
+                    SET is_manual_completed = ?, is_completed = ?, last_updated = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND task_type = ?
+                """
+                db_manager.execute_async(sql, (is_completed, is_completed, self.user_id, self.task_type))
+                self.logger.debug(f"Formal mode: Queued is_manual_completed={is_completed} update for user '{self.user_id}', task '{self.task_type}'")
 
     def _initialize_new_progress(self) -> None:
         """为新用户或新任务生成全新的队列和状态"""
@@ -345,11 +382,13 @@ class TaskScenarioManager:
             if cache_key not in self._practice_memory_cache:
                 self._practice_memory_cache[cache_key] = {}
             self._practice_memory_cache[cache_key]['is_completed'] = False
-            self.logger.debug(f"Practice mode: Initialized is_completed=False for new progress")
+            self._practice_memory_cache[cache_key]['is_ai_completed'] = False
+            self._practice_memory_cache[cache_key]['is_manual_completed'] = False
+            self.logger.debug(f"Practice mode: Initialized completion status to False for new progress")
         else:
             # 正式模式：通过_update_completion_status设置初始状态
             # 不直接在这里调用，因为可能还没有数据库记录，会在第一次_save_to_db时依赖默认值
-            self.logger.debug(f"Formal mode: is_completed will be set to default FALSE in database")
+            self.logger.debug(f"Formal mode: completion status will be set to default FALSE in database")
 
     def are_all_scenarios_completed(self) -> bool:
         """检查此任务类型的所有场景（AI和手动）是否都已完成"""

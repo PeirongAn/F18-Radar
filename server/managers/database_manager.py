@@ -272,6 +272,8 @@ class DatabaseManager:
                     ai_queue_json TEXT,
                     manual_queue_json TEXT,
                     is_completed BOOLEAN DEFAULT FALSE,
+                    is_ai_completed BOOLEAN DEFAULT FALSE,
+                    is_manual_completed BOOLEAN DEFAULT FALSE,
                     ai_current_scenario_json TEXT,
                     ai_repetition_counter INTEGER DEFAULT 0,
                     manual_current_scenario_json TEXT,
@@ -296,6 +298,19 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE user_progress ADD COLUMN is_completed BOOLEAN DEFAULT FALSE")
             conn.commit()
             self.logger.info("is_completed 列添加成功")
+        
+        # 添加AI和手动模式的完成状态字段
+        if 'is_ai_completed' not in columns:
+            self.logger.info("正在添加 is_ai_completed 列...")
+            cursor.execute("ALTER TABLE user_progress ADD COLUMN is_ai_completed BOOLEAN DEFAULT FALSE")
+            conn.commit()
+            self.logger.info("is_ai_completed 列添加成功")
+        
+        if 'is_manual_completed' not in columns:
+            self.logger.info("正在添加 is_manual_completed 列...")
+            cursor.execute("ALTER TABLE user_progress ADD COLUMN is_manual_completed BOOLEAN DEFAULT FALSE")
+            conn.commit()
+            self.logger.info("is_manual_completed 列添加成功")
         
         # 添加AI模式进度字段
         if 'ai_current_scenario_json' not in columns:
