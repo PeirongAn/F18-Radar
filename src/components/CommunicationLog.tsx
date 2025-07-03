@@ -292,8 +292,15 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   
   return (
     <div className="flex flex-col h-full">
+      <div className="bg-gray-800 p-2 rounded-t-lg border-b border-gray-700 mb-2 flex justify-between">
+       <span className="text-gray-400 text-xs">通信状态: </span>
+        <span className={isStarted ? "text-green-400 text-xs" : "text-yellow-400 text-xs"}>
+          {isStarted ? '已连接' : '等待启动'}
+        </span>
+        </div>
       <div className="bg-gray-800 p-2 rounded-t-lg border-b border-gray-700">
         <h3 className="text-green-400 font-mono text-lg">系统通信日志</h3>
+       
         <div className="flex justify-between text-xs">
           {
             userId && (
@@ -312,8 +319,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       
       <div 
         ref={logContainerRef}
-        className="flex-1 overflow-y-auto bg-gray-900 p-4 font-mono text-sm"
-        style={{ maxHeight: 'calc(100vh - 320px)' }}
+        className="flex-1 overflow-y-auto bg-gray-900 p-4 font-mono text-sm mb-10"
       >
         {!isStarted ? (
           <div className="text-center py-10 text-gray-500 italic">
@@ -336,12 +342,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
         )}
       </div>
       
-      <div className="bg-gray-800 p-2 rounded-b-lg border-t border-gray-700 text-center">
-        <span className="text-gray-400 text-xs">通信状态: </span>
-        <span className={isStarted ? "text-green-400 text-xs" : "text-yellow-400 text-xs"}>
-          {isStarted ? '已连接' : '等待启动'}
-        </span>
-      </div>
+    
     </div>
   );
 };

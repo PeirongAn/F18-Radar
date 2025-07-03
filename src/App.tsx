@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Radar from './components/Radar';
 import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
@@ -14,6 +14,9 @@ import { Toaster, toast } from 'react-hot-toast';
 import CompletionModal from './components/CompletionModal';
 import DifficultyChangeModal from './components/DifficultyChangeModal';
 import ScenarioCompletionModal from './components/ScenarioCompletionModal';
+import ThreatList from './components/ThreatList';
+import ConnectionStatus from './components/ConnectionStatus';
+import audioManager from './managers/AudioManager';
 
 // 日志类型声明，需与CommunicationLog保持一致
 
@@ -73,6 +76,10 @@ const App: React.FC = observer(() => {
   const [lastEmergencyType, setLastEmergencyType] = useState<string>('');
   const [lastEmergencyTime, setLastEmergencyTime] = useState<Date | undefined>(undefined);
   const lastEmergencyIdRef = React.useRef<string>('');
+  
+  // 新增：威胁列表状态
+  const [threatListData, setThreatListData] = useState<any[]>([]);
+  const [showDetailedInfo, setShowDetailedInfo] = useState(false);
   
   // 使用useCallback包装addMessage函数
   const addMessage = useCallback((type: MessageType, content: string) => {
@@ -321,9 +328,9 @@ const App: React.FC = observer(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Check if F12 is pressed
       if (event.key === 'F12') {
-        event.preventDefault(); // Prevent default browser action
+        // event.preventDefault(); // Prevent default browser action
         console.log("F12 pressed, resetting SA threats.");
-        handleSATaskReset(); // Call the complete reset function
+        // handleSATaskReset(); // Call the complete reset function
       }
     };
 
@@ -398,6 +405,16 @@ const App: React.FC = observer(() => {
     return radarCompleted && saCompleted;
   }, [repetitionInfos]);
 
+  // 处理威胁列表数据更新
+  const handleThreatListUpdate = useCallback((threatData: any[]) => {
+    setThreatListData(threatData);
+  }, []);
+  
+  // 处理详细信息显示状态变化
+  const handleShowDetailedInfoChange = useCallback((showDetailed: boolean) => {
+    setShowDetailedInfo(showDetailed);
+  }, []);
+
   return (
     <div className="min-h-screen bg-black text-gray-300">
       <Toaster 
@@ -468,28 +485,30 @@ const App: React.FC = observer(() => {
             ) : (
               <div className='flex justify-center'>
                 <SAPage 
-                  width={700} 
-                  height={700} 
-                  onAddMessage={addMessage} 
+                  width={800} 
+                  height={600} 
+                  onAddMessage={addMessage}
                   onClearMessages={clearMessages}
                   userId={userId}
                   onResetSA={handleSATaskReset}
-                  onResetTargets={resetTargets}
+                  onThreatListUpdate={handleThreatListUpdate}
+                  onShowDetailedInfoChange={handleShowDetailedInfoChange}
                 />
               </div>
             )}
           </div>
         </div>
         
-        {/* 右侧内容 - 始终显示日志，AI激活时额外显示AI助手 */}
+        {/* 右侧内容 - 调整顺序：通信日志在最上面 */}
         <div className="w-full lg:w-2/5 flex flex-col gap-4">
+          {/* AI助手 - 放在最上面*/}
           {includeAI && (
-            <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
-              <h2 className="text-green-500 font-mono text-lg mb-4">AI助手</h2>
-              <AIAssistant selectedTarget={selectedTarget} />
-            </div>
-          )}
-          <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800 flex-grow">
+              <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
+                <AIAssistant selectedTarget={selectedTarget} />
+              </div>
+            )}
+          {/* 通信日志 - 固定高度 */}
+          <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800" style={{ height: '500px' }}>
             <h2 className="text-green-500 font-mono text-lg mb-4">通信日志</h2>
               <CommunicationLog 
                 userId={userId} 
@@ -511,6 +530,12 @@ const App: React.FC = observer(() => {
                 lastEmergencyTime={lastEmergencyTime}
               />
           </div>
+          
+       
+          {/* 威胁列表 - 最下面，只在SA页面时显示 */}
+          {activeDisplay === 'navigation' && threatListData.length > 0 && (
+            <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
+          )}
         </div>
       </div>
 

@@ -680,7 +680,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
                   borderRadius: '4px'
                 }}
               >
-                确认
+                确定
               </button>
           
             </div>

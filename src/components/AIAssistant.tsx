@@ -87,8 +87,8 @@ const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) =>
   };
 
   return (
-    <div className="flex flex-col h-[80px] bg-gray-900 rounded-lg overflow-hidden">
-      <div className="bg-gray-800 p-4 border-b border-gray-700">
+    <div>
+      <div >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${agentStore.isAIActive ? 'bg-green-500' : 'bg-red-500'}`}></div>
