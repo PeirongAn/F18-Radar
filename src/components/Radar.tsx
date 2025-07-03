@@ -772,8 +772,8 @@ const Radar: React.FC<RadarProps> = (({
   useEffect(() => {
     const handleKeyPress = (event: KeyboardEvent) => {
       if (event.key === 'F10') {
-        event.preventDefault();
-        handleTakeControl();
+        // event.preventDefault();
+        // handleTakeControl();
       }
     };
 

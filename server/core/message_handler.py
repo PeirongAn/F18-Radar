@@ -83,7 +83,7 @@ class MessageHandler:
         task_type = 'RADAR_TARGETING'
         
         # 创建或加载与用户绑定的持久化任务管理器
-        task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice)
+        task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice, is_ai_active_request=is_ai_active_request)
         session_state['task_manager'] = task_manager
         
         # 从管理器获取下一个任务场景
@@ -217,7 +217,7 @@ class MessageHandler:
                     'action': message.get('action', 'select'),
                     'iff_mode': iff_mode,
                     'is_enemy': is_enemy,
-                    'is_correct': (is_enemy and iff_mode) or False,
+                    'is_correct': (is_enemy and not iff_mode) or False,
                 },
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner
@@ -299,9 +299,9 @@ class MessageHandler:
         task_type = 'SA_THREAT_RESPONSE'
         is_practice = message.get('is_practice', False)
         session_state['is_practice'] = is_practice
-        
+        is_ai_active_request = message.get('is_ai_active', False)
         # 为SA任务也创建一个持久化管理器
-        task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice)
+        task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice, is_ai_active_request=is_ai_active_request)
         session_state['sa_task_manager'] = task_manager
         event_owner = message.get('event_owner', 'manual')
         is_ai_active_request = (event_owner == 'AI')

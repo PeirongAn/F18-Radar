@@ -9,6 +9,11 @@ import VelocityVector from './VelocityVector';
 import HorizonHUD from './HorizonHUD';
 import { UnknownTargetManager } from './UnknownTargetManager';
 import radarStore from '../stores/RadarStore';
+import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';
+import useRadarData from '../hooks/useRadarData';
+import agentStore from '../stores/AgentStore';
+import ScenarioCompletionModal from './ScenarioCompletionModal';
+import audioManager from '../managers/AudioManager';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -102,6 +107,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
   
+  // 获取重复信息
+  const { repetitionInfos } = useRadarData();
+  
   // 添加任务确认弹窗状态
   const [showMissionConfirm, setShowMissionConfirm] = React.useState(false);
   const [missionResultMessage, setMissionResultMessage] = React.useState(''); // State to hold the result message
@@ -113,6 +121,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
+  const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
   
   // 将重置函数暴露给父组件
   React.useEffect(() => {
@@ -139,8 +148,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 直接检查并处理targets
   React.useEffect(() => {
+
     if (radarData?.externalTargets) {
       console.log('RadarDisplay - externalTargets已更新:', radarData.externalTargets);
+      if(radarData.externalTargets.length > 0) {
+        console.log('RadarDisplay - externalTargets已更新:', radarData.externalTargets, agentStore.isAIActive);
+        if(agentStore.isAIActive) {
+          audioManager.play('radarAISelect');
+        }
+      }
+    } else {
+      console.log('【RadarDisplay调试】externalTargets 为空或未定义');
     }
   }, [radarData?.externalTargets, centerX, centerY]);
   
@@ -368,7 +386,21 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         if (targetInfo.threatScore !== undefined) {
           onAddMessage('info', `威胁评分: ${targetInfo.threatScore.toFixed(3)} (0°最小威胁，180°最大威胁)`);
         }
-        onAddMessage('info', '========================');
+      
+        
+      }
+    
+      // 添加重复次数信息
+      const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
+      if (radarRepetitionInfo && typeof radarRepetitionInfo !== 'string') {
+        // onAddMessage('info', `重复进度: ${formatRepetitionText(radarRepetitionInfo)}`);
+        if (isLastRepetition(radarRepetitionInfo) && agentStore.isAIActive) {
+          setShowScenarioCompletionModal(true);
+          // onAddMessage('info', '⚠️ 这是人机模式下当前场景的最后一次任务，请联系主试');
+        }else {
+          setShowMissionConfirm(true);
+
+        }
       }
       
       // 'army' is considered the correct type for this task (enemy)
@@ -379,9 +411,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
     } else {
       setMissionResultMessage('结果: 未锁定目标');
+      setShowMissionConfirm(true);
     }
     setIffMode(prev => !prev);
-    setShowMissionConfirm(true);
   };
   
   const handleConfirmYes = () => {
@@ -633,22 +665,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
             }}>
               {missionResultMessage}
             </p>
-            <h3 style={{ margin: 0, fontSize: '1.2em' }}>是否进行下一次任务</h3>
+            <h3 style={{ margin: 0, fontSize: '1.2em' }}>{lockedTargetObject?.type ? '进行下一次任务' : '重新进行本次任务'}</h3>
             <div style={{ marginTop: '20px' }}>
-            {/* <button 
-                onClick={() => setShowMissionConfirm(false)}
-                style={{
-                  backgroundColor: '#330000',
-                  border: '1px solid #ff0000',
-                  color: '#ff0000',
-                  padding: '8px 16px',
-                  margin: '0 10px',
-                  cursor: 'pointer',
-                  borderRadius: '4px'
-                }}
-              >
-                否
-              </button> */}
+           
               <button 
                 onClick={handleConfirmYes}
                 style={{
@@ -661,13 +680,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
                   borderRadius: '4px'
                 }}
               >
-                是
+                确认
               </button>
           
             </div>
           </div>
         </div>
       )}
+       <ScenarioCompletionModal 
+        isOpen={showScenarioCompletionModal}
+        onClose={() => {setShowScenarioCompletionModal(false); setShowMissionConfirm(true);}}
+      />
 
       {/* Non-Konva components are here, positioned over the canvas */}
       {!connected && (

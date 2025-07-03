@@ -11,7 +11,7 @@ class TaskScenarioManager:
     # 练习模式的内存缓存，格式: {(user_id, task_type): progress_data}
     _practice_memory_cache: Dict[tuple, Dict[str, Any]] = {}
     
-    def __init__(self, config: Dict[str, Any], user_id: str, task_type: str, is_practice: bool = False):
+    def __init__(self, config: Dict[str, Any], user_id: str, task_type: str, is_practice: bool = False, is_ai_active_request: bool = False):
         self.config = config
         self.user_id = user_id
         self.task_type = task_type
@@ -40,7 +40,7 @@ class TaskScenarioManager:
                 self.logger.debug("Practice mode: Loaded progress from memory cache")
         else:
             # 正式模式：尝试从数据库加载，失败则初始化新进度
-            if not self._load_from_db():
+            if not self._load_from_db(is_ai_active_request):
                 self._initialize_new_progress()
                 self._save_to_db()
 
@@ -77,62 +77,138 @@ class TaskScenarioManager:
         }
         self.logger.debug(f"Practice mode progress saved to memory for user '{self.user_id}', task '{self.task_type}'")
 
-    def _load_from_db(self) -> bool:
-        """尝试从数据库加载用户进度"""
+    def _load_from_db(self, is_ai_active_request: bool) -> bool:
+        """尝试从数据库加载用户进度，根据AI模式选择对应的进度"""
         try:
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
+                # 查询扩展后的字段，包括AI和手动模式的分别进度
                 cursor.execute(
-                    "SELECT current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, is_completed FROM user_progress WHERE user_id = ? AND task_type = ?",
+                    """SELECT current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, is_completed,
+                              ai_current_scenario_json, ai_repetition_counter, 
+                              manual_current_scenario_json, manual_repetition_counter 
+                       FROM user_progress WHERE user_id = ? AND task_type = ?""",
                     (self.user_id, self.task_type)
                 )
                 row = cursor.fetchone()
                 if row:
-                    self.logger.info(f"Found existing progress for user '{self.user_id}' and task '{self.task_type}'")
-                    self.current_scenario = json.loads(row[0]) if row[0] else None
-                    self.repetition_counter = row[1] or 0
+                    self.logger.info(f"Found existing progress for user '{self.user_id}' and task '{self.task_type}', AI mode: {is_ai_active_request}")
+                    
+                    # 加载队列（AI和手动队列都需要加载）
                     self.ai_queue = json.loads(row[2]) if row[2] else []
                     self.manual_queue = json.loads(row[3]) if row[3] else []
-                    # is_completed 字段在数据库中的值，暂时不需要特殊处理
+                    
+                    # 根据请求的AI模式选择对应的进度
+                    if is_ai_active_request:
+                        # 加载AI模式的进度
+                        ai_scenario_json = row[5] if len(row) > 5 else None
+                        ai_repetition = row[6] if len(row) > 6 else None
+                        
+                        if ai_scenario_json:
+                            self.current_scenario = json.loads(ai_scenario_json)
+                            self.repetition_counter = ai_repetition or 0
+                            self.logger.info(f"Loaded AI mode progress: scenario exists, repetition {self.repetition_counter}")
+                        else:
+                            # 如果没有AI模式的进度，但有旧的通用进度，且是AI场景，则使用旧进度
+                            old_scenario = json.loads(row[0]) if row[0] else None
+                            if old_scenario and old_scenario.get('is_ai_active', False):
+                                self.current_scenario = old_scenario
+                                self.repetition_counter = row[1] or 0
+                                self.logger.info(f"Using legacy AI progress: repetition {self.repetition_counter}")
+                            else:
+                                # 没有AI进度，重新开始
+                                self.current_scenario = None
+                                self.repetition_counter = 0
+                                self.logger.info("No AI mode progress found, starting fresh")
+                    else:
+                        # 加载手动模式的进度
+                        manual_scenario_json = row[7] if len(row) > 7 else None
+                        manual_repetition = row[8] if len(row) > 8 else None
+                        
+                        if manual_scenario_json:
+                            self.current_scenario = json.loads(manual_scenario_json)
+                            self.repetition_counter = manual_repetition or 0
+                            self.logger.info(f"Loaded manual mode progress: scenario exists, repetition {self.repetition_counter}")
+                        else:
+                            # 如果没有手动模式的进度，但有旧的通用进度，且是手动场景，则使用旧进度
+                            old_scenario = json.loads(row[0]) if row[0] else None
+                            if old_scenario and not old_scenario.get('is_ai_active', True):
+                                self.current_scenario = old_scenario
+                                self.repetition_counter = row[1] or 0
+                                self.logger.info(f"Using legacy manual progress: repetition {self.repetition_counter}")
+                            else:
+                                # 没有手动进度，重新开始
+                                self.current_scenario = None
+                                self.repetition_counter = 0
+                                self.logger.info("No manual mode progress found, starting fresh")
+                    
                     return True
         except Exception as e:
             self.logger.error(f"Error loading progress from DB: {e}", exc_info=True)
         return False
 
     def _save_to_db(self) -> None:
-        """将当前状态的写入操作放入队列，但练习模式除外"""
+        """将当前状态的写入操作放入队列，分别保存AI和手动模式的进度"""
         if self.is_practice:
             self.logger.debug("Practice mode: Skipping DB save")
             return
         
         # 获取当前的 is_completed 状态（从数据库或使用默认值）
         current_is_completed = False  # 默认为未完成
+        ai_scenario_json = None
+        ai_repetition = 0
+        manual_scenario_json = None
+        manual_repetition = 0
+        
         try:
             with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT is_completed FROM user_progress WHERE user_id = ? AND task_type = ?",
+                    """SELECT is_completed, ai_current_scenario_json, ai_repetition_counter,
+                              manual_current_scenario_json, manual_repetition_counter
+                       FROM user_progress WHERE user_id = ? AND task_type = ?""",
                     (self.user_id, self.task_type)
                 )
                 result = cursor.fetchone()
                 if result:
                     current_is_completed = bool(result[0])
+                    ai_scenario_json = result[1]
+                    ai_repetition = result[2] or 0
+                    manual_scenario_json = result[3]
+                    manual_repetition = result[4] or 0
         except Exception as e:
-            self.logger.debug(f"Could not fetch current is_completed status, using default: {e}")
+            self.logger.debug(f"Could not fetch current progress status, using defaults: {e}")
+        
+        # 根据当前场景的AI模式决定更新哪个字段
+        if self.current_scenario and self.current_scenario.get('is_ai_active', False):
+            # 当前是AI模式，更新AI字段
+            ai_scenario_json = json.dumps(self.current_scenario)
+            ai_repetition = self.repetition_counter
+            self.logger.debug(f"Updating AI mode progress: repetition {ai_repetition}")
+        elif self.current_scenario:
+            # 当前是手动模式，更新手动字段
+            manual_scenario_json = json.dumps(self.current_scenario)
+            manual_repetition = self.repetition_counter
+            self.logger.debug(f"Updating manual mode progress: repetition {manual_repetition}")
         
         sql = """
             INSERT OR REPLACE INTO user_progress 
-            (user_id, task_type, current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, is_completed, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            (user_id, task_type, current_scenario_json, repetition_counter, ai_queue_json, manual_queue_json, is_completed, 
+             ai_current_scenario_json, ai_repetition_counter, manual_current_scenario_json, manual_repetition_counter, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """
         params = (
             self.user_id,
             self.task_type,
-            json.dumps(self.current_scenario) if self.current_scenario else None,
-            self.repetition_counter,
+            json.dumps(self.current_scenario) if self.current_scenario else None,  # 保留旧字段兼容性
+            self.repetition_counter,  # 保留旧字段兼容性
             json.dumps(self.ai_queue),
             json.dumps(self.manual_queue),
-            current_is_completed  # 保持现有的完成状态，不自动修改
+            current_is_completed,  # 保持现有的完成状态，不自动修改
+            ai_scenario_json,  # AI模式的当前场景
+            ai_repetition,     # AI模式的重复计数
+            manual_scenario_json,  # 手动模式的当前场景
+            manual_repetition      # 手动模式的重复计数
         )
         db_manager.execute_async(sql, params)
         self.logger.debug(f"Progress save queued for user '{self.user_id}', task '{self.task_type}'")
@@ -320,18 +396,21 @@ class TaskScenarioManager:
     def get_next_task_parameters(self, is_ai_active_request: bool) -> Optional[Dict[str, Any]]:
         """获取下一个场景参数，并自动保存进度"""
         # 首先检查上一个任务的完成状态
+        print('get_next_task_parameters# 0', is_ai_active_request)
         previous_task_completed = self._check_previous_task_completion_status()
         
         new_queue = self.ai_queue if is_ai_active_request else self.manual_queue
         
         # 检查是否切换了模式 (AI vs Manual)
         queue_switched = False
+        print('get_next_task_parameters# 1queue_switched', self.active_queue)
+
         if self.active_queue is not None:  # 避免首次调用时被误判为切换
             current_queue_name = 'ai_queue' if self.active_queue is self.ai_queue else 'manual_queue'
             new_queue_name = 'ai_queue' if new_queue is self.ai_queue else 'manual_queue'
             if current_queue_name != new_queue_name:
                 queue_switched = True
-
+        print('get_next_task_parameters# 2queue_switched', queue_switched)
         if queue_switched:
             # 切换模式时，先标记上一个任务为完成状态
             self.active_queue = new_queue
@@ -340,7 +419,7 @@ class TaskScenarioManager:
             self.logger.info(f"Switched to {'AI' if is_ai_active_request else 'Manual'} queue for task '{self.task_type}'")
 
         self.active_queue = new_queue
-
+        print('get_next_task_parameters# 3active_queue', self.active_queue)
         # 判断是否需要获取新场景
         need_new_scenario = False
         if not self.current_scenario:
@@ -355,14 +434,14 @@ class TaskScenarioManager:
             #     self.logger.warning(f"Previous task not completed, cannot increment repetition counter")
             #     # 可以选择强制标记为完成，或者返回错误状态
             #     # self._update_completion_status(True)  # True = 已完成
-            #     need_new_scenario = True
+                # need_new_scenario = False
         else:
             # 当前场景的重复次数已达上限，需要获取新场景
-            need_new_scenario = True
+            need_new_scenario = previous_task_completed
             # 标记当前场景完成
             self.logger.info(f"Current scenario repetitions completed for task '{self.task_type}'")
             # self._update_completion_status(True)  # True = 已完成
-
+        print('get_next_task_parameters# 4need_new_scenario', need_new_scenario)
         if need_new_scenario:
             # 如果上一个任务未完成，先强制完成它（但要排除第一次获取任务的情况）
             # if not previous_task_completed and self.current_scenario is not None:
@@ -380,7 +459,7 @@ class TaskScenarioManager:
                 self.logger.info(f"Active queue empty for task '{self.task_type}'")
                 self.current_scenario = None
                 self.repetition_counter = 0
-
+        print('get_next_task_parameters# 5current_scenario', self.current_scenario)
         # 如果当前场景为空（因为队列已空），检查是否所有任务都完成了
         if not self.current_scenario:
             # 没有当前场景时，标记任务为已完成
@@ -410,6 +489,16 @@ class TaskScenarioManager:
             repetition_info["scenario_total"] = scenario_info.get("total")
 
         self.current_scenario['repetition_info'] = repetition_info
+        
+        # 确保场景的 is_ai_active 与请求参数一致
+        if self.current_scenario:
+            original_ai_active = self.current_scenario.get('is_ai_active')
+            self.current_scenario['is_ai_active'] = is_ai_active_request
+            if original_ai_active != is_ai_active_request:
+                self.logger.info(f"Synchronized scenario AI mode: {original_ai_active} -> {is_ai_active_request}")
+            # 同时更新 repetition_info 中的 is_ai_active
+            repetition_info["is_ai_active"] = is_ai_active_request
+        
         if self.current_scenario:
             if self.is_practice:
                 self._save_to_memory()

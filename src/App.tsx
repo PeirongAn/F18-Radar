@@ -244,6 +244,7 @@ const App: React.FC = observer(() => {
         timestamp: Date.now(),
         user_id: id,
         is_practice: isPractice,
+        is_ai_active: withAI,
       });
     } else {
       setActiveDisplay('radar');
@@ -304,6 +305,7 @@ const App: React.FC = observer(() => {
           timestamp: Date.now(),
           user_id: userId,
           is_practice: isPractice,
+          is_ai_active: includeAI,
         });
       }
     } else if (display === 'radar') {
@@ -412,10 +414,10 @@ const App: React.FC = observer(() => {
         isOpen={showDifficultyChangeModal} 
         onClose={() => setShowDifficultyChangeModal(false)} 
       />
-      <ScenarioCompletionModal 
+      {/* <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}
         onClose={() => setShowScenarioCompletionModal(false)}
-      />
+      /> */}
       {/* 显示初始表单模态框 */}
       {showInitialForm && (
         <InitialFormModal 

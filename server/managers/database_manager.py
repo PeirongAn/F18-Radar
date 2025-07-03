@@ -272,6 +272,10 @@ class DatabaseManager:
                     ai_queue_json TEXT,
                     manual_queue_json TEXT,
                     is_completed BOOLEAN DEFAULT FALSE,
+                    ai_current_scenario_json TEXT,
+                    ai_repetition_counter INTEGER DEFAULT 0,
+                    manual_current_scenario_json TEXT,
+                    manual_repetition_counter INTEGER DEFAULT 0,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (user_id, task_type)
                 );
@@ -292,6 +296,32 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE user_progress ADD COLUMN is_completed BOOLEAN DEFAULT FALSE")
             conn.commit()
             self.logger.info("is_completed 列添加成功")
+        
+        # 添加AI模式进度字段
+        if 'ai_current_scenario_json' not in columns:
+            self.logger.info("正在添加 ai_current_scenario_json 列...")
+            cursor.execute("ALTER TABLE user_progress ADD COLUMN ai_current_scenario_json TEXT")
+            conn.commit()
+            self.logger.info("ai_current_scenario_json 列添加成功")
+        
+        if 'ai_repetition_counter' not in columns:
+            self.logger.info("正在添加 ai_repetition_counter 列...")
+            cursor.execute("ALTER TABLE user_progress ADD COLUMN ai_repetition_counter INTEGER DEFAULT 0")
+            conn.commit()
+            self.logger.info("ai_repetition_counter 列添加成功")
+        
+        # 添加手动模式进度字段
+        if 'manual_current_scenario_json' not in columns:
+            self.logger.info("正在添加 manual_current_scenario_json 列...")
+            cursor.execute("ALTER TABLE user_progress ADD COLUMN manual_current_scenario_json TEXT")
+            conn.commit()
+            self.logger.info("manual_current_scenario_json 列添加成功")
+        
+        if 'manual_repetition_counter' not in columns:
+            self.logger.info("正在添加 manual_repetition_counter 列...")
+            cursor.execute("ALTER TABLE user_progress ADD COLUMN manual_repetition_counter INTEGER DEFAULT 0")
+            conn.commit()
+            self.logger.info("manual_repetition_counter 列添加成功")
 
 # 全局数据库管理器实例
 db_manager = DatabaseManager() 
