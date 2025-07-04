@@ -13,10 +13,11 @@ import radarStore from './stores/RadarStore';
 import { Toaster, toast } from 'react-hot-toast';
 import CompletionModal from './components/CompletionModal';
 import DifficultyChangeModal from './components/DifficultyChangeModal';
-import ScenarioCompletionModal from './components/ScenarioCompletionModal';
+// import ScenarioCompletionModal from './components/ScenarioCompletionModal';
 import ThreatList from './components/ThreatList';
-import ConnectionStatus from './components/ConnectionStatus';
-import audioManager from './managers/AudioManager';
+// import ConnectionStatus from './components/ConnectionStatus';
+// import audioManager from './managers/AudioManager';
+import { useDifficultyChangeDetection } from './utils/difficultyUtils';
 
 // 日志类型声明，需与CommunicationLog保持一致
 
@@ -36,8 +37,7 @@ const App: React.FC = observer(() => {
   const [includeAI, setIncludeAI] = useState<boolean>(false);
   const [isPractice, setIsPractice] = useState<boolean>(true);
   const [isStarted, setIsStarted] = useState<boolean>(false);
-  const [showDifficultyChangeModal, setShowDifficultyChangeModal] = useState(false);
-  const [showScenarioCompletionModal, setShowScenarioCompletionModal] = useState(false);
+  // const [showScenarioCompletionModal, setShowScenarioCompletionModal] = useState(false);
   
   // 添加雷达参数状态
   const [radarRange, setRadarRange] = useState<number>(20); // 默认20海里
@@ -46,7 +46,6 @@ const App: React.FC = observer(() => {
   // 使用MobX Store
   const { radarStore } = useStore();
   
-  const previousDifficultyRef = React.useRef<string | undefined>();
   const previousScenarioIndexRef = React.useRef<number | undefined>();
   
   // 使用useRadarData hook获取任务状态
@@ -365,39 +364,27 @@ const App: React.FC = observer(() => {
     };
   }, [activeDisplay, repetitionInfos]);
 
-  // 监听难度变化并发送通知
-  useEffect(() => {
-    const currentDifficulty = infoToShow?.difficulty;
-
-    // 仅当难度从一个已定义的值变为另一个已定义的值时，才显示通知
-    if (
-      previousDifficultyRef.current &&
-      currentDifficulty &&
-      currentDifficulty !== previousDifficultyRef.current &&
-      !infoToShow.is_ai_active
-    ) {
-      setShowDifficultyChangeModal(true);
-    }
-
-    // 更新上一个难度的引用
-    previousDifficultyRef.current = currentDifficulty;
-  }, [infoToShow?.difficulty]);
+  // 使用难度变化检测hook
+  const { showDifficultyChangeModal, closeDifficultyChangeModal } = useDifficultyChangeDetection(
+    infoToShow?.difficulty,
+    !!infoToShow?.is_ai_active
+  );
 
   // 监听场景索引变化（仅AI模式）
-  useEffect(() => {
-    const currentScenarioIndex = infoToShow?.scenario_index;
+  // useEffect(() => {
+  //   const currentScenarioIndex = infoToShow?.scenario_index;
 
-    if (
-      agentStore.isAIActive &&
-      previousScenarioIndexRef.current &&
-      currentScenarioIndex &&
-      currentScenarioIndex !== previousScenarioIndexRef.current
-    ) {
-      setShowScenarioCompletionModal(true);
-    }
+  //   if (
+  //     agentStore.isAIActive &&
+  //     previousScenarioIndexRef.current &&
+  //     currentScenarioIndex &&
+  //     currentScenarioIndex !== previousScenarioIndexRef.current
+  //   ) {
+  //     setShowScenarioCompletionModal(true);
+  //   }
     
-    previousScenarioIndexRef.current = currentScenarioIndex;
-  }, [infoToShow?.scenario_index, agentStore.isAIActive]);
+  //   previousScenarioIndexRef.current = currentScenarioIndex;
+  // }, [infoToShow?.scenario_index, agentStore.isAIActive]);
 
   const allTasksCompleted = useMemo(() => {
     const radarCompleted = repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED';
@@ -429,7 +416,7 @@ const App: React.FC = observer(() => {
       <CompletionModal />
       <DifficultyChangeModal 
         isOpen={showDifficultyChangeModal} 
-        onClose={() => setShowDifficultyChangeModal(false)} 
+        onClose={closeDifficultyChangeModal} 
       />
       {/* <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}

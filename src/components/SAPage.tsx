@@ -54,21 +54,26 @@ interface MissileData {
 interface ButtonProps {
   label: string;
   onClick?: () => void;
+  disabled?: boolean;
 }
 
-const Button: React.FC<ButtonProps> = ({ label, onClick }) => {
-  // 为"查看结果"按钮使用更宽的样式
-  const isResultButton = label === '查看结果';
-  
-  return (
-    <button
-      className={`${isResultButton ? 'w-20 h-10' : 'w-12 h-10'} bg-gray-900 text-green-400 border-2 border-white rounded font-mono hover:bg-gray-800 focus:outline-none text-xs`}
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  );
-};
+  const Button: React.FC<ButtonProps> = ({ label, onClick, disabled }) => {
+    // 为"查看结果"按钮使用更宽的样式
+    const isResultButton = label === '查看结果';
+    return (
+      <button
+        disabled={disabled}
+        className={`${isResultButton ? 'w-20 h-10' : 'w-12 h-10'} ${
+          disabled 
+            ? 'bg-gray-700 text-gray-500 border-2 border-gray-600 cursor-not-allowed' 
+            : 'bg-gray-900 text-green-400 border-2 border-white hover:bg-gray-800'
+        } rounded font-mono focus:outline-none text-xs transition-colors duration-200`}
+        onClick={disabled ? undefined : onClick}
+      >
+        {label}
+      </button>
+    );
+  };
 
 const ICON_SIZE = 48;
 const ICON_MAP = {
@@ -407,8 +412,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         
         setThreatList(prev => {
           const newList = [...prev.filter(t => t.id !== highestPriorityThreat.id)];
-          // 将正确答案添加到列表中（但不放在第一位）
-          newList.push({
+          // 将正确答案添加到列表第一位
+          newList.unshift({
             id: highestPriorityThreat.id,
             type: highestPriorityThreat.type,
             label: highestPriorityThreat.label,
@@ -455,39 +460,39 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 添加状态控制是否显示威胁列表的详细信息（得分和距离）
   const [showDetailedInfo, setShowDetailedInfo] = useState(false);
 
-  // 添加接管按钮处理函数
-  const handleTakeControl = useCallback(() => {
-    console.log('[SA页面] 用户手动接管控制');
-    // 禁用AI控制
-    // agentStore.setAIActive(false);
+  // // 添加接管按钮处理函数
+  // const handleTakeControl = useCallback(() => {
+  //   console.log('[SA页面] 用户手动接管控制');
+  //   // 禁用AI控制
+  //   // agentStore.setAIActive(false);
     
-    // 发送接管消息到服务器
-    if (sendMessage) {
-      sendMessage({
-        type: 'user_take_control',
-        timestamp: Date.now(),
-        user_id: userId || 'current_user',
-        page: 'SA' // 标记是SA页面的接管
-      });
-    }
+  //   // 发送接管消息到服务器
+  //   if (sendMessage) {
+  //     sendMessage({
+  //       type: 'user_take_control',
+  //       timestamp: Date.now(),
+  //       user_id: userId || 'current_user',
+  //       page: 'SA' // 标记是SA页面的接管
+  //     });
+  //   }
     
-    console.log('✅ [SA页面] 用户已接管威胁排序控制');
-  }, [sendMessage, userId]);
+  //   console.log('✅ [SA页面] 用户已接管威胁排序控制');
+  // }, [sendMessage, userId]);
 
-  // 添加F10快捷键监听
-  useEffect(() => {
-    const handleKeyPress = (event: KeyboardEvent) => {
-      if (event.key === 'F10') {
-        event.preventDefault();
-        handleTakeControl();
-      }
-    };
+  // // 添加F10快捷键监听
+  // useEffect(() => {
+  //   const handleKeyPress = (event: KeyboardEvent) => {
+  //     if (event.key === 'F10') {
+  //       event.preventDefault();
+  //       handleTakeControl();
+  //     }
+  //   };
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => {
-      window.removeEventListener('keydown', handleKeyPress);
-    };
-  }, [handleTakeControl]);
+  //   window.addEventListener('keydown', handleKeyPress);
+  //   return () => {
+  //     window.removeEventListener('keydown', handleKeyPress);
+  //   };
+  // }, [handleTakeControl]);
 
   // 处理重置SA
   const handleResetSA = useCallback(() => {
@@ -910,11 +915,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 将对"选中"和"最高优先级"目标的引用移动到这里
   const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
-  const selectedThreatId = useMemo(() => threatList[0]?.id, [threatList]);
+  const selectedThreatId = useMemo(() => userSelection?.threat?.id, [userSelection]);
 
-  useEffect(()=> {
-    console.log('[AI Agent]xxxxxxx', threatList)
-  }, [threatList])
 
   // 点击icon将其加入威胁列表首位但保持原优先级
   const handleThreatIconClick = useCallback((threat: any, eventOwner: string) => {
@@ -1213,6 +1215,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       let distance = 0;
       let score = 0;
       
+      // 统一威胁类型权重计算（与threatsWithScore保持一致）
+      const getTypeWeight = (type: string): number => {
+        if (type.toLowerCase().includes('missile')) return 245; // 导弹权重最高
+        if (type.startsWith('Primary')) return 240;           // Primary类型次之
+        if (type.startsWith('Secondary')) return 200;         // Secondary类型权重较低
+        return 80; // 其他未知类型
+      };
+      
       // 检查是否是导弹
       const isMissile = threat.type === 'MissileUp' || threat.type === 'MissileDown';
       
@@ -1223,8 +1233,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           const missileCenterX = missile.x;
           const missileCenterY = missile.y;
           distance = Math.sqrt(Math.pow(missileCenterX - config.centerX, 2) + Math.pow(missileCenterY - effectiveCenterY, 2));
-          const weight = 210; // 导弹权重
-          score = weight / (distance + 1e-6);
+          const weight = getTypeWeight('missile');
+          score = weight / Math.max(distance, 1); // 统一分数计算方式
         }
       } else {
         // 常规威胁距离计算
@@ -1234,8 +1244,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           const threatCenterX = pos.x + ICON_SIZE / 2;
           const threatCenterY = pos.y + ICON_SIZE / 2;
           distance = Math.sqrt(Math.pow(threatCenterX - config.centerX, 2) + Math.pow(threatCenterY - effectiveCenterY, 2));
-          const weight = threat.type?.startsWith('Primary') ? 210 : 200;
-          score = weight / (distance + 1e-6);
+          const weight = getTypeWeight(threat.type);
+          score = weight / Math.max(distance, 1); // 统一分数计算方式
         }
       }
       
@@ -1283,7 +1293,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           style={{ width: topContainerWidth, padding: '0 20px' }}
         >
           {topButtons.map(label => (
-            <Button key={label} label={label} onClick={() => handleButtonClick(label)} />
+            <Button key={label} label={label} onClick={() => handleButtonClick(label)} disabled={label === '查看结果' && agentStore.isAIActive && userSelection?.threat === undefined}/>
           ))}
         </div>
         
@@ -1441,7 +1451,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   
                   const isSelected = threat.id === selectedThreatId;
                   const isHighestPriority = threat.id === highestPriorityThreat?.id;
-
+                  // console.log('isHighestPriority', selectedThreatId, isSelected, showTaskComplete && isHighestPriority);
                   return (
                     <Group key={threat.id} onClick={() => handleThreatIconClick(threat, 'manual')}>
                        {/* 只有在做出选择后才渲染虚线框 */}

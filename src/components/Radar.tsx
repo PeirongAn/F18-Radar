@@ -113,7 +113,7 @@ const Radar: React.FC<RadarProps> = (({
     gridColor: '#ffffff',  // 白色线条
     textColor: '#00ff00',  // 绿色文本
     recColor: 'yellow',  // 黄色矩形
-    padding: 40,
+    padding: 4,
     mainBoxWidth: 480,
     mainBoxHeight: 480,
     buttonSize: 30,
@@ -369,14 +369,6 @@ const Radar: React.FC<RadarProps> = (({
     }
   }, [isStarted, initSettings, submitSettings, rangeIndex, scanMode, agentStore.isAIActive]);
 
-  useEffect(() => {
-    if (antennaAdjustmentRequired) {
-      toast('请调整天线高度!', {
-        icon: '↕️',
-        duration: 4000,
-      });
-    }
-  }, [antennaAdjustmentRequired]);
 
   useEffect(() => {
     // This effect detects when the manual or AI adjustment is complete.

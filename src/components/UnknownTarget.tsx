@@ -33,16 +33,16 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
   // 从props解构需要的属性
   const { id, direction, type, speed, selected, position } = data;
   
-  // 根据scanAngle计算缩放比例
-  const getScale = () => {
-    switch (scanAngle) {
-      case 15: return 1.2;
-      case 30: return 1.0;
-      case 60: return 0.8;
-      default: return 1.0;
-    }
-  };
-  const scale = getScale();
+  // // 根据scanAngle计算缩放比例
+  // const getScale = () => {
+  //   switch (scanAngle) {
+  //     case 15: return 1.2;
+  //     case 30: return 1.0;
+  //     case 60: return 0.8;
+  //     default: return 1.0;
+  //   }
+  // };
+  // const scale = getScale();
   
   // 简化状态，只用一个状态跟踪偏移量，而不是完整的位置
   // 这样即使原始position发生变化，也不会影响偏移量的累加
@@ -177,8 +177,8 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
       x={displayPosition.x} 
       y={displayPosition.y}
       rotation={rotationDegrees - 90}
-      scaleX={scale}
-      scaleY={scale}
+      scaleX={1}
+      scaleY={1}
       onClick={handleTargetClick}
       onTap={handleTargetClick}
     >

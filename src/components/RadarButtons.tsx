@@ -52,6 +52,14 @@ const RadarButtons: React.FC<RadarButtonsProps> = ({ position, framePositions, r
     console.log(`${position} button ${buttonIndex} clicked`);
   };
 
+  // 处理键盘事件，阻止Enter键触发按钮点击
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // e.stopPropagation();
+    }
+  };
+
   return (
     <div style={containerStyle}>
       {[1, 2, 3, 4, 5].map((i) => (
@@ -59,6 +67,7 @@ const RadarButtons: React.FC<RadarButtonsProps> = ({ position, framePositions, r
           key={`${position}-${i}`}
           style={buttonStyle}
           onClick={() => handleClick(i)}
+          onKeyDown={handleKeyDown}
         />
       ))}
     </div>

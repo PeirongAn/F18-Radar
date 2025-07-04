@@ -324,45 +324,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         onTargetSelect({ targetId: undefined });
       }
     }
-    // Space key for auto-lock (existing logic)
-    if (e.key === ' ' && processedExternalTargets && onTargetSelect) { // Space bar
-      console.log('RadarDisplay - Spacebar pressed. TDC position:', tdcPosition);
-      let closestTarget: RadarTarget | undefined;
-      let minDistance = 30; // 30px search radius
 
-      // ✅ 修复：空格键锁定也使用实际显示位置
-      processedExternalTargets.forEach(target => {
-        // 获取目标的实际显示位置（包含动画偏移）
-        const actualPosition = radarStore.targetDisplayPositions.get(target.id);
-        const targetPos = actualPosition || target.position; // 如果没有实际位置，使用原始位置作为备选
-        
-        const distance = Math.sqrt(
-          Math.pow(targetPos.x - tdcPosition.x, 2) +
-          Math.pow(targetPos.y - tdcPosition.y, 2)
-        );
-        if (distance < minDistance) {
-          minDistance = distance;
-          closestTarget = target;
-        }
-        console.log(`[空格锁定] 目标 ${target.id}: 实际位置(${targetPos.x.toFixed(1)}, ${targetPos.y.toFixed(1)}) 距离TDC: ${distance.toFixed(1)}px`);
-      });
-
-      if (closestTarget) {
-        // 使用实际显示位置作为锁定线位置
-        const actualPosition = radarStore.targetDisplayPositions.get(closestTarget.id);
-        const lockX = actualPosition ? actualPosition.x : closestTarget.position.x;
-        
-        console.log('RadarDisplay - Spacebar: Found closest target:', closestTarget.id, 'at actual X:', lockX);
-        onTargetSelect({
-          targetId: closestTarget.id,
-          lockX: lockX,
-          iffMode: iffMode,
-          externalTargetsTimestamp: radarData?.externalTargetsTimestamp
-        });
-      } else {
-        console.log('RadarDisplay - Spacebar: No target found near TDC for auto-lock.');
-      }
-    }
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions]);
   
   // 处理IFF按钮点击，现在用于弹出确认框
