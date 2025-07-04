@@ -347,10 +347,17 @@ class TaskScenarioManager:
                         "difficulty_config": diff_conf
                     })
         
-        # 为每个AI场景添加类型编号
+        # 为每个AI场景添加类型编号和难度变化预测
         total_ai_scenarios = len(ai_scenarios)
         for i, scenario in enumerate(ai_scenarios):
             scenario['scenario_info'] = {'index': i + 1, 'total': total_ai_scenarios}
+            # 预测下一个任务是否会改变难度（只看difficulty_name）
+            if i < total_ai_scenarios - 1:
+                next_scenario = ai_scenarios[i + 1]
+                scenario['will_difficulty_change'] = scenario['difficulty_name'] != next_scenario['difficulty_name']
+            else:
+                # 最后一个AI任务，如果有手动任务，看第一个手动任务的难度是否不同
+                scenario['will_difficulty_change'] = False  # 默认不变
         self.ai_queue = ai_scenarios
 
         # 手动模式
@@ -366,10 +373,17 @@ class TaskScenarioManager:
                     "difficulty_config": diff_conf
                 })
     
-        # 为每个手动场景添加类型编号
+        # 为每个手动场景添加类型编号和难度变化预测
         total_manual_scenarios = len(manual_scenarios)
         for i, scenario in enumerate(manual_scenarios):
             scenario['scenario_info'] = {'index': i + 1, 'total': total_manual_scenarios}
+            # 预测下一个任务是否会改变难度（只看difficulty_name）
+            if i < total_manual_scenarios - 1:
+                next_scenario = manual_scenarios[i + 1]
+                scenario['will_difficulty_change'] = scenario['difficulty_name'] != next_scenario['difficulty_name']
+            else:
+                # 最后一个手动任务，标记为不会改变难度
+                scenario['will_difficulty_change'] = False
         self.manual_queue = manual_scenarios
         
         self.current_scenario = None
@@ -518,7 +532,8 @@ class TaskScenarioManager:
             "difficulty": self.current_scenario.get('difficulty_name'),
             "is_ai_active": self.current_scenario.get('is_ai_active'),
             "audio_enabled": self.current_scenario.get('audio_enabled'),
-            "previous_task_completed": previous_task_completed  # 添加状态信息供调试
+            "previous_task_completed": previous_task_completed,  # 添加状态信息供调试
+            "will_difficulty_change": self.current_scenario.get('will_difficulty_change', False)  # 从场景中获取预计算的难度变化标记
         }
         
         # 将类型编号添加到repetition_info中

@@ -365,10 +365,10 @@ const App: React.FC = observer(() => {
   }, [activeDisplay, repetitionInfos]);
 
   // 使用难度变化检测hook
-  const { showDifficultyChangeModal, closeDifficultyChangeModal } = useDifficultyChangeDetection(
-    infoToShow?.difficulty,
-    !!infoToShow?.is_ai_active
-  );
+  // const { showDifficultyChangeModal, closeDifficultyChangeModal } = useDifficultyChangeDetection(
+  //   infoToShow?.difficulty,
+  //   !!infoToShow?.is_ai_active
+  // );
 
   // 监听场景索引变化（仅AI模式）
   // useEffect(() => {
@@ -414,10 +414,10 @@ const App: React.FC = observer(() => {
         }}
       />
       <CompletionModal />
-      <DifficultyChangeModal 
+      {/* <DifficultyChangeModal 
         isOpen={showDifficultyChangeModal} 
         onClose={closeDifficultyChangeModal} 
-      />
+      /> */}
       {/* <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}
         onClose={() => setShowScenarioCompletionModal(false)}

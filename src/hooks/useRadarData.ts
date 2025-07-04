@@ -337,6 +337,10 @@ export interface RepetitionInfo {
   scenario_total?: number;
   is_practice?: boolean;
   audio_enabled?: boolean;
+  difficulty?: string;
+  is_ai_active?: boolean;
+  previous_task_completed?: boolean;
+  will_difficulty_change?: boolean;
 }
 
 export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';

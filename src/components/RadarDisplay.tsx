@@ -14,6 +14,8 @@ import useRadarData from '../hooks/useRadarData';
 import agentStore from '../stores/AgentStore';
 import ScenarioCompletionModal from './ScenarioCompletionModal';
 import audioManager from '../managers/AudioManager';
+import { useDifficultyChangeDetection } from '../utils/difficultyUtils';
+import DifficultyChangeModal from './DifficultyChangeModal';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -109,7 +111,18 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 获取重复信息
   const { repetitionInfos } = useRadarData();
-  
+
+  // 计算当前难度和AI状态
+  const currentDifficulty = useMemo(() => {
+    const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
+    return radarRepetitionInfo && typeof radarRepetitionInfo !== 'string' ? (radarRepetitionInfo as any).difficulty : undefined;
+  }, [repetitionInfos]);
+
+  const isAIActive = useMemo(() => {
+    const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
+    return radarRepetitionInfo && typeof radarRepetitionInfo !== 'string' ? !!(radarRepetitionInfo as any).is_ai_active : false;
+  }, [repetitionInfos]);
+
   // 添加任务确认弹窗状态
   const [showMissionConfirm, setShowMissionConfirm] = React.useState(false);
   const [missionResultMessage, setMissionResultMessage] = React.useState(''); // State to hold the result message
@@ -122,7 +135,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
   const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
-  
+  const [showDifficultyChangeModal, setShowDifficultyChangeModal] = React.useState(false);
   // 将重置函数暴露给父组件
   React.useEffect(() => {
     if (resetIFF) {
@@ -356,12 +369,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
       if (radarRepetitionInfo && typeof radarRepetitionInfo !== 'string') {
         // onAddMessage('info', `重复进度: ${formatRepetitionText(radarRepetitionInfo)}`);
-        if (isLastRepetition(radarRepetitionInfo) && agentStore.isAIActive) {
+        
+        // 判断是否需要显示难度变化弹窗
+        const shouldShowDifficultyChangeModal = (radarRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive;
+        
+        if (shouldShowDifficultyChangeModal) {
+          setShowDifficultyChangeModal(true);
+        } else if (isLastRepetition(radarRepetitionInfo) && agentStore.isAIActive) {
           setShowScenarioCompletionModal(true);
           // onAddMessage('info', '⚠️ 这是人机模式下当前场景的最后一次任务，请联系主试');
-        }else {
+        } else {
           setShowMissionConfirm(true);
-
         }
       }
       
@@ -519,6 +537,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   return (
     <div style={{ position: 'relative', width, height }}>
+      
       <Stage width={width} height={height}>
         <Layer>
           {/* 雷达主框架和文本 */}
@@ -652,6 +671,10 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
        <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}
         onClose={() => {setShowScenarioCompletionModal(false); setShowMissionConfirm(true);}}
+      />
+      <DifficultyChangeModal 
+        isOpen={showDifficultyChangeModal} 
+        onClose={() => {setShowDifficultyChangeModal(false); setShowMissionConfirm(true);}} 
       />
 
       {/* Non-Konva components are here, positioned over the canvas */}

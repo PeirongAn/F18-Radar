@@ -15,8 +15,10 @@ import agentStore from '../stores/AgentStore';
 import { observer } from 'mobx-react-lite';
 import radarStore from '../stores/RadarStore';
 import audioManager from '../managers/AudioManager';
-import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 import ScenarioCompletionModal from './ScenarioCompletionModal';
+import { useDifficultyChangeDetection } from '../utils/difficultyUtils';
+import DifficultyChangeModal from './DifficultyChangeModal';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -97,7 +99,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
   const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
-
+  const [showDifficultyChangeModal, setShowDifficultyChangeModal] = React.useState(false);
   const [userId, setUserId] = useState(originalUserId);
 
   useEffect(() => {
@@ -120,6 +122,19 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   }, []);
 
   const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos } = useRadarData();
+
+  // 计算当前难度和AI状态
+  const currentDifficulty = useMemo(() => {
+    const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
+    return saRepetitionInfo && typeof saRepetitionInfo !== 'string' ? (saRepetitionInfo as any).difficulty : undefined;
+  }, [repetitionInfos]);
+
+  const isAIActive = useMemo(() => {
+    const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
+    return saRepetitionInfo && typeof saRepetitionInfo !== 'string' ? !!(saRepetitionInfo as any).is_ai_active : false;
+  }, [repetitionInfos]);
+
+
 
   // 使用 useEffect 监听来自 useRadarData 的 audioEnabled 状态
   useEffect(() => {
@@ -365,12 +380,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       if (onShowDetailedInfoChange) {
         onShowDetailedInfoChange(true);
       }
-
       // 添加重复次数信息到日志
       const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
       if (saRepetitionInfo && typeof saRepetitionInfo !== 'string') {
-    
-        if (isLastRepetition(saRepetitionInfo) && agentStore.isAIActive) {
+        // 判断是否需要显示难度变化弹窗
+        const shouldShowDifficultyChangeModal = (saRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive;
+        
+        if (shouldShowDifficultyChangeModal) {
+          setShowDifficultyChangeModal(true);
+        } else if (isLastRepetition(saRepetitionInfo) && agentStore.isAIActive) {
           setShowScenarioCompletionModal(true);
         } else {
           setShowTaskComplete(true);
@@ -1286,6 +1304,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   return (
     <div className="w-full h-full p-4 bg-black text-green-400 font-mono flex flex-col items-center relative">
+     
+
       <div className="flex flex-col items-center">
         {/* 顶部按钮 - 使用justify-between均匀分布 */}
         <div 
@@ -1569,6 +1589,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}
         onClose={() => {setShowScenarioCompletionModal(false); setShowTaskComplete(true);}}
+      />
+      <DifficultyChangeModal 
+        isOpen={showDifficultyChangeModal} 
+        onClose={() => {setShowDifficultyChangeModal(false); setShowTaskComplete(true);}} 
       />
     </div>
   );
