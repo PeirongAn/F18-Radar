@@ -87,8 +87,8 @@ const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) =>
   };
 
   return (
-    <div className="flex flex-col h-[200px] bg-gray-900 rounded-lg overflow-hidden">
-      <div className="bg-gray-800 p-4 border-b border-gray-700">
+    <div>
+      <div >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${agentStore.isAIActive ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -102,14 +102,14 @@ const AIAssistant: React.FC<AIAssistantProps> = observer(({ selectedTarget }) =>
         </div>
       </div>
       
-      <div className="flex-1 overflow-y-auto p-4 font-mono bg-black bg-opacity-50">
+      {/* <div className="flex-1 overflow-y-auto p-4 font-mono bg-black bg-opacity-50">
         {logs.map(log => (
           <div key={log.id} className="mb-2">
             <span className="text-gray-500">[{log.timestamp.toLocaleTimeString()}]</span>{' '}
             <span className={getLogTypeClass(log.type)}>{log.message}</span>
           </div>
         ))}
-      </div>
+      </div> */}
       
       {/* <div className="p-4 bg-gray-800 border-t border-gray-700">
         <div className="flex justify-between items-center">

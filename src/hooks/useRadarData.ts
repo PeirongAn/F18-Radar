@@ -139,11 +139,21 @@ class GlobalWebSocketManager {
       console.log('【全局WS】收到消息:', event.data);
       const rawData = JSON.parse(event.data);
       
+      // 添加调试日志 - 检查消息类型
+      console.log('【调试】消息类型:', rawData.type);
+      if (rawData.type === 'externalTargets') {
+        console.log('【调试】收到 externalTargets 消息:', rawData);
+      }
+      
       // 生成消息的唯一标识
       let messageId = rawData.type;
       if (rawData.type === 'SAThreats' && rawData.saThreats) {
         messageId += '_' + JSON.stringify(rawData.saThreats.map((t:any) => t.id).sort());
       } else if (rawData.type === 'externalTargets' && rawData.externalTargets) {
+        console.log('externalTargets agentStore.isAIActive', agentStore.isAIActive);
+        if (agentStore.isAIActive) {
+          audioManager.play('radarAISelect');
+        }
         messageId += '_' + JSON.stringify(rawData.externalTargets.map((t:any) => t.id).sort());
       } else if (rawData.targetElevation !== undefined) {
         messageId += '_' + rawData.targetElevation;
@@ -502,7 +512,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     // Handle other message types
     if (message.type === 'init_settings') {
       // Play sound only if it's a new task and the correct type
-      if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING') {
+      if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING' && message.audio_enabled && !message.is_ai_active) {
         audioManager.play('radarRange');
       }
 
@@ -538,7 +548,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
     } else if (message.type === 'adjust_antenna') {
       // Only play sound if an adjustment is not already pending
-      if (!antennaAdjustmentRequired) {
+      if (!antennaAdjustmentRequired && !agentStore.isAIActive) {
         audioManager.play('radarHeight'); // 播放提示音
       }
       if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
@@ -636,7 +646,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   }, [wsUrl, handleHookMessage]);
   
   const sendResetSA = useCallback(() => {
-    sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice });
+    sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice, is_ai_active: agentStore.isAIActive });
   }, [sendMessage]);
 
   

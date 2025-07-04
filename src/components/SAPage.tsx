@@ -14,7 +14,9 @@ import { useAIAgent } from '../hooks/useAIAgent';
 import agentStore from '../stores/AgentStore';
 import { observer } from 'mobx-react-lite';
 import radarStore from '../stores/RadarStore';
-import audioManager from '../managers/AudioManager';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+import audioManager from '../managers/AudioManager';
+import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+import ScenarioCompletionModal from './ScenarioCompletionModal';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -25,6 +27,8 @@ interface SAPageProps {
   userId?: string;
   onResetSA?: () => void;
   onResetTargets?: () => void;
+  onThreatListUpdate?: (threatData: any[]) => void; // 新增：威胁数据回调
+  onShowDetailedInfoChange?: (showDetailed: boolean) => void; // 新增：详细信息显示状态回调
 }
 
 // 添加威胁数据接口
@@ -84,10 +88,10 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
-
+  const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
 
   const [userId, setUserId] = useState(originalUserId);
 
@@ -110,7 +114,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     agentStore.toggleAudioEnabled();
   }, []);
 
-  const { connected, radarData, error, sendMessage, sendResetSA } = useRadarData();
+  const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos } = useRadarData();
 
   // 使用 useEffect 监听来自 useRadarData 的 audioEnabled 状态
   useEffect(() => {
@@ -340,70 +344,83 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
-    if (label === '查看结果' && userSelection) {
-      const { threat, isCorrect } = userSelection;
+    if (label === '查看结果') {
       
-      // 获取正确的威胁标签
-      const getThreatLabel = (threat: any): string => {
-        if (threat.type === 'MissileUp') return '上升导弹';
-        if (threat.type === 'MissileDown') return '下降导弹';
-        return threat.label || '未知威胁';
-      };
-
+      
+      // // 获取正确的威胁标签
+      // const getThreatLabel = (threat: any): string => {
+      //   if (threat.type === 'MissileUp') return '上升导弹';
+      //   if (threat.type === 'MissileDown') return '下降导弹';
+      //   return threat.label || '未知威胁';
+      // };
       // 启用威胁列表详细信息显示
       setShowDetailedInfo(true);
-
-      // // 生成威胁排序日志（简化版本，详细信息在威胁列表中查看）
-      // if (onAddMessage && threatsWithScore.length > 0) {
-      //   onAddMessage('sa_threat', '=== 威胁排序完成，详细信息请查看威胁列表 ===');
-        
-      //   threatsWithScore.forEach((threatInfo, index) => {
-      //     const threatLabel = getThreatLabel(threatInfo.threat);
-      //     const scoreText = `排名${index + 1}: ${threatLabel} - 得分: ${threatInfo.score.toFixed(2)}${threatInfo.isMissile ? ' (导弹)' : ''}`;
-      //     onAddMessage('sa_threat', scoreText);
-      //   });
-        
-      //   onAddMessage('sa_threat', '========================');
-      // }
-
-      if (isCorrect) {
-        setCompletedThreat(`✅ 正确！${getThreatLabel(threat)}`);
-      } else {
-        const highestPriorityThreat = getCurrentHighestPriorityThreat();
-        const correctThreatLabel = highestPriorityThreat ? highestPriorityThreat.label : '未知威胁';
-        setCompletedThreat(`❌ 错误！正确答案是：${correctThreatLabel}`);
+      
+      // 通知父组件详细信息状态变化
+      if (onShowDetailedInfoChange) {
+        onShowDetailedInfoChange(true);
       }
-      
-      setShowTaskComplete(true);
-      
-      // 如果选择错误，需要确保最高优先级威胁也显示红色边框
-      if (!isCorrect) {
-        // 将正确答案也添加到威胁列表中，确保显示红色边框
-        const highestPriorityThreat = getCurrentHighestPriorityThreat();
-        if (highestPriorityThreat) {
-          const getOriginalPriority = (threat: any): 'high' | 'medium' | 'low' => {
-            if (threat.type?.toLowerCase().includes('missile')) return 'high';
-            if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) return 'high';
-            return 'medium';
-          };
-          
-          setThreatList(prev => {
-            const newList = [...prev.filter(t => t.id !== highestPriorityThreat.id)];
-            // 将正确答案添加到列表中（但不放在第一位）
-            newList.push({
-              id: highestPriorityThreat.id,
-              type: highestPriorityThreat.type,
-              label: highestPriorityThreat.label,
-              source: highestPriorityThreat.label,
-              distance: 0,
-              heading: 0,
-              priority: getOriginalPriority(highestPriorityThreat),
-            });
-            return newList;
-          });
+
+      // 添加重复次数信息到日志
+      const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
+      if (saRepetitionInfo && typeof saRepetitionInfo !== 'string') {
+    
+        if (isLastRepetition(saRepetitionInfo) && agentStore.isAIActive) {
+          setShowScenarioCompletionModal(true);
+        } else {
+          setShowTaskComplete(true);
         }
       }
+
+      // // 生成威胁排序日志（简化版本，详细信息在威胁列表中查看）
+      if (onAddMessage) {
+        // onAddMessage('sa_threat', '=== 威胁排序完成，详细信息请查看威胁列表 ===');
+        
+        // threatsWithScore.forEach((threatInfo, index) => {
+        //   const threatLabel = getThreatLabel(threatInfo.threat);
+        //   const scoreText = `排名${index + 1}: ${threatLabel} - 得分: ${threatInfo.score.toFixed(2)}${threatInfo.isMissile ? ' (导弹)' : ''}`;
+        //   onAddMessage('sa_threat', scoreText);
+        // });
+        onAddMessage('sa_threat',  userSelection?.threat?.label);
+        
+        onAddMessage('sa_threat',  userSelection?.isCorrect === false ? '错误' : userSelection?.isCorrect === true ? '正确' : '未选择');
+      }
+
+      if (userSelection) {
+        const { isCorrect } = userSelection;
+        setResult(isCorrect);
+      } else {
+        setResult(undefined);
+      }
       
+   
+      
+    
+      // 将正确答案也添加到威胁列表中，确保显示红色边框
+      const highestPriorityThreat = getCurrentHighestPriorityThreat();
+      if (highestPriorityThreat) {
+        const getOriginalPriority = (threat: any): 'high' | 'medium' | 'low' => {
+          if (threat.type?.toLowerCase().includes('missile')) return 'high';
+          if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) return 'high';
+          return 'medium';
+        };
+        
+        setThreatList(prev => {
+          const newList = [...prev.filter(t => t.id !== highestPriorityThreat.id)];
+          // 将正确答案添加到列表中（但不放在第一位）
+          newList.push({
+            id: highestPriorityThreat.id,
+            type: highestPriorityThreat.type,
+            label: highestPriorityThreat.label,
+            source: highestPriorityThreat.label,
+            distance: 0,
+            heading: 0,
+            priority: getOriginalPriority(highestPriorityThreat),
+          });
+          return newList;
+        });
+      }
+   
       // 清除用户选择状态
       setUserSelection(null);
     }
@@ -430,7 +447,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 添加任务结束弹窗状态
   const [showTaskComplete, setShowTaskComplete] = useState(false);
-  const [completedThreat, setCompletedThreat] = useState<string>('');
+  const [isCorrect, setResult] = useState<boolean |undefined>();
   
   // 添加用户选择状态（但不立即显示结果）
   const [userSelection, setUserSelection] = useState<{threat: any, isCorrect: boolean} | null>(null);
@@ -489,10 +506,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setThreatList([]);
     setSaThreats([]);
     setShowTaskComplete(false); // 关闭任务完成弹窗
-    setCompletedThreat(''); // 清空已完成威胁
+    setResult(undefined); // 清空已完成威胁
     setUserSelection(null); // 清空用户选择
     setDynamicRotation(0); // 重置仪表盘旋转
     setShowDetailedInfo(false); // 重置详细信息显示状态
+    
+    // 通知父组件详细信息状态变化
+    if (onShowDetailedInfoChange) {
+      onShowDetailedInfoChange(false);
+    }
     
     // 重置控制标志
     if (onResetSA) {
@@ -505,7 +527,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
     
     console.log('✅ SA系统重置完成');
-  }, [sendResetSA, onAddMessage, onClearMessages, onResetSA]);
+  }, [sendResetSA, onAddMessage, onClearMessages, onResetSA, onShowDetailedInfoChange]);
 
   // 主动同步saThreats
   useEffect(() => {
@@ -540,14 +562,19 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         
         // 重置其他状态
         setMissiles([]);
-        setShowTaskComplete(false);
-        setCompletedThreat('');
-        setUserSelection(null);
-        setDynamicRotation(0);
-        setShowDetailedInfo(false);
+        setShowTaskComplete(false); // 关闭任务完成弹窗
+        setResult(undefined); // 清空已完成威胁
+        setUserSelection(null); // 清空用户选择
+        setDynamicRotation(0); // 重置仪表盘旋转
+        setShowDetailedInfo(false); // 重置详细信息显示状态
+        
+        // 通知父组件详细信息状态变化
+        if (onShowDetailedInfoChange) {
+          onShowDetailedInfoChange(false);
+        }
       }
     }
-  }, [saThreats, onAddMessage]);
+  }, [saThreats, onAddMessage, onShowDetailedInfoChange]);
 
   // 监听 emergency 变化，自动处理（防止死循环）
   useEffect(() => {
@@ -1175,6 +1202,78 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   //   setShowTaskComplete(false);
   // };
 
+  // 计算威胁数据并传递给父组件
+  React.useEffect(() => {
+    if (!onThreatListUpdate) return;
+    
+    const effectiveCenterY = config.centerY - 50;
+    
+    // 计算威胁距离和得分的函数
+    const calculateThreatInfo = (threat: any, threatIndex: number) => {
+      let distance = 0;
+      let score = 0;
+      
+      // 检查是否是导弹
+      const isMissile = threat.type === 'MissileUp' || threat.type === 'MissileDown';
+      
+      if (isMissile) {
+        // 导弹距离计算
+        const missile = missiles.find(m => m.id === threat.id);
+        if (missile) {
+          const missileCenterX = missile.x;
+          const missileCenterY = missile.y;
+          distance = Math.sqrt(Math.pow(missileCenterX - config.centerX, 2) + Math.pow(missileCenterY - effectiveCenterY, 2));
+          const weight = 210; // 导弹权重
+          score = weight / (distance + 1e-6);
+        }
+      } else {
+        // 常规威胁距离计算
+        const saIndex = saThreats.findIndex((st: any) => st.id === threat.id);
+        if (saIndex >= 0 && iconPositions[saIndex]) {
+          const pos = iconPositions[saIndex];
+          const threatCenterX = pos.x + ICON_SIZE / 2;
+          const threatCenterY = pos.y + ICON_SIZE / 2;
+          distance = Math.sqrt(Math.pow(threatCenterX - config.centerX, 2) + Math.pow(threatCenterY - effectiveCenterY, 2));
+          const weight = threat.type?.startsWith('Primary') ? 210 : 200;
+          score = weight / (distance + 1e-6);
+        }
+      }
+      
+      return { distance, score };
+    };
+    
+    // 合并所有威胁数据
+    const allThreats = [
+      ...threatList, 
+      ...saThreats.filter((saThreat: any) => !threatList.some(t => t.id === saThreat.id)),
+      ...missiles.filter((missile: any) => !threatList.some(t => t.id === missile.id))
+        .map((missile: any) => ({
+          id: missile.id,
+          type: missile.type,
+          label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+          source: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
+          distance: 0,
+          heading: 0,
+          priority: 'high' as const
+        }))
+    ].map((threat, index) => {
+      const { distance, score } = calculateThreatInfo(threat, index);
+      return {
+        ...threat,
+        index: index + 1,
+        distance,
+        score,
+        displayType: TYPE_MAP[threat.type] || threat.type,
+        priorityLevel: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : 
+                      (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低',
+        priorityColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : 
+                      (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff'
+      };
+    });
+    
+    onThreatListUpdate(allThreats);
+  }, [threatList, saThreats, missiles, iconPositions, config.centerX, config.centerY, onThreatListUpdate]);
+
   return (
     <div className="w-full h-full p-4 bg-black text-green-400 font-mono flex flex-col items-center relative">
       <div className="flex flex-col items-center">
@@ -1408,128 +1507,59 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         </div>
       </div>
       
-      {/* 威胁列表 */}
-      <div className="w-full max-w-4xl bg-black border border-gray-700 rounded-md overflow-hidden" style={{ marginLeft: '150px'}}>
-        <div className="bg-gray-800 p-2 border-b border-gray-700">
-          <h3 className="text-green-400 font-mono text-lg text-center">威胁列表</h3>
-        </div>
-        
-        <div className="p-2 bg-gray-900 font-mono text-sm text-gray-300 flex border-b border-gray-800">
-          <div className="w-8 text-center">#</div>
-          <div className="w-24">类型</div>
-          <div className="w-24">来源</div>
-          {showDetailedInfo && <div className="w-20 text-center">距离(px)</div>}
-          {showDetailedInfo && <div className="w-20 text-center">得分</div>}
-          <div className="w-16 text-center">优先级</div>
-        </div>
-        
-      {(() => {
-        const effectiveCenterY = config.centerY - 50;
-        
-        // 计算威胁距离和得分的函数
-        const calculateThreatInfo = (threat: any, threatIndex: number) => {
-          let distance = 0;
-          let score = 0;
-          
-          // 检查是否是导弹
-          const isMissile = threat.type === 'MissileUp' || threat.type === 'MissileDown';
-          
-          if (isMissile) {
-            // 导弹距离计算
-            const missile = missiles.find(m => m.id === threat.id);
-            if (missile) {
-              const missileCenterX = missile.x;
-              const missileCenterY = missile.y;
-              distance = Math.sqrt(Math.pow(missileCenterX - config.centerX, 2) + Math.pow(missileCenterY - effectiveCenterY, 2));
-              const weight = 210; // 导弹权重
-              score = weight / (distance + 1e-6);
-            }
-          } else {
-            // 常规威胁距离计算
-            const saIndex = saThreats.findIndex((st: any) => st.id === threat.id);
-            if (saIndex >= 0 && iconPositions[saIndex]) {
-              const pos = iconPositions[saIndex];
-              const threatCenterX = pos.x + ICON_SIZE / 2;
-              const threatCenterY = pos.y + ICON_SIZE / 2;
-              distance = Math.sqrt(Math.pow(threatCenterX - config.centerX, 2) + Math.pow(threatCenterY - effectiveCenterY, 2));
-              const weight = threat.type?.startsWith('Primary') ? 210 : 200;
-              score = weight / (distance + 1e-6);
-            }
-          }
-          
-          return { distance, score };
-        };
-        
-        return [
-          ...threatList, 
-          ...saThreats.filter((saThreat: any) => !threatList.some(t => t.id === saThreat.id)),
-          ...missiles.filter((missile: any) => !threatList.some(t => t.id === missile.id))
-            .map((missile: any) => ({
-              id: missile.id,
-              type: missile.type,
-              label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
-              source: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
-              distance: 0,
-              heading: 0,
-              priority: 'high' as const
-            }))
-        ].map((threat, index) => {
-          const { distance, score } = calculateThreatInfo(threat, index);
-          
-          return (
-            <div 
-              key={threat.id} 
-              className={`p-2 border-b border-gray-800 font-mono text-sm flex items-center ${
-                index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-950'
-              }`}
-            >
-              <div className="w-8 text-center text-gray-400">{index + 1}</div>
-              <div className="w-24 text-green-400 text-xs">{TYPE_MAP[threat.type] || threat.type}</div>
-              <div className="w-24 text-yellow-400 text-xs">{threat.label}</div>
-              {showDetailedInfo && <div className="w-20 text-center text-blue-300">{distance > 0 ? distance.toFixed(0) : '--'}</div>}
-              {showDetailedInfo && <div className="w-20 text-center text-orange-300">{score > 0 ? score.toFixed(2) : '--'}</div>}
-              <div className="w-16 flex items-center justify-center">
-                <span 
-                  className="w-3 h-3 rounded-full mr-1" 
-                  style={{ backgroundColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff' }}
-                ></span>
-                <span className="text-white text-xs">{(threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低'}</span>
-              </div>
-            </div>
-          );
-        });
-      })()}
-      </div>
+
       
-      {/* 任务结束弹窗 */}
       {showTaskComplete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style={{marginLeft: '200px'}}>
-          <div className="bg-gray-800 border-2 border-green-400 rounded-lg p-6 max-w-md mx-4 text-center">
-            <div className="text-green-400 text-2xl font-bold mb-2">
-              ✅ 任务结束
-            </div>
-            <div className="text-white mb-4">
-              最具威胁项处理完成：<br />
-              <span className="text-yellow-400 font-mono">{completedThreat}</span>
-            </div>
-            <p className="text-white text-lg mb-6">是否进行下一个任务？</p>
-            <div className="flex justify-center space-x-4">
-              {/* <button
-                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
-                onClick={() => setShowTaskComplete(false)}
-              >
-                否
-              </button> */}
-              <button
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
+        <div style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 100,
+            pointerEvents: 'auto'
+        }}>
+          <div style={{
+              backgroundColor: 'black',
+              padding: '24px',
+              border: '2px solid #00ff00',
+              borderRadius: '8px',
+              textAlign: 'center',
+              boxShadow: '0 0 15px rgba(0, 255, 0, 0.5)',
+              color: '#00ff00',
+              fontFamily: '"Courier New", Courier, monospace',
+          }}>
+            <p style={{
+              margin: '0 0 10px 0',
+              fontSize: '1.2em',
+              fontWeight: 'bold',
+              color: isCorrect === true ? '#00cc00' : isCorrect === false ? '#ff4444' : '#ffffff'
+            }}>
+              {isCorrect === true ? '结果: 正确' : isCorrect === false ? '结果: 错误' : '结果: 未选择'}
+            </p>
+            <h3 style={{ margin: 0, fontSize: '1.2em' }}>{isCorrect === true || isCorrect === false ? '是否进行下一次任务' : '重新完成当前任务'}</h3>
+            <div style={{ marginTop: '20px' }}>
+              <button 
                 onClick={handleResetSA}
+                style={{
+                  backgroundColor: '#003300',
+                  border: '1px solid #00ff00',
+                  color: '#00ff00',
+                  padding: '8px 16px',
+                  margin: '0 10px',
+                  cursor: 'pointer',
+                  borderRadius: '4px'
+                }}
               >
-                确认
+                确定
               </button>
             </div>
           </div>
         </div>
       )}
+        <ScenarioCompletionModal 
+        isOpen={showScenarioCompletionModal}
+        onClose={() => {setShowScenarioCompletionModal(false); setShowTaskComplete(true);}}
+      />
     </div>
   );
 });

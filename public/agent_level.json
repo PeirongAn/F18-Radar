@@ -26,7 +26,7 @@
   "game_settings": {
     "current_difficulty": "high",
     "audio_enabled": true,
-    "max_repetitions": 1,
+    "max_repetitions": 10,
     "practice_repetitions": 1,
     "difficulty_levels": {
       "high": {

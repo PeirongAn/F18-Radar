@@ -7,6 +7,7 @@ const sounds = {
   saInit: new Audio('/sounds/ThreatNew.wav'),
   radarRange: new Audio('/sounds/RadarRange.mp3'), // 使用 ThreatNew.wav 作为 test.wav 的替代品
   radarHeight: new Audio('/sounds/RadarHeight.mp3'),
+  radarAISelect: new Audio('/sounds/RadarAISelect.mp3'),
 };
 
 type SoundType = keyof typeof sounds;

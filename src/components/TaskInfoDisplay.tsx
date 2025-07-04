@@ -45,13 +45,13 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
     >
       <div className="text-green-400 text-sm">
         <p>模式: <span className="font-bold text-white">{is_practice ? '练习模式' : '正式模式'}</span></p>
-        {difficulty && <p>难度: <span className="font-bold text-white">{translateDifficulty(difficulty)}</span></p>}
         {scenario_index !== undefined && scenario_total !== undefined && (
           <p>场景类型: <span className="font-bold text-white">{scenario_index} / {scenario_total}</span></p>
         )}
-        <p>重复进度: <span className="font-bold text-white">{current} / {total}</span></p>
+        {difficulty && <p>难度: <span className="font-bold text-white">{translateDifficulty(difficulty)}</span></p>}
         {/* <p>本轮剩余: <span className="font-bold text-white">{remaining}</span></p> */}
-        <p>音频: <span className="font-bold text-white">{audio_enabled ? '开启' : '关闭'}</span></p>
+        <p>交互工效: <span className="font-bold text-white">{audio_enabled ? '高' : '低'}</span></p>
+        <p>重复进度: <span className="font-bold text-white">{current} / {total}</span></p>
       </div>
       
       {/* 新增：策略说明按钮 */}
