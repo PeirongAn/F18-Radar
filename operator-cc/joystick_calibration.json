@@ -1,0 +1,25 @@
+{
+  "calibration": {
+    "x_center": 512,
+    "y_center": 512,
+    "rx_center": 48,
+    "ry_center": 512,
+    "x_min": 48,
+    "x_max": 976,
+    "y_min": 159,
+    "y_max": 803,
+    "rx_min": -452,
+    "rx_max": 548,
+    "ry_min": 48,
+    "ry_max": 976
+  },
+  "scale_factor": 9.76842105263158,
+  "device_info": {
+    "vendor_id": 1356,
+    "product_id": 98,
+    "product_name": "3D Joystick Keyboard",
+    "vendor_name": "China Longcctv"
+  },
+  "timestamp": "2025-07-09T10:45:32.948289",
+  "version": "1.0"
+}

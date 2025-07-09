@@ -98,13 +98,13 @@ import time
 import tkinter as tk
 from tkinter import ttk
 import threading
+import json
+import os
+from datetime import datetime
 
-class JoystickVisualizer:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("摇杆可视化面板")
-        self.root.geometry("800x600")
-        
+class JoystickCalculator:
+    """摇杆数据计算和处理类"""
+    def __init__(self):
         # 数据存储
         self.current_data = {
             'x_axis': 0,
@@ -144,8 +144,208 @@ class JoystickVisualizer:
         self.calibration_mode = False
         self.calibration_step = 0
         self.calibration_data = {}
+        self.auto_save_boundaries = True  # 校准模式下自动保存边界数据
         
+        # 缩放因子（校准后根据边界数据计算）
+        self.scale_factor = 1.0
+        
+        # 校准数据文件路径
+        self.calibration_file = "joystick_calibration.json"
+        
+        # 尝试加载之前保存的校准数据
+        self.load_calibration_data()
+    
+    def calculate_relative_position(self, data):
+        """计算相对位置坐标"""
+        if self.calibration_mode:
+            # 计算当前已记录的范围
+            x_range = max(abs(data['x_axis'] - self.calibration['x_center']), 
+                         abs(self.calibration['x_max'] - self.calibration['x_center']),
+                         abs(self.calibration['x_min'] - self.calibration['x_center']), 1)
+            y_range = max(abs(data['y_axis'] - self.calibration['y_center']), 
+                         abs(self.calibration['y_max'] - self.calibration['y_center']),
+                         abs(self.calibration['y_min'] - self.calibration['y_center']), 1)
+            ry_range = max(abs(data['ry_axis'] - self.calibration['ry_center']), 
+                          abs(self.calibration['ry_max'] - self.calibration['ry_center']),
+                          abs(self.calibration['ry_min'] - self.calibration['ry_center']), 1)
+            
+            # 计算相对于中心的偏移量
+            relative_x = (data['x_axis'] - self.calibration['x_center']) / x_range
+            relative_y = (data['y_axis'] - self.calibration['y_center']) / y_range
+            relative_ry = (data['ry_axis'] - self.calibration['ry_center']) / ry_range
+            
+            return {
+                'x': relative_x,
+                'y': relative_y,
+                'rx': 0,  # 副轴RX固定在中心
+                'ry': relative_ry
+            }
+        elif self.first_data_received:
+            # 正常模式：使用归一化数据
+            return self.normalize_data(data)
+        else:
+            # 默认模式
+            default_center = 0x0800
+            default_range = 0x0800
+            
+            norm_x = (data['x_axis'] - default_center) / default_range
+            norm_y = (data['y_axis'] - default_center) / default_range
+            norm_ry = (data['ry_axis'] - default_center) / default_range
+            
+            # 限制在-1到1范围内
+            norm_x = max(-1.0, min(1.0, norm_x))
+            norm_y = max(-1.0, min(1.0, norm_y))
+            norm_ry = max(-1.0, min(1.0, norm_ry))
+            
+            return {
+                'x': norm_x,
+                'y': norm_y,
+                'rx': 0,  # 副轴RX固定在中心
+                'ry': norm_ry
+            }
+    
+    def normalize_data(self, data):
+        """归一化数据到[-1, 1]范围"""
+        x_center = self.calibration['x_center']
+        y_center = self.calibration['y_center']
+        rx_center = self.calibration['rx_center']
+        ry_center = self.calibration['ry_center']
+        
+        # 计算轴的范围
+        x_range = max(abs(self.calibration['x_max'] - x_center), abs(self.calibration['x_min'] - x_center), 1)
+        y_range = max(abs(self.calibration['y_max'] - y_center), abs(self.calibration['y_min'] - y_center), 1)
+        ry_range = max(abs(self.calibration['ry_max'] - ry_center), abs(self.calibration['ry_min'] - ry_center), 1)
+        
+        # 归一化到[-1, 1]
+        norm_x = (data['x_axis'] - x_center) / x_range
+        norm_y = (data['y_axis'] - y_center) / y_range
+        norm_ry = (data['ry_axis'] - ry_center) / ry_range
+        
+        # 限制在-1到1范围内
+        norm_x = max(-1.0, min(1.0, norm_x))
+        norm_y = max(-1.0, min(1.0, norm_y))
+        norm_ry = max(-1.0, min(1.0, norm_ry))
+        
+        return {
+            'x': norm_x,
+            'y': norm_y,
+            'rx': 0,  # 副轴RX固定在中心
+            'ry': norm_ry
+        }
+    
+    def save_calibration_data(self, device=None):
+        """保存校准数据到文件"""
+        try:
+            # 准备要保存的数据
+            calibration_data = {
+                "calibration": self.calibration.copy(),
+                "scale_factor": self.scale_factor,
+                "device_info": {
+                    "vendor_id": device.vendor_id if device else None,
+                    "product_id": device.product_id if device else None,
+                    "product_name": device.product_name if device else None,
+                    "vendor_name": device.vendor_name if device else None
+                },
+                "timestamp": datetime.now().isoformat(),
+                "version": "1.0"
+            }
+            
+            # 保存到JSON文件
+            with open(self.calibration_file, 'w', encoding='utf-8') as f:
+                json.dump(calibration_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"校准数据已成功保存到 {self.calibration_file}")
+            return True
+            
+        except Exception as e:
+            print(f"保存校准数据失败: {e}")
+            return False
+    
+    def load_calibration_data(self):
+        """加载之前保存的校准数据"""
+        try:
+            if os.path.exists(self.calibration_file):
+                with open(self.calibration_file, 'r', encoding='utf-8') as f:
+                    calibration_data = json.load(f)
+                
+                # 验证数据格式
+                if "calibration" in calibration_data and "scale_factor" in calibration_data:
+                    self.calibration = calibration_data["calibration"]
+                    self.scale_factor = calibration_data["scale_factor"]
+                    self.first_data_received = True
+                    
+                    # 显示加载的设备信息
+                    if "device_info" in calibration_data:
+                        device_info = calibration_data["device_info"]
+                        print(f"已加载校准数据 (设备: {device_info.get('product_name', 'Unknown')})")
+                    
+                    # 显示时间戳
+                    if "timestamp" in calibration_data:
+                        print(f"校准时间: {calibration_data['timestamp']}")
+                    
+                    print("校准数据加载成功，摇杆可直接使用")
+                    return True
+                else:
+                    print("校准数据格式不正确，将使用默认设置")
+            else:
+                print(f"未找到校准文件 {self.calibration_file}，将使用默认设置")
+                
+        except Exception as e:
+            print(f"加载校准数据失败: {e}，将使用默认设置")
+        
+        return False
+    
+    def delete_calibration_data(self):
+        """删除保存的校准数据文件"""
+        try:
+            if os.path.exists(self.calibration_file):
+                os.remove(self.calibration_file)
+                print(f"校准文件 {self.calibration_file} 已删除")
+                
+                # 重置校准状态
+                self.calibration = {
+                    'x_center': 0x0800,
+                    'y_center': 0x0800,
+                    'rx_center': 0x0800,
+                    'ry_center': 0x0800,
+                    'x_min': 0x0800,
+                    'x_max': 0x0800,
+                    'y_min': 0x0800,
+                    'y_max': 0x0800,
+                    'rx_min': 0x0800,
+                    'rx_max': 0x0800,
+                    'ry_min': 0x0800,
+                    'ry_max': 0x0800
+                }
+                self.scale_factor = 1.0
+                self.first_data_received = False
+                self.offset = {'x': 0, 'y': 0, 'rx': 0, 'ry': 0}
+                return True
+            else:
+                print(f"校准文件 {self.calibration_file} 不存在")
+                return False
+                
+        except Exception as e:
+            print(f"删除校准文件失败: {e}")
+            return False
+
+
+class JoystickVisualizer:
+    """摇杆可视化界面类"""
+    def __init__(self, root):
+        self.root = root
+        self.root.title("摇杆可视化面板")
+        self.root.geometry("800x600")
+        
+        # 创建计算器实例
+        self.calculator = JoystickCalculator()
+        
+        # 设备连接
         self.device = None
+        
+        # 调试模式
+        self.debug_mode = False
+        
         self.create_widgets()
         
     def create_widgets(self):
@@ -245,6 +445,22 @@ class JoystickVisualizer:
         self.list_devices_btn = ttk.Button(connect_frame, text="列出设备", command=self.list_all_devices)
         self.list_devices_btn.pack(side=tk.LEFT, padx=5)
         
+        # 校准数据管理按钮
+        calibration_mgmt_frame = ttk.Frame(connect_frame)
+        calibration_mgmt_frame.pack(side=tk.RIGHT, padx=5)
+        
+        self.save_calibration_btn = ttk.Button(calibration_mgmt_frame, text="保存校准", command=self.save_calibration_data)
+        self.save_calibration_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.load_calibration_btn = ttk.Button(calibration_mgmt_frame, text="加载校准", command=self.load_calibration_data)
+        self.load_calibration_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.delete_calibration_btn = ttk.Button(calibration_mgmt_frame, text="删除校准", command=self.delete_calibration_data)
+        self.delete_calibration_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.toggle_auto_save_btn = ttk.Button(calibration_mgmt_frame, text="实时保存:开", command=self.toggle_auto_save_boundaries)
+        self.toggle_auto_save_btn.pack(side=tk.LEFT, padx=2)
+        
         # 校准指导区域
         self.calibration_frame = ttk.LabelFrame(main_frame, text="校准指导")
         self.calibration_frame.pack(fill=tk.X, pady=5)
@@ -255,6 +471,10 @@ class JoystickVisualizer:
         
         self.calibration_progress = ttk.Label(self.calibration_frame, text="", font=('Arial', 10))
         self.calibration_progress.pack(pady=5)
+        
+        # 边界状态显示
+        self.boundary_status = ttk.Label(self.calibration_frame, text="", font=('Arial', 9), foreground='blue')
+        self.boundary_status.pack(pady=2)
         
         # 校准按钮区域
         calibration_btn_frame = ttk.Frame(self.calibration_frame)
@@ -395,14 +615,13 @@ class JoystickVisualizer:
         将轴值归一化到-1到1范围，确保中心值映射到0
         校准后的行为：
         - 中心位置 -> 0
-        - 最小值 -> -1
+        - 最小值 -> -1  
         - 最大值 -> +1
-        - 主轴可以移动到任意区域
-        - 副轴RX可以水平移动，RY可以垂直移动
+        - 主轴和副轴都严格归一化到[-1,1]范围
         """
-        min_val = self.calibration[f'{axis_name}_min']
-        max_val = self.calibration[f'{axis_name}_max']
-        center_val = self.calibration[f'{axis_name}_center']
+        min_val = self.calculator.calibration[f'{axis_name}_min']
+        max_val = self.calculator.calibration[f'{axis_name}_max']
+        center_val = self.calculator.calibration[f'{axis_name}_center']
         
         # 如果校准数据无效，返回中心值0
         if max_val <= min_val:
@@ -416,23 +635,19 @@ class JoystickVisualizer:
         if value < center_val:
             # 从min到center映射到-1到0
             if center_val > min_val:
-                # 线性映射: (value - min_val) / (center_val - min_val) * (-1) + 0
                 normalized = -1 * (center_val - value) / (center_val - min_val)
             else:
                 normalized = 0
         else:
             # 从center到max映射到0到1
             if max_val > center_val:
-                # 线性映射: (value - center_val) / (max_val - center_val) * 1 + 0
                 normalized = (value - center_val) / (max_val - center_val)
             else:
                 normalized = 0
         
-        # 对主轴Y轴进行反转，使得上方为正，下方为负（符合屏幕坐标习惯）
-        # 副轴RY轴不进行反转，保持原始方向
-        if axis_name == 'y':
+        # Y轴方向处理在显示层面完成，这里保持原始方向
+        if axis_name == 'ry':
             normalized = -normalized
-        
         # 严格限制在-1到1范围内，确保完整的移动范围
         return max(-1.0, min(1.0, normalized))
         
@@ -452,16 +667,21 @@ class JoystickVisualizer:
         canvas_center = 100  # 画布中心位置 (200/2)
         canvas_radius = 95   # 从中心到边界的距离 (100-5)
         
-        # 主轴位置计算：可以移动到任意区域
-        # 使用完整的-1到1范围映射到整个画布区域
-        main_x = canvas_center + norm_x * canvas_radius
-        main_y = canvas_center - norm_y * canvas_radius  # Y轴反转以符合屏幕坐标
+        # 使用校准后计算的缩放因子，确保适当的移动范围
+        # 校准完成后，self.scale_factor 会根据边界数据自动计算
+        offset_x = (x - self.calculator.calibration['x_center']) / self.scale_factor
+        offset_y = (y - self.calculator.calibration['y_center']) / self.scale_factor
+        offset_ry = (ry - self.calculator.calibration['ry_center']) / self.scale_factor
         
-        # 副轴位置计算：考虑硬件限制
-        # 硬件限制：副轴无法横向移动，RX轴固定在中心位置
-        # 只有RY轴可以垂直滑动
+        # 主轴位置计算：使用缩放后的偏移量
+        main_x = canvas_center + offset_x
+        main_y = canvas_center + offset_y  # Y轴直接映射
+        
+        # 副轴位置计算：简化校准，只需要上下方向
+        # RX轴固定在中心位置（不需要校准）
+        # 只有RY轴需要垂直校准
         sub_x = canvas_center  # RX固定在中心，不随norm_rx变化
-        sub_y = canvas_center + norm_ry * canvas_radius  # 只有RY可以垂直移动，不取反
+        sub_y = canvas_center - offset_ry  # RY轴与主轴Y轴方向一致，都需要反转
         
         # 确保位置在画布边界内
         main_x = max(5, min(195, main_x))
@@ -475,7 +695,7 @@ class JoystickVisualizer:
         
         # 更新副轴位置（蓝点）
         self.sub_canvas.coords(self.sub_dot, sub_x-5, sub_y-5, sub_x+5, sub_y+5)
-        # 显示RX固定为0（硬件限制），只显示RY的实际值
+        # 显示RX固定为0（简化校准），只显示RY的实际值
         self.sub_label.config(text=f"RX: 0.000 (固定), RY: {norm_ry:.3f}")
         
     def update_buttons(self, button_states):
@@ -532,8 +752,9 @@ class JoystickVisualizer:
         """数据读取回调函数"""
         parsed_data = parse_data(data)
         if parsed_data:
-            # 在校准模式下，直接更新GUI用于显示当前位置
-            if self.calibration_mode:
+            # 在校准模式下，实时跟踪边界并更新GUI
+            if self.calculator.calibration_mode:
+                self.track_calibration_boundaries(parsed_data)
                 self.root.after(0, self.update_gui, parsed_data)
             else:
                 # 正常模式：应用偏移量补偿（如果需要）
@@ -547,10 +768,10 @@ class JoystickVisualizer:
     def calculate_offset(self, data):
         """计算偏移量，让当前位置成为中心（仅用于重新校准功能）"""
         # 计算偏移量
-        self.offset['x'] = data['x_axis'] - self.calibration['x_center']
-        self.offset['y'] = data['y_axis'] - self.calibration['y_center']
-        self.offset['rx'] = data['rx_axis'] - self.calibration['rx_center']
-        self.offset['ry'] = data['ry_axis'] - self.calibration['ry_center']
+        self.offset['x'] = data['x_axis'] - self.calculator.calibration['x_center']
+        self.offset['y'] = data['y_axis'] - self.calculator.calibration['y_center']
+        self.offset['rx'] = data['rx_axis'] - self.calculator.calibration['rx_center']
+        self.offset['ry'] = data['ry_axis'] - self.calculator.calibration['ry_center']
         
         # 更新偏移量显示
         self.root.after(0, lambda: self.offset_label.config(
@@ -565,6 +786,94 @@ class JoystickVisualizer:
         corrected_data['rx_axis'] = data['rx_axis'] - self.offset['rx']
         corrected_data['ry_axis'] = data['ry_axis'] - self.offset['ry']
         return corrected_data
+    
+    def track_calibration_boundaries(self, data):
+        """在校准模式下实时跟踪边界值"""
+        # 实时更新最小值和最大值
+        self.calculator.calibration['x_min'] = min(self.calculator.calibration['x_min'], data['x_axis'])
+        self.calculator.calibration['x_max'] = max(self.calculator.calibration['x_max'], data['x_axis'])
+        self.calculator.calibration['y_min'] = min(self.calculator.calibration['y_min'], data['y_axis'])
+        self.calculator.calibration['y_max'] = max(self.calculator.calibration['y_max'], data['y_axis'])
+        self.calculator.calibration['rx_min'] = min(self.calculator.calibration['rx_min'], data['rx_axis'])
+        self.calculator.calibration['rx_max'] = max(self.calculator.calibration['rx_max'], data['rx_axis'])
+        self.calculator.calibration['ry_min'] = min(self.calculator.calibration['ry_min'], data['ry_axis'])
+        self.calculator.calibration['ry_max'] = max(self.calculator.calibration['ry_max'], data['ry_axis'])
+        
+        # 在校准模式下实时保存边界数据
+        if self.calculator.auto_save_boundaries:
+            self.save_boundary_data_realtime(data)
+        
+        # 更新边界状态显示
+        self.update_boundary_status()
+    
+    def save_boundary_data_realtime(self, data):
+        """实时保存边界数据到文件"""
+        try:
+            # 创建边界数据文件名
+            boundary_file = "joystick_boundaries_realtime.json"
+            
+            # 准备要保存的边界数据
+            boundary_data = {
+                "current_position": {
+                    "x_axis": data['x_axis'],
+                    "y_axis": data['y_axis'],
+                    "rx_axis": data['rx_axis'],
+                    "ry_axis": data['ry_axis']
+                },
+                "boundaries": {
+                    "x_min": self.calculator.calibration['x_min'],
+                    "x_max": self.calculator.calibration['x_max'],
+                    "y_min": self.calculator.calibration['y_min'],
+                    "y_max": self.calculator.calibration['y_max'],
+                    "rx_min": self.calculator.calibration['rx_min'],
+                    "rx_max": self.calculator.calibration['rx_max'],
+                    "ry_min": self.calculator.calibration['ry_min'],
+                    "ry_max": self.calculator.calibration['ry_max']
+                },
+                "center_values": {
+                    "x_center": self.calculator.calibration['x_center'],
+                    "y_center": self.calculator.calibration['y_center'],
+                    "rx_center": self.calculator.calibration['rx_center'],
+                    "ry_center": self.calculator.calibration['ry_center']
+                },
+                "ranges": {
+                    "x_range": self.calculator.calibration['x_max'] - self.calculator.calibration['x_min'],
+                    "y_range": self.calculator.calibration['y_max'] - self.calculator.calibration['y_min'],
+                    "rx_range": self.calculator.calibration['rx_max'] - self.calculator.calibration['rx_min'],
+                    "ry_range": self.calculator.calibration['ry_max'] - self.calculator.calibration['ry_min']
+                },
+                "calibration_step": self.calibration_step,
+                "timestamp": datetime.now().isoformat(),
+                "device_info": {
+                    "vendor_id": self.device.vendor_id if self.device else None,
+                    "product_id": self.device.product_id if self.device else None,
+                    "product_name": self.device.product_name if self.device else None
+                }
+            }
+            
+            # 保存到文件
+            with open(boundary_file, 'w', encoding='utf-8') as f:
+                json.dump(boundary_data, f, indent=2, ensure_ascii=False)
+                
+        except Exception as e:
+            # 静默处理错误，避免在实时保存时影响用户体验
+            pass
+    
+    def update_boundary_status(self):
+        """更新边界状态显示"""
+        try:
+            if hasattr(self, 'boundary_status') and self.calculator.calibration_mode:
+                # 计算各轴的范围
+                x_range = self.calculator.calibration['x_max'] - self.calculator.calibration['x_min']
+                y_range = self.calculator.calibration['y_max'] - self.calculator.calibration['y_min']
+                rx_range = self.calculator.calibration['rx_max'] - self.calculator.calibration['rx_min']
+                ry_range = self.calculator.calibration['ry_max'] - self.calculator.calibration['ry_min']
+                
+                # 更新边界状态显示
+                boundary_text = f"边界: X({x_range}) Y({y_range}) RX({rx_range}) RY({ry_range})"
+                self.boundary_status.config(text=boundary_text)
+        except Exception as e:
+            pass
             
     def recalibrate_center(self):
         """重新校准中心位置 - 基于当前原始数据重新计算偏移量"""
@@ -577,10 +886,10 @@ class JoystickVisualizer:
             raw_ry = self.current_data['ry_axis'] + self.offset['ry']
             
             # 重新计算偏移量
-            self.offset['x'] = raw_x - self.calibration['x_center']
-            self.offset['y'] = raw_y - self.calibration['y_center']
-            self.offset['rx'] = raw_rx - self.calibration['rx_center']
-            self.offset['ry'] = raw_ry - self.calibration['ry_center']
+            self.offset['x'] = raw_x - self.calculator.calibration['x_center']
+            self.offset['y'] = raw_y - self.calculator.calibration['y_center']
+            self.offset['rx'] = raw_rx - self.calculator.calibration['rx_center']
+            self.offset['ry'] = raw_ry - self.calculator.calibration['ry_center']
             
             # 更新偏移量显示
             self.offset_label.config(
@@ -624,7 +933,7 @@ class JoystickVisualizer:
             self.status_label.config(text="请先连接摇杆设备")
             return
         
-        self.calibration_mode = True
+        self.calculator.calibration_mode = True
         self.calibration_step = 0
         self.calibration_data = {
             'x_values': [],
@@ -641,9 +950,9 @@ class JoystickVisualizer:
             self.debug_frame.pack(fill=tk.X, pady=5, before=self.button_frame)
         
         # 初始化校准范围为中心值
-        for axis in ['x', 'y', 'rx', 'ry']:
-            self.calibration[f'{axis}_min'] = self.calibration[f'{axis}_center']
-            self.calibration[f'{axis}_max'] = self.calibration[f'{axis}_center']
+        for axis in ['x', 'y', 'ry']:  # RX轴不需要校准，将在finish_calibration中设置默认值
+            self.calculator.calibration[f'{axis}_min'] = self.calculator.calibration[f'{axis}_center']
+            self.calculator.calibration[f'{axis}_max'] = self.calculator.calibration[f'{axis}_center']
         
         # 显示第一步指导
         self.update_calibration_instruction()
@@ -664,8 +973,6 @@ class JoystickVisualizer:
             "请将主轴(红点)向右推到极限位置，然后点击'下一步'",
             "请将主轴(红点)向上推到极限位置，然后点击'下一步'",
             "请将主轴(红点)向下推到极限位置，然后点击'下一步'",
-            "请将副轴(蓝点)向左推到极限位置，然后点击'下一步'",
-            "请将副轴(蓝点)向右推到极限位置，然后点击'下一步'",
             "请将副轴(蓝点)向上推到极限位置，然后点击'下一步'",
             "请将副轴(蓝点)向下推到极限位置，然后点击'完成校准'"
         ]
@@ -684,48 +991,48 @@ class JoystickVisualizer:
     
     def next_calibration_step(self):
         """进入下一个校准步骤"""
-        if not self.calibration_mode or not self.current_data:
+        if not self.calculator.calibration_mode or not self.current_data:
             return
         
         # 记录当前位置数据
         data = self.current_data
-        step_names = ['center', 'x_left', 'x_right', 'y_up', 'y_down', 'rx_left', 'rx_right', 'ry_up', 'ry_down']
+        step_names = ['center', 'x_left', 'x_right', 'y_up', 'y_down', 'ry_up', 'ry_down']
         
         if self.calibration_step < len(step_names):
             step_name = step_names[self.calibration_step]
             
             if step_name == 'center':
                 # 记录中心位置
-                self.calibration['x_center'] = data['x_axis']
-                self.calibration['y_center'] = data['y_axis']
-                self.calibration['rx_center'] = data['rx_axis']
-                self.calibration['ry_center'] = data['ry_axis']
+                self.calculator.calibration['x_center'] = data['x_axis']
+                self.calculator.calibration['y_center'] = data['y_axis']
+                self.calculator.calibration['rx_center'] = data['rx_axis']
+                self.calculator.calibration['ry_center'] = data['ry_axis']
             elif step_name == 'x_left':
-                self.calibration['x_min'] = data['x_axis']
+                self.calculator.calibration['x_min'] = data['x_axis']
             elif step_name == 'x_right':
-                self.calibration['x_max'] = data['x_axis']
+                self.calculator.calibration['x_max'] = data['x_axis']
             elif step_name == 'y_up':
-                self.calibration['y_max'] = data['y_axis']
+                self.calculator.calibration['y_max'] = data['y_axis']
             elif step_name == 'y_down':
-                self.calibration['y_min'] = data['y_axis']
-            elif step_name == 'rx_left':
-                self.calibration['rx_min'] = data['rx_axis']
-            elif step_name == 'rx_right':
-                self.calibration['rx_max'] = data['rx_axis']
+                self.calculator.calibration['y_min'] = data['y_axis']
             elif step_name == 'ry_up':
-                self.calibration['ry_max'] = data['ry_axis']
+                self.calculator.calibration['ry_max'] = data['ry_axis']
             elif step_name == 'ry_down':
-                self.calibration['ry_min'] = data['ry_axis']
+                self.calculator.calibration['ry_min'] = data['ry_axis']
         
         self.calibration_step += 1
         self.update_calibration_instruction()
     
     def finish_calibration(self):
         """完成校准"""
+        # 为RX轴设置默认值（因为副轴校验只需要上下方向）
+        self.calculator.calibration['rx_min'] = self.calculator.calibration['rx_center'] - 500
+        self.calculator.calibration['rx_max'] = self.calculator.calibration['rx_center'] + 500
+        
         # 验证校准数据
         valid = True
-        for axis in ['x', 'y', 'rx', 'ry']:
-            if self.calibration[f'{axis}_min'] >= self.calibration[f'{axis}_max']:
+        for axis in ['x', 'y', 'ry']:  # 只验证实际校准的轴
+            if self.calculator.calibration[f'{axis}_min'] >= self.calculator.calibration[f'{axis}_max']:
                 valid = False
                 break
         
@@ -733,8 +1040,24 @@ class JoystickVisualizer:
             self.status_label.config(text="校准数据无效，请重新校准")
             return
         
+        # 根据边界数据计算缩放因子
+        canvas_radius = 95  # 画布半径
+        
+        # 计算每个轴的范围
+        x_range = abs(self.calculator.calibration['x_max'] - self.calculator.calibration['x_min'])
+        y_range = abs(self.calculator.calibration['y_max'] - self.calculator.calibration['y_min'])
+        ry_range = abs(self.calculator.calibration['ry_max'] - self.calculator.calibration['ry_min'])
+        
+        # 计算缩放因子，确保最大轴范围能映射到画布边界
+        max_range = max(x_range, y_range, ry_range)
+        if max_range > 0:
+            # 计算缩放因子，使最大轴范围映射到画布半径
+            self.scale_factor = max_range / canvas_radius
+        else:
+            self.scale_factor = 1.0
+        
         # 完成校准
-        self.calibration_mode = False
+        self.calculator.calibration_mode = False
         self.calibration_step = 0
         self.first_data_received = True
         
@@ -745,9 +1068,9 @@ class JoystickVisualizer:
         # 验证校准数据确保中心值可以正确映射到(0,0)
         # 确保范围对称，这样中心值在normalize时能正确映射到0
         for axis in ['x', 'y', 'rx', 'ry']:
-            center = self.calibration[f'{axis}_center']
-            min_val = self.calibration[f'{axis}_min']
-            max_val = self.calibration[f'{axis}_max']
+            center = self.calculator.calibration[f'{axis}_center']
+            min_val = self.calculator.calibration[f'{axis}_min']
+            max_val = self.calculator.calibration[f'{axis}_max']
             
             # 验证中心值是否在范围内
             if center < min_val or center > max_val:
@@ -767,17 +1090,22 @@ class JoystickVisualizer:
         
         self.status_label.config(text="状态: 校准完成，摇杆已就绪，中心值为(0,0)")
         
+        # 保存校准数据到文件
+        self.save_calibration_data()
+        
         # 显示校准结果
         print("校准完成！摇杆现在可以正常使用了，中心值为(0,0)。")
-        print(f"X轴范围: {self.calibration['x_min']} - {self.calibration['x_max']} (中心: {self.calibration['x_center']})")
-        print(f"Y轴范围: {self.calibration['y_min']} - {self.calibration['y_max']} (中心: {self.calibration['y_center']})")
-        print(f"RX轴范围: {self.calibration['rx_min']} - {self.calibration['rx_max']} (中心: {self.calibration['rx_center']})")
-        print(f"RY轴范围: {self.calibration['ry_min']} - {self.calibration['ry_max']} (中心: {self.calibration['ry_center']})")
+        print(f"X轴范围: {self.calculator.calibration['x_min']} - {self.calculator.calibration['x_max']} (中心: {self.calculator.calibration['x_center']})")
+        print(f"Y轴范围: {self.calculator.calibration['y_min']} - {self.calculator.calibration['y_max']} (中心: {self.calculator.calibration['y_center']})")
+        print(f"RX轴范围: {self.calculator.calibration['rx_min']} - {self.calculator.calibration['rx_max']} (中心: {self.calculator.calibration['rx_center']})")
+        print(f"RY轴范围: {self.calculator.calibration['ry_min']} - {self.calculator.calibration['ry_max']} (中心: {self.calculator.calibration['ry_center']})")
+        print(f"计算出的缩放因子: {self.scale_factor:.2f}")
+        print(f"校准数据已保存到文件: {self.calculator.calibration_file}")
         print("现在移动摇杆应该可以看到界面中的红点和蓝点相应移动。")
     
     def cancel_calibration(self):
         """取消校准"""
-        self.calibration_mode = False
+        self.calculator.calibration_mode = False
         self.calibration_step = 0
         
         # 隐藏校准指导区域
@@ -799,8 +1127,8 @@ class JoystickVisualizer:
         self.current_data = data
         
         # 更新调试信息显示
-        if self.debug_mode or self.calibration_mode:
-            if self.calibration_mode:
+        if self.debug_mode or self.calculator.calibration_mode:
+            if self.calculator.calibration_mode:
                 debug_text = f"校准数据: X:{data['x_axis']:4d} Y:{data['y_axis']:4d} RX:{data['rx_axis']:4d} RY:{data['ry_axis']:4d}"
             elif self.first_data_received:
                 debug_text = f"补偿后: X:{data['x_axis']:4d} Y:{data['y_axis']:4d} RX:{data['rx_axis']:4d} RY:{data['ry_axis']:4d}"
@@ -809,15 +1137,34 @@ class JoystickVisualizer:
             self.raw_data_label.config(text=debug_text)
         
         # 校准模式下显示原始位置，正常模式下显示归一化位置
-        if self.calibration_mode:
-            # 校准模式：显示原始数据，不进行归一化
+        if self.calculator.calibration_mode:
+            # 校准模式：显示原始数据，允许移动到边界位置来记录边界数据
             canvas_center = 100
-            main_x = canvas_center + (data['x_axis'] - self.calibration['x_center']) / 10
-            main_y = canvas_center + (data['y_axis'] - self.calibration['y_center']) / 10
-            sub_x = canvas_center + (data['rx_axis'] - self.calibration['rx_center']) / 10
-            sub_y = canvas_center + (data['ry_axis'] - self.calibration['ry_center']) / 10
+            canvas_radius = 95  # 从中心到边界的距离
             
-            # 限制在画布范围内
+            # 使用动态范围来确保可以到达边界
+            # 计算当前已记录的范围
+            x_range = max(abs(data['x_axis'] - self.calculator.calibration['x_center']), 
+                         abs(self.calculator.calibration['x_max'] - self.calculator.calibration['x_center']),
+                         abs(self.calculator.calibration['x_min'] - self.calculator.calibration['x_center']), 1)
+            y_range = max(abs(data['y_axis'] - self.calculator.calibration['y_center']), 
+                         abs(self.calculator.calibration['y_max'] - self.calculator.calibration['y_center']),
+                         abs(self.calculator.calibration['y_min'] - self.calculator.calibration['y_center']), 1)
+            ry_range = max(abs(data['ry_axis'] - self.calculator.calibration['ry_center']), 
+                          abs(self.calculator.calibration['ry_max'] - self.calculator.calibration['ry_center']),
+                          abs(self.calculator.calibration['ry_min'] - self.calculator.calibration['ry_center']), 1)
+            
+            # 计算相对于中心的偏移量，并缩放到能够到达边界
+            offset_x = (data['x_axis'] - self.calculator.calibration['x_center']) / x_range * canvas_radius
+            offset_y = (data['y_axis'] - self.calculator.calibration['y_center']) / y_range * canvas_radius
+            offset_ry = (data['ry_axis'] - self.calculator.calibration['ry_center']) / ry_range * canvas_radius
+            
+            main_x = canvas_center + offset_x
+            main_y = canvas_center + offset_y  # Y轴直接映射
+            sub_x = canvas_center  # 副轴RX固定在中心
+            sub_y = canvas_center - offset_ry  # 副轴RY也反转，与主轴Y方向一致
+            
+            # 允许移动到边界位置（5到195像素范围）
             main_x = max(5, min(195, main_x))
             main_y = max(5, min(195, main_y))
             sub_x = max(5, min(195, sub_x))
@@ -825,26 +1172,168 @@ class JoystickVisualizer:
             
             self.main_canvas.coords(self.main_dot, main_x-5, main_y-5, main_x+5, main_y+5)
             self.sub_canvas.coords(self.sub_dot, sub_x-5, sub_y-5, sub_x+5, sub_y+5)
-            self.main_label.config(text=f"X: {data['x_axis']}, Y: {data['y_axis']}")
-            self.sub_label.config(text=f"RX: {data['rx_axis']}, RY: {data['ry_axis']}")
+            # 显示相对坐标(0,0)
+            relative_x = (data['x_axis'] - self.calculator.calibration['x_center']) / x_range
+            relative_y = (data['y_axis'] - self.calculator.calibration['y_center']) / y_range
+            relative_ry = (data['ry_axis'] - self.calculator.calibration['ry_center']) / ry_range
+            self.main_label.config(text=f"X: {relative_x:.3f}, Y: {relative_y:.3f}")
+            self.sub_label.config(text=f"RY: {relative_ry:.3f}")
             
         elif self.first_data_received:
             # 正常模式：使用归一化数据
             self.update_position(data['x_axis'], data['y_axis'], data['rx_axis'], data['ry_axis'])
         else:
-            # 如果还没有完成校准，显示原始数据但不进行归一化
+            # 如果还没有完成校准，使用默认设置显示摇杆移动，允许移动到边界位置
             canvas_center = 100
-            main_x = canvas_center
-            main_y = canvas_center
-            sub_x = canvas_center
-            sub_y = canvas_center
+            canvas_radius = 95  # 从中心到边界的距离
+            default_center = 0x0800  # 默认中心值
+            default_range = 0x0800  # 默认轴范围（从0到0x1000，中心在0x0800）
+            
+            # 计算归一化轴值（-1到1），使用默认的轴范围
+            norm_x = (data['x_axis'] - default_center) / default_range
+            norm_y = (data['y_axis'] - default_center) / default_range
+            norm_ry = (data['ry_axis'] - default_center) / default_range
+            
+            # 限制在-1到1范围内
+            norm_x = max(-1.0, min(1.0, norm_x))
+            norm_y = max(-1.0, min(1.0, norm_y))
+            norm_ry = max(-1.0, min(1.0, norm_ry))
+            
+            # 根据摇杆移动计算位置，允许移动到边界
+            main_x = canvas_center + norm_x * canvas_radius
+            main_y = canvas_center + norm_y * canvas_radius  # Y轴直接映射
+            sub_x = canvas_center  # 副轴RX固定在中心
+            sub_y = canvas_center - norm_ry * canvas_radius  # 副轴RY也反转，与主轴Y方向一致
+            
+            # 确保位置在画布边界内
+            main_x = max(5, min(195, main_x))
+            main_y = max(5, min(195, main_y))
+            sub_x = max(5, min(195, sub_x))
+            sub_y = max(5, min(195, sub_y))
             
             self.main_canvas.coords(self.main_dot, main_x-5, main_y-5, main_x+5, main_y+5)
             self.sub_canvas.coords(self.sub_dot, sub_x-5, sub_y-5, sub_x+5, sub_y+5)
-            self.main_label.config(text=f"X: {data['x_axis']}, Y: {data['y_axis']}")
-            self.sub_label.config(text=f"RX: {data['rx_axis']}, RY: {data['ry_axis']}")
+            # 显示相对坐标(0,0)
+            self.main_label.config(text=f"X: {norm_x:.3f}, Y: {norm_y:.3f}")
+            self.sub_label.config(text=f"RY: {norm_ry:.3f}")
         
         self.update_buttons(data['buttons'])
+    
+    def save_calibration_data(self):
+        """保存校准数据到文件"""
+        try:
+            # 准备要保存的数据
+            calibration_data = {
+                "calibration": self.calculator.calibration.copy(),
+                "scale_factor": self.scale_factor,
+                "device_info": {
+                    "vendor_id": self.device.vendor_id if self.device else None,
+                    "product_id": self.device.product_id if self.device else None,
+                    "product_name": self.device.product_name if self.device else None,
+                    "vendor_name": self.device.vendor_name if self.device else None
+                },
+                "timestamp": datetime.now().isoformat(),
+                "version": "1.0"
+            }
+            
+            # 保存到JSON文件
+            with open(self.calculator.calibration_file, 'w', encoding='utf-8') as f:
+                json.dump(calibration_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"校准数据已成功保存到 {self.calculator.calibration_file}")
+            
+        except Exception as e:
+            print(f"保存校准数据失败: {e}")
+    
+    def load_calibration_data(self):
+        """加载之前保存的校准数据"""
+        try:
+            if os.path.exists(self.calculator.calibration_file):
+                with open(self.calculator.calibration_file, 'r', encoding='utf-8') as f:
+                    calibration_data = json.load(f)
+                
+                # 验证数据格式
+                if "calibration" in calibration_data and "scale_factor" in calibration_data:
+                    self.calculator.calibration = calibration_data["calibration"]
+                    self.scale_factor = calibration_data["scale_factor"]
+                    self.first_data_received = True
+                    
+                    # 显示加载的设备信息
+                    if "device_info" in calibration_data:
+                        device_info = calibration_data["device_info"]
+                        print(f"已加载校准数据 (设备: {device_info.get('product_name', 'Unknown')})")
+                    
+                    # 显示时间戳
+                    if "timestamp" in calibration_data:
+                        print(f"校准时间: {calibration_data['timestamp']}")
+                    
+                    print("校准数据加载成功，摇杆可直接使用")
+                    
+                    # 更新状态标签
+                    if hasattr(self, 'status_label'):
+                        self.status_label.config(text="状态: 已加载校准数据，摇杆可直接使用")
+                    
+                    return True
+                else:
+                    print("校准数据格式不正确，将使用默认设置")
+                    if hasattr(self, 'status_label'):
+                        self.status_label.config(text="状态: 校准数据格式错误")
+            else:
+                print(f"未找到校准文件 {self.calculator.calibration_file}，将使用默认设置")
+                if hasattr(self, 'status_label'):
+                    self.status_label.config(text="状态: 未找到校准文件")
+                
+        except Exception as e:
+            print(f"加载校准数据失败: {e}，将使用默认设置")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=f"状态: 加载校准失败 - {str(e)}")
+        
+        return False
+    
+    def delete_calibration_data(self):
+        """删除保存的校准数据文件"""
+        try:
+            if os.path.exists(self.calculator.calibration_file):
+                os.remove(self.calculator.calibration_file)
+                print(f"校准文件 {self.calculator.calibration_file} 已删除")
+                
+                # 重置校准状态
+                self.calculator.calibration = {
+                    'x_center': 0x0800,
+                    'y_center': 0x0800,
+                    'rx_center': 0x0800,
+                    'ry_center': 0x0800,
+                    'x_min': 0x0800,
+                    'x_max': 0x0800,
+                    'y_min': 0x0800,
+                    'y_max': 0x0800,
+                    'rx_min': 0x0800,
+                    'rx_max': 0x0800,
+                    'ry_min': 0x0800,
+                    'ry_max': 0x0800
+                }
+                self.scale_factor = 1.0
+                self.first_data_received = False
+                self.offset = {'x': 0, 'y': 0, 'rx': 0, 'ry': 0}
+                
+                self.status_label.config(text="状态: 校准数据已删除，需要重新校准")
+            else:
+                print(f"校准文件 {self.calculator.calibration_file} 不存在")
+                self.status_label.config(text="状态: 校准文件不存在")
+                
+        except Exception as e:
+            print(f"删除校准文件失败: {e}")
+            self.status_label.config(text=f"状态: 删除校准文件失败 - {str(e)}")
+    
+    def toggle_auto_save_boundaries(self):
+        """切换实时边界保存功能"""
+        self.calculator.auto_save_boundaries = not self.calculator.auto_save_boundaries
+        if self.calculator.auto_save_boundaries:
+            self.toggle_auto_save_btn.config(text="实时保存:开")
+            print("实时边界保存功能已开启")
+        else:
+            self.toggle_auto_save_btn.config(text="实时保存:关")
+            print("实时边界保存功能已关闭")
 
 def parse_data(data):
     """解析操作杆数据，根据文档的字节分布结构解析"""
