@@ -1,0 +1,17 @@
+{
+  "axis_boundaries": {
+    "x_min": 48,
+    "x_max": 976,
+    "y_min": 48,
+    "y_max": 976,
+    "ry_min": 48,
+    "ry_max": 976
+  },
+  "center_values": {
+    "x": 512,
+    "y": 512,
+    "ry": 512
+  },
+  "timestamp": "2025-07-09T16:54:38.412356",
+  "description": "操纵杆校准配置 - 边界检测和中心值"
+}

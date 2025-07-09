@@ -2,7 +2,8 @@ import asyncio
 import websockets
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Set
+import uuid
 
 import sys
 import os
@@ -18,6 +19,71 @@ class WebSocketServer:
         self.host = host
         self.port = port
         self.logger = get_logger("websocket")
+        
+        # 客户端连接管理
+        self.clients: Dict[str, websockets.WebSocketServerProtocol] = {}
+        self.client_sessions: Dict[str, Dict[str, Any]] = {}
+        
+        # 操纵杆事件处理器（延迟初始化）
+        self.joystick_handler = None
+    
+    def set_joystick_handler(self, handler):
+        """设置操纵杆事件处理器"""
+        self.joystick_handler = handler
+        handler.set_websocket_server(self)
+    
+    def generate_client_id(self) -> str:
+        """生成唯一的客户端ID"""
+        return str(uuid.uuid4())
+    
+    def add_client(self, client_id: str, websocket: websockets.WebSocketServerProtocol):
+        """添加客户端连接"""
+        self.clients[client_id] = websocket
+        self.client_sessions[client_id] = {}
+        self.logger.info(f"客户端 {client_id} 已连接")
+    
+    def remove_client(self, client_id: str):
+        """移除客户端连接"""
+        if client_id in self.clients:
+            del self.clients[client_id]
+        if client_id in self.client_sessions:
+            del self.client_sessions[client_id]
+        
+        # 通知操纵杆处理器移除客户端
+        if self.joystick_handler:
+            self.joystick_handler.remove_client(client_id)
+        
+        self.logger.info(f"客户端 {client_id} 已断开连接")
+    
+    async def send_to_client(self, client_id: str, message: Dict[str, Any]) -> bool:
+        """向指定客户端发送消息"""
+        if client_id not in self.clients:
+            self.logger.warning(f"尝试向不存在的客户端发送消息: {client_id}")
+            return False
+        
+        websocket = self.clients[client_id]
+        return await self.send_message(websocket, message)
+    
+    async def broadcast_to_all(self, message: Dict[str, Any]):
+        """向所有客户端广播消息"""
+        if not self.clients:
+            return
+        
+        disconnected_clients = []
+        for client_id, websocket in self.clients.items():
+            try:
+                await self.send_message(websocket, message)
+            except Exception as e:
+                self.logger.warning(f"向客户端 {client_id} 广播失败: {e}")
+                disconnected_clients.append(client_id)
+        
+        # 移除断开的客户端
+        for client_id in disconnected_clients:
+            self.remove_client(client_id)
+    
+    def get_client_count(self) -> int:
+        """获取当前连接的客户端数量"""
+        return len(self.clients)
     
     async def send_message(self, websocket, message: Dict[str, Any]) -> bool:
         """发送消息到客户端"""
@@ -32,8 +98,8 @@ class WebSocketServer:
     
     async def handle_client(self, websocket) -> None:
         """处理单个客户端连接"""
-        self.logger.info("客户端已连接")
-        session_state = {}  # 为每个连接创建一个独立的会话状态
+        client_id = self.generate_client_id()
+        self.add_client(client_id, websocket)
         
         try:
             # 初始连接时发送不包含目标数据的基础数据
@@ -49,7 +115,34 @@ class WebSocketServer:
                     message = await asyncio.wait_for(websocket.recv(), timeout=60)
                     self.logger.debug(f"接收到消息: {message[:50]}..." if len(message) > 50 else message)
                     
-                    # 将会话状态传递给消息处理器
+                    # 解析消息
+                    try:
+                        message_data = json.loads(message)
+                    except json.JSONDecodeError:
+                        self.logger.error(f"无效的JSON消息: {message}")
+                        continue
+                    
+                    # 检查是否为操纵杆相关消息
+                    message_type = message_data.get('type', '')
+                    if message_type.startswith('joystick_') and self.joystick_handler:
+                        try:
+                            # 使用操纵杆处理器处理消息
+                            joystick_result = await self.joystick_handler.handle_message(client_id, message_data)
+                            await self.send_message(websocket, joystick_result)
+                            continue
+                        except Exception as e:
+                            self.logger.error(f"操纵杆消息处理失败: {e}")
+                            error_response = {
+                                'type': 'error',
+                                'message': f'操纵杆消息处理失败: {str(e)}'
+                            }
+                            await self.send_message(websocket, error_response)
+                            continue
+                    
+                    # 获取客户端会话状态
+                    session_state = self.client_sessions.get(client_id, {})
+                    
+                    # 使用原有的消息处理器处理非操纵杆消息
                     result = await message_handler.handle_client_message(message, session_state, websocket)
                     
                     # 检查返回结果类型
@@ -94,6 +187,9 @@ class WebSocketServer:
             self.logger.info("客户端已断开连接")
         except Exception as e:
             self.logger.error(f"WebSocket处理时出错: {e}", exc_info=True)
+        finally:
+            # 清理客户端连接
+            self.remove_client(client_id)
     
     async def start_server(self) -> None:
         """启动WebSocket服务器"""

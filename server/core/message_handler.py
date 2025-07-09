@@ -51,6 +51,8 @@ class MessageHandler:
                 return await self._handle_record_bulk_operations(message, session_state, client_event_owner)
             elif message_type in ['SwitchSA', 'ResetSA']:
                 return await self._handle_sa_operations(message, session_state, websocket)
+            elif message_type.startswith('joystick_'):
+                return await self._handle_joystick_message(message, session_state, websocket)
             # elif message_type == 'reset_targets':
             #     return await self._handle_reset_targets(message, session_state)
             else:
@@ -355,6 +357,58 @@ class MessageHandler:
                 )
             )
         return [response]
+    
+    async def _handle_joystick_message(self, message: Dict[str, Any], session_state: Dict[str, Any], 
+                                     websocket=None) -> List[Dict[str, Any]]:
+        """处理操纵杆相关消息（备用处理器）"""
+        print(f"消息类型: {message.get('type', 'unknown_joystick')}")
+        
+        # 这是一个备用处理器，主要处理应该由WebSocket服务器的joystick_handler处理的消息
+        # 如果消息到达这里，说明joystick_handler可能未正确设置
+        
+        message_type = message.get('type', '')
+        user_id = message.get('user_id', '')
+        
+        # 记录操纵杆相关操作到数据库
+        if not session_state.get('is_practice', False):
+            operation = {
+                'task_id': self.current_session.get('task_id'),
+                'operationType': message_type,
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True,
+                'parameters': {
+                    'joystick_data': message.get('data', {}),
+                    'device_status': message.get('device_status', 'unknown')
+                },
+                'user_id': user_id,
+                'event_owner': message.get('event_owner', 'manual')
+            }
+            db_manager.record_operation(operation, session_state.get('is_practice', False))
+        else:
+            print(f"练习模式，跳过 {message_type} 数据库记录。")
+        
+        # 根据消息类型返回适当的响应
+        if message_type == 'joystick_connect':
+            return [{
+                'type': 'joystick_connect_response',
+                'success': False,
+                'message': '操纵杆连接请求已接收，但应由专用处理器处理'
+            }]
+        elif message_type == 'joystick_disconnect':
+            return [{
+                'type': 'joystick_disconnect_response',
+                'success': False,
+                'message': '操纵杆断开请求已接收，但应由专用处理器处理'
+            }]
+        elif message_type == 'joystick_data':
+            # 操纵杆数据消息，通常用于广播，不需要响应
+            return []
+        else:
+            return [{
+                'type': 'joystick_message_response',
+                'success': False,
+                'message': f'操纵杆消息 {message_type} 已接收，但应由专用处理器处理'
+            }]
     
     # async def _handle_reset_targets(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
     #     """处理重置目标消息"""

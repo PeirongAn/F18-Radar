@@ -18,6 +18,7 @@ import ThreatList from './components/ThreatList';
 // import ConnectionStatus from './components/ConnectionStatus';
 // import audioManager from './managers/AudioManager';
 import { useDifficultyChangeDetection } from './utils/difficultyUtils';
+import JoystickInitializationPage from './pages/JoystickInitializationPage';
 
 // 日志类型声明，需与CommunicationLog保持一致
 
@@ -31,7 +32,7 @@ interface TargetSelectParams {
 
 const App: React.FC = observer(() => {
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
-  const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation'>('radar');
+  const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation' | 'joystick'>('radar');
   const [showInitialForm, setShowInitialForm] = useState<boolean>(true);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
@@ -292,7 +293,7 @@ const App: React.FC = observer(() => {
   }, [sendResetSA, clearMessages]);
 
   // 处理显示切换
-  const handleDisplayChange = (display: 'radar' | 'navigation') => {
+  const handleDisplayChange = (display: 'radar' | 'navigation' | 'joystick') => {
     setActiveDisplay(display);
     // 切换视图时清空消息历史
     clearMessages();
@@ -320,6 +321,9 @@ const App: React.FC = observer(() => {
       if (initializeSystem) {
         initializeSystem(userId, includeAI, isPractice);
       }
+    } else if (display === 'joystick') {
+      // 切换到操纵杆初始化页面
+      console.log('切换到操纵杆初始化页面');
     }
   };
 
@@ -352,6 +356,9 @@ const App: React.FC = observer(() => {
     } else if (activeDisplay === 'navigation') {
       info = repetitionInfos['SA_THREAT_RESPONSE'];
       task_type = 'SA_THREAT_RESPONSE';
+    } else if (activeDisplay === 'joystick') {
+      // 操纵杆初始化页面不显示任务信息
+      return null;
     }
 
     if (!info || typeof info === 'string' || !task_type) return null;
@@ -449,14 +456,21 @@ const App: React.FC = observer(() => {
         >
           SA页面
         </button>
+        <button 
+          className={`px-4 py-2 mx-2 font-mono rounded ${activeDisplay === 'joystick' ? 'bg-green-700 text-white' : 'bg-gray-800 text-green-500'}`}
+          onClick={() => handleDisplayChange('joystick')}
+        >
+          操纵杆初始化
+        </button>
       </div>
       
       <div className="flex flex-col lg:flex-row gap-8 px-4 max-w-8xl mx-auto">
         {/* 左侧显示区域 */}
-        <div className="w-full lg:w-3/5">
+        <div className={`w-full ${activeDisplay === 'joystick' ? 'lg:w-full' : 'lg:w-3/5'}`}>
           <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
             <h2 className="text-green-500 font-mono text-lg mb-4">
-              {activeDisplay === 'radar' ? '雷达显示器' : 'SA页面'}
+              {activeDisplay === 'radar' ? '雷达显示器' : 
+               activeDisplay === 'navigation' ? 'SA页面' : '操纵杆初始化'}
             </h2>
             
             {activeDisplay === 'radar' ? (
@@ -469,7 +483,7 @@ const App: React.FC = observer(() => {
                 onAddMessage={addMessage} // 添加日志记录功能
                 onClearMessages={clearMessages} // 添加清空日志功能
               />
-            ) : (
+            ) : activeDisplay === 'navigation' ? (
               <div className='flex justify-center'>
                 <SAPage 
                   width={800} 
@@ -482,48 +496,54 @@ const App: React.FC = observer(() => {
                   onShowDetailedInfoChange={handleShowDetailedInfoChange}
                 />
               </div>
+            ) : (
+              <div className='flex justify-center'>
+                <JoystickInitializationPage />
+              </div>
             )}
           </div>
         </div>
         
         {/* 右侧内容 - 调整顺序：通信日志在最上面 */}
-        <div className="w-full lg:w-2/5 flex flex-col gap-4">
-          {/* AI助手 - 放在最上面*/}
-          {includeAI && (
-              <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
-                <AIAssistant selectedTarget={selectedTarget} />
-              </div>
+        {activeDisplay !== 'joystick' && (
+          <div className="w-full lg:w-2/5 flex flex-col gap-4">
+            {/* AI助手 - 放在最上面*/}
+            {includeAI && (
+                <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
+                  <AIAssistant selectedTarget={selectedTarget} />
+                </div>
+              )}
+            {/* 通信日志 - 固定高度 */}
+            <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800" style={{ height: '500px' }}>
+              <h2 className="text-green-500 font-mono text-lg mb-4">通信日志</h2>
+                <CommunicationLog 
+                  userId={userId} 
+                  isStarted={isStarted} 
+                  taskId={taskId}
+                  currentTask={activeDisplay === 'navigation' ? 'sa' : 'radar'}
+                  radarRange={radarRange}
+                  scanAngle={scanAngle}
+                  antennaAdjustmentRequired={antennaAdjustmentRequired}
+                  targetAntennaElevation={targetAntennaElevation || undefined}
+                  initSettings={initSettings}
+                  connected={connected}
+                  error={error}
+                  operations={operations}
+                  onAddMessage={addMessage}
+                  messages={messages}
+                  emergencyReceived={emergencyReceived}
+                  lastEmergencyType={lastEmergencyType}
+                  lastEmergencyTime={lastEmergencyTime}
+                />
+            </div>
+            
+         
+            {/* 威胁列表 - 最下面，只在SA页面时显示 */}
+            {activeDisplay === 'navigation' && threatListData.length > 0 && (
+              <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
             )}
-          {/* 通信日志 - 固定高度 */}
-          <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800" style={{ height: '500px' }}>
-            <h2 className="text-green-500 font-mono text-lg mb-4">通信日志</h2>
-              <CommunicationLog 
-                userId={userId} 
-                isStarted={isStarted} 
-                taskId={taskId}
-                currentTask={activeDisplay === 'navigation' ? 'sa' : 'radar'}
-                radarRange={radarRange}
-                scanAngle={scanAngle}
-                antennaAdjustmentRequired={antennaAdjustmentRequired}
-                targetAntennaElevation={targetAntennaElevation || undefined}
-                initSettings={initSettings}
-                connected={connected}
-                error={error}
-                operations={operations}
-                onAddMessage={addMessage}
-                messages={messages}
-                emergencyReceived={emergencyReceived}
-                lastEmergencyType={lastEmergencyType}
-                lastEmergencyTime={lastEmergencyTime}
-              />
           </div>
-          
-       
-          {/* 威胁列表 - 最下面，只在SA页面时显示 */}
-          {activeDisplay === 'navigation' && threatListData.length > 0 && (
-            <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
-          )}
-        </div>
+        )}
       </div>
 
       {infoToShow && isStarted && (

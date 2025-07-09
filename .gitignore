@@ -24,3 +24,4 @@ dist-ssr
 *.sw? 
 radar_env/
 *.pyc
+.claude/

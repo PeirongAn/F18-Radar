@@ -136,8 +136,34 @@ class GlobalWebSocketManager {
   // 处理接收到的消息
   private handleMessage = (event: MessageEvent) => {
     try {
-      console.log('【全局WS】收到消息:', event.data);
       const rawData = JSON.parse(event.data);
+      
+      // 详细记录所有消息，特别关注重复调用的原因
+      console.log('【全局WS】handleMessage被调用:', {
+        messageType: rawData.type,
+        timestamp: rawData.timestamp || 'no_timestamp',
+        hasData: !!rawData.data,
+        callTime: new Date().toISOString()
+      });
+      
+      // 如果是操纵杆消息，额外记录详情
+      if (rawData.type?.startsWith('joystick_') || rawData.type === 'joystick_status') {
+        console.log('【操纵杆消息详情】:', {
+          type: rawData.type,
+          event: rawData.event,
+          hasData: !!rawData.data,
+          dataKeys: rawData.data ? Object.keys(rawData.data) : [],
+          fullMessage: rawData
+        });
+        
+        // 对于操纵杆消息，直接更新lastMessage并通知监听器
+        this.lastMessage = rawData;
+        this.updateState({
+          ...this.state,
+          // 不修改 radarData，只触发状态更新让监听器能收到消息
+        });
+        return; // 提前返回，不执行后续的雷达数据处理逻辑
+      }
       
       // 添加调试日志 - 检查消息类型
       console.log('【调试】消息类型:', rawData.type);
@@ -324,6 +350,9 @@ class GlobalWebSocketManager {
   public getLastMessage(): any {
     return this.lastMessage;
   }
+  
+  // 设置操纵杆数据更新频率
+
 }
 
 // 获取全局WebSocket实例

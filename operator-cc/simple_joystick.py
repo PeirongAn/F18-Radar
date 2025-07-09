@@ -46,7 +46,7 @@ class SimpleJoystickController:
         }
         
         # 边界检测配置文件路径
-        self.boundary_config_file = "joystick_boundaries.json"
+        self.boundary_config_file = "joystick_calibration.json"
         
         # 设备连接
         self.device = None
@@ -64,8 +64,8 @@ class SimpleJoystickController:
         self.boundary_detection_mode = False
         self.boundary_sample_count = 0
         
-        # 启动时加载边界检测配置
-        self.load_boundary_config()
+        # 启动时加载校准配置
+        self.load_calibration_config()
         
     def connect_joystick(self):
         """连接操纵杆设备"""
@@ -172,8 +172,20 @@ class SimpleJoystickController:
         print(f"Y轴: {self.axis_boundaries['y_min']:04X} ({self.axis_boundaries['y_min']}) - {self.axis_boundaries['y_max']:04X} ({self.axis_boundaries['y_max']})")
         print(f"RY轴: {self.axis_boundaries['ry_min']:04X} ({self.axis_boundaries['ry_min']}) - {self.axis_boundaries['ry_max']:04X} ({self.axis_boundaries['ry_max']})")
         
-        # 显示实际的中心值
-        print(f"实际中心值: X={self.center_values['x']:04X}, Y={self.center_values['y']:04X}, RY={self.center_values['ry']:04X}")
+        # 计算并更新中心值为边界范围的中点
+        for axis in ['x', 'y', 'ry']:
+            min_val = self.axis_boundaries[f'{axis}_min']
+            max_val = self.axis_boundaries[f'{axis}_max']
+            
+            if min_val != 0xFFFF and max_val != 0x0000 and max_val > min_val:
+                # 计算中心值为边界范围的中点
+                new_center = (min_val + max_val) // 2
+                old_center = self.center_values[axis]
+                self.center_values[axis] = new_center
+                print(f"{axis}轴中心值更新: {old_center:04X} -> {new_center:04X}")
+        
+        # 显示更新后的中心值
+        print(f"更新后的中心值: X={self.center_values['x']:04X}, Y={self.center_values['y']:04X}, RY={self.center_values['ry']:04X}")
         
         # 显示归一化范围
         for axis in ['x', 'y', 'ry']:
@@ -187,8 +199,8 @@ class SimpleJoystickController:
                 print(f"{axis}轴归一化范围: 中心到最小={center_to_min}, 中心到最大={center_to_max}")
                 print(f"  范围: {min_val:04X} - {center_val:04X} - {max_val:04X}")
         
-        # 保存边界检测配置到文件
-        self.save_boundary_config()
+        # 保存校准配置到文件
+        self.save_calibration_config()
         return True
     
     def _process_raw_data(self, data):
@@ -327,8 +339,8 @@ class SimpleJoystickController:
         # 严格限制在-1到1范围内
         return max(-1.0, min(1.0, normalized))
     
-    def load_boundary_config(self):
-        """从JSON文件加载边界检测配置"""
+    def load_calibration_config(self):
+        """从JSON文件加载校准配置"""
         try:
             if os.path.exists(self.boundary_config_file):
                 with open(self.boundary_config_file, 'r', encoding='utf-8') as f:
@@ -337,7 +349,7 @@ class SimpleJoystickController:
                 # 更新边界值
                 if 'axis_boundaries' in config:
                     self.axis_boundaries.update(config['axis_boundaries'])
-                    print(f"已加载边界检测配置: {self.boundary_config_file}")
+                    print(f"已加载校准配置: {self.boundary_config_file}")
                     print(f"X轴: {self.axis_boundaries['x_min']:04X} - {self.axis_boundaries['x_max']:04X}")
                     print(f"Y轴: {self.axis_boundaries['y_min']:04X} - {self.axis_boundaries['y_max']:04X}")
                     print(f"RY轴: {self.axis_boundaries['ry_min']:04X} - {self.axis_boundaries['ry_max']:04X}")
@@ -348,26 +360,26 @@ class SimpleJoystickController:
                     print(f"已加载中心值: X={self.center_values['x']:04X}, Y={self.center_values['y']:04X}, RY={self.center_values['ry']:04X}")
                     
         except Exception as e:
-            print(f"加载边界检测配置失败: {e}")
+            print(f"加载校准配置失败: {e}")
             print("使用默认配置")
     
-    def save_boundary_config(self):
-        """保存边界检测配置到JSON文件"""
+    def save_calibration_config(self):
+        """保存校准配置到JSON文件"""
         try:
             config = {
                 'axis_boundaries': self.axis_boundaries.copy(),
                 'center_values': self.center_values.copy(),
                 'timestamp': datetime.now().isoformat(),
-                'description': '操纵杆边界检测和中心值配置'
+                'description': '操纵杆校准配置 - 边界检测和中心值'
             }
             
             with open(self.boundary_config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
                 
-            print(f"边界检测配置已保存: {self.boundary_config_file}")
+            print(f"校准配置已保存: {self.boundary_config_file}")
             
         except Exception as e:
-            print(f"保存边界检测配置失败: {e}")
+            print(f"保存校准配置失败: {e}")
     
     def get_data(self):
         """获取当前数据"""
