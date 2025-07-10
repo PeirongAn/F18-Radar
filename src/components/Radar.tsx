@@ -587,6 +587,11 @@ const Radar: React.FC<RadarProps> = (({
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
+    // 直接更新radarStore中的lockedTargetId和lockScreenX
+    radarStore.setLockedTargetId(params.targetId);
+    radarStore.setLockScreenX(params.lockX);
+    console.log(`[Radar] 目标锁定状态更新: ${params.targetId}, 锁定线X坐标: ${params.lockX}`);
+    
     if (onTargetSelect) {
       // 用户手动操作
       onTargetSelect({ ...params, event_owner: 'manual' });
@@ -759,6 +764,82 @@ const Radar: React.FC<RadarProps> = (({
     // 可以添加一些UI反馈，比如短暂显示"已接管控制"的提示
     console.log('✅ 用户已接管雷达控制');
   }, [sendMessage]);
+
+  // 处理摇杆button1触发的范围增加功能
+  const handleJoystickRangeIncrease = useCallback(() => {
+    console.log('[摇杆控制] 执行范围增加功能');
+    
+    // 增加范围索引，实现循环（等同于右侧index=1按钮）
+    const newIndex = (rangeIndex + 1) % RADAR_RANGES.length;
+    setRangeIndex(newIndex);
+    
+    // 如果系统已准备就绪，向服务器发送雷达范围更新
+    if (isStarted) {
+      submitSettings({
+        range: RADAR_RANGES[newIndex],
+        scanAngle: scanMode.scanAngle
+      });
+    }
+  }, [rangeIndex, isStarted, submitSettings, scanMode.scanAngle]);
+
+  // 处理摇杆button2触发的扫描角度切换功能
+  const handleJoystickScanAngleSwitch = useCallback(() => {
+    console.log('[摇杆控制] 执行扫描角度切换功能');
+    
+    // 左侧第3个按钮循环切换扫描角度，在15度、30度和60度之间切换
+    let newScanAngle: number;
+    let newScanFraction: number;
+    
+    // 根据当前角度确定下一个角度
+    if (scanMode.scanAngle === 60) {
+      newScanAngle = 15;
+      newScanFraction = 0.25; // 1/4区域
+    } else if (scanMode.scanAngle === 15) {
+      newScanAngle = 30;
+      newScanFraction = 0.5;  // 1/2区域
+    } else {
+      newScanAngle = 60;
+      newScanFraction = 1.0;  // 全区域
+    }
+    
+    // 设置新的扫描模式
+    setScanMode({
+      name: newScanAngle === 60 ? 'normal' : newScanAngle === 30 ? 'medium' : 'narrow',
+      scanAngle: newScanAngle,
+      scanFraction: newScanFraction,
+      centerOffset: scanMode.centerOffset // 保持原有的中心偏移量
+    });
+    
+    // 如果系统已准备就绪，向服务器发送雷达范围更新
+    if (isStarted) {
+      console.log("摇杆扫描角度切换####", isStarted, RADAR_RANGES[rangeIndex], newScanAngle);
+      submitSettings({
+        range: RADAR_RANGES[rangeIndex],
+        scanAngle: newScanAngle
+      });
+    }
+  }, [scanMode, isStarted, submitSettings, rangeIndex]);
+
+  // 监听摇杆按钮自定义事件
+  useEffect(() => {
+    // 监听摇杆button1事件（范围增加）
+    const handleJoystickRangeIncreaseEvent = () => {
+      handleJoystickRangeIncrease();
+    };
+    
+    // 监听摇杆button2事件（扫描角度切换）
+    const handleJoystickScanAngleSwitchEvent = () => {
+      handleJoystickScanAngleSwitch();
+    };
+    
+    window.addEventListener('joystickRangeIncrease', handleJoystickRangeIncreaseEvent);
+    window.addEventListener('joystickScanAngleSwitch', handleJoystickScanAngleSwitchEvent);
+    
+    return () => {
+      window.removeEventListener('joystickRangeIncrease', handleJoystickRangeIncreaseEvent);
+      window.removeEventListener('joystickScanAngleSwitch', handleJoystickScanAngleSwitchEvent);
+    };
+  }, [handleJoystickRangeIncrease, handleJoystickScanAngleSwitch]);
 
   // 添加F10快捷键监听
   useEffect(() => {

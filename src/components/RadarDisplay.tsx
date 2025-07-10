@@ -109,8 +109,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
   
-  // 获取重复信息
-  const { repetitionInfos } = useRadarData();
+  // 获取重复信息和摇杆数据
+  const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled } = useRadarData();
 
   // 计算当前难度和AI状态
   const currentDifficulty = useMemo(() => {
@@ -136,6 +136,22 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
   const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
   const [showDifficultyChangeModal, setShowDifficultyChangeModal] = React.useState(false);
+  
+  // 摇杆控制TDC相关状态
+  const [calibrationOffset, setCalibrationOffset] = React.useState({x: 0, y: 0});
+  const [expectedJoystickPos, setExpectedJoystickPos] = React.useState({x: 0, y: 0});
+  const [lockedTdcPosition, setLockedTdcPosition] = React.useState<{x: number, y: number} | null>(null);
+  const previousButton7Ref = React.useRef(false);
+  
+  // 摇杆控制天线高度相关状态
+  const [lockedAntennaElevation, setLockedAntennaElevation] = React.useState<number | null>(null);
+  const [antennaElevationCalibrationOffset, setAntennaElevationCalibrationOffset] = React.useState(0);
+  const [expectedSubY, setExpectedSubY] = React.useState(0);
+  
+  // 防抖相关状态 - 防止快速重复触发
+  const lastButton7TriggerTime = React.useRef(0);
+  const button7DebounceDelay = 300; // 300ms防抖延迟
+  
   // 将重置函数暴露给父组件
   React.useEffect(() => {
     if (resetIFF) {
@@ -150,6 +166,189 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const centerX = (framePositions.startX + framePositions.endX) / 2;
   const centerY = (framePositions.startY + framePositions.endY) / 2;
   
+  // TDC坐标转换函数
+  const tdcToJoystick = React.useCallback((tdcPos: {x: number, y: number}) => {
+    const radarWidth = framePositions.endX - framePositions.startX;
+    const radarHeight = framePositions.endY - framePositions.startY;
+    const bufferX = 20;
+    const bufferY = 20;
+    
+    // 将TDC屏幕坐标转换为摇杆逻辑坐标(-1到1)
+    const joystickX = ((tdcPos.x - framePositions.startX - bufferX) / (radarWidth - 2 * bufferX)) * 2 - 1;
+    const joystickY = ((tdcPos.y - framePositions.startY - bufferY) / (radarHeight - 2 * bufferY)) * 2 - 1;
+    
+    // 限制在-1到1范围内
+    return {
+      x: Math.max(-1, Math.min(1, joystickX)),
+      y: Math.max(-1, Math.min(1, joystickY))
+    };
+  }, [framePositions]);
+  
+  const joystickToTdc = React.useCallback((joystickPos: {x: number, y: number}) => {
+    const radarWidth = framePositions.endX - framePositions.startX;
+    const radarHeight = framePositions.endY - framePositions.startY;
+    const bufferX = 20;
+    const bufferY = 20;
+    
+    // 将摇杆坐标(-1到1)转换为TDC屏幕坐标
+    const tdcX = framePositions.startX + bufferX + 
+                 (joystickPos.x + 1) / 2 * (radarWidth - 2 * bufferX);
+    const tdcY = framePositions.startY + bufferY + 
+                 (joystickPos.y + 1) / 2 * (radarHeight - 2 * bufferY);
+    
+    return { x: tdcX, y: tdcY };
+  }, [framePositions]);
+  
+  // 副轴到天线高度的转换函数
+  const subYToAntennaElevation = React.useCallback((subY: number) => {
+    // 将副轴坐标(-1到1)转换为天线高度(-3到3度)
+    // subY: -1 = 天线高度 +3度（最高）
+    // subY: +1 = 天线高度 -3度（最低）
+    const elevation = -subY * 3; // 反向映射
+    return Math.max(-3, Math.min(3, Math.round(elevation))); // 限制在-3到3度范围内并四舍五入
+  }, []);
+  
+  const antennaElevationToSubY = React.useCallback((elevation: number) => {
+    // 将天线高度(-3到3度)转换为副轴坐标(-1到1)
+    return -elevation / 3; // 反向映射
+  }, []);
+  
+  
+
+  
+  // 计算校准后的摇杆位置
+  const getCalibratedJoystickPos = React.useCallback(() => {
+    if (!joystickEnabled || !mainPos) {
+      return { x: 0, y: 0 };
+    }
+    
+    // 应用校准偏移
+    return {
+      x: Math.max(-1, Math.min(1, mainPos.x + calibrationOffset.x)),
+      y: Math.max(-1, Math.min(1, mainPos.y + calibrationOffset.y))
+    };
+  }, [joystickEnabled, mainPos, calibrationOffset]);
+  
+  // 计算校准后的副轴位置
+  const getCalibratedSubY = React.useCallback(() => {
+    if (!joystickEnabled || subY === undefined) {
+      return 0;
+    }
+    
+    // 应用校准偏移
+    return Math.max(-1, Math.min(1, subY + antennaElevationCalibrationOffset));
+  }, [joystickEnabled, subY, antennaElevationCalibrationOffset]);
+  
+  // 根据摇杆位置计算TDC位置
+  const calculatedTdcPosition = React.useMemo(() => {
+    // 如果TDC位置被锁定，使用锁定时的TDC位置
+    if (lockedTdcPosition) {
+      console.log('[TDC计算] TDC位置已锁定，使用锁定位置:', lockedTdcPosition);
+      return lockedTdcPosition;
+    }
+    
+    if (!joystickEnabled) {
+      console.log('[TDC计算] 摇杆未启用，使用原始位置:', tdcPosition);
+      return tdcPosition; // 摇杆未启用时使用原始位置
+    }
+    
+    const calibratedPos = getCalibratedJoystickPos();
+    const newTdcPos = joystickToTdc(calibratedPos);
+    
+    // 调试日志（减少频繁日志输出）
+    if (Math.abs(newTdcPos.x - tdcPosition.x) > 1 || Math.abs(newTdcPos.y - tdcPosition.y) > 1) {
+      console.log('[TDC计算] 摇杆控制模式');
+      console.log('[TDC计算] 摇杆物理位置:', mainPos);
+      console.log('[TDC计算] 校准偏移量:', calibrationOffset);
+      console.log('[TDC计算] 校准后位置:', calibratedPos);
+      console.log('[TDC计算] 计算TDC位置:', newTdcPos);
+      console.log('[TDC计算] 锁定状态:', radarStore.lockedTargetId ? '已锁定' : '未锁定');
+    }
+    
+    return newTdcPos;
+  }, [joystickEnabled, getCalibratedJoystickPos, joystickToTdc, tdcPosition, lockedTdcPosition, mainPos, calibrationOffset]);
+  
+  // 根据副轴位置计算天线高度
+  const calculatedAntennaElevation = React.useMemo(() => {
+    // 如果天线高度被锁定，使用锁定时的天线高度
+    if (lockedAntennaElevation !== null) {
+      console.log('[天线高度计算] 天线高度已锁定，使用锁定高度:', lockedAntennaElevation);
+      return lockedAntennaElevation;
+    }
+    
+    if (!joystickEnabled || subY === undefined) {
+      return radarStore.currentAntennaElevation; // 摇杆未启用时使用store中的当前值
+    }
+    
+    const calibratedSubY = getCalibratedSubY();
+    const newElevation = subYToAntennaElevation(calibratedSubY);
+    
+    // 调试日志（减少频繁日志输出）
+    if (Math.abs(newElevation - radarStore.currentAntennaElevation) > 0.1) {
+      console.log('[天线高度计算] 副轴控制模式');
+      console.log('[天线高度计算] 副轴物理位置:', subY);
+      console.log('[天线高度计算] 校准偏移量:', antennaElevationCalibrationOffset);
+      console.log('[天线高度计算] 校准后位置:', calibratedSubY);
+      console.log('[天线高度计算] 计算天线高度:', newElevation);
+      console.log('[天线高度计算] 锁定状态:', lockedAntennaElevation !== null ? '已锁定' : '未锁定');
+    }
+    
+    return newElevation;
+  }, [joystickEnabled, getCalibratedSubY, subYToAntennaElevation, radarStore.currentAntennaElevation, lockedAntennaElevation, subY, antennaElevationCalibrationOffset]);
+  
+  // 监听计算出的天线高度变化，更新radarStore
+  React.useEffect(() => {
+    if (joystickEnabled && calculatedAntennaElevation !== radarStore.currentAntennaElevation) {
+      radarStore.setCurrentAntennaElevation(calculatedAntennaElevation, 'user', sendMessage);
+    }
+  }, [calculatedAntennaElevation, joystickEnabled, sendMessage]);
+  
+  // 监听目标解锁时清除TDC位置锁定（如果是通过其他方式解锁的目标）
+  React.useEffect(() => {
+    // 如果目标被其他方式解锁（比如键盘Escape键），同时清除TDC位置锁定
+    if (!radarStore.lockedTargetId && lockedTdcPosition) {
+      console.log('[目标解锁] 检测到目标被其他方式解锁，清除TDC位置锁定');
+      
+      const lastLockedPosition = lockedTdcPosition;
+      setLockedTdcPosition(null);
+      
+      if (joystickEnabled && mainPos) {
+        // 重新校准摇杆，使TDC保持在解锁前的位置
+        const expectedPos = tdcToJoystick(lastLockedPosition);
+        const newOffset = {
+          x: Math.max(-1, Math.min(1, expectedPos.x - mainPos.x)),
+          y: Math.max(-1, Math.min(1, expectedPos.y - mainPos.y))
+        };
+        
+        setCalibrationOffset(newOffset);
+        setExpectedJoystickPos(expectedPos);
+        console.log('[目标解锁] 重新校准摇杆，偏移量:', newOffset);
+      }
+    }
+  }, [radarStore.lockedTargetId, lockedTdcPosition, joystickEnabled, mainPos, tdcToJoystick]);
+  
+  // 监听天线高度变化，当通过其他方式改变天线高度时同步更新期望副轴位置
+  React.useEffect(() => {
+    if (joystickEnabled && lockedAntennaElevation === null && subY !== undefined) {
+      const newExpectedSubY = antennaElevationToSubY(radarStore.currentAntennaElevation);
+      if (Math.abs(newExpectedSubY - expectedSubY) > 0.01) {
+        setExpectedSubY(newExpectedSubY);
+        console.log('[天线高度摇杆控制] 同步期望副轴位置:', newExpectedSubY);
+      }
+    }
+  }, [joystickEnabled, radarStore.currentAntennaElevation, expectedSubY, antennaElevationToSubY, lockedAntennaElevation, subY]);
+
+  // 当TDC位置通过其他方式改变时，同步更新期望摇杆位置
+  React.useEffect(() => {
+    if (joystickEnabled && !lockedTdcPosition) { // 只有在TDC位置未锁定时才同步
+      const newExpectedPos = tdcToJoystick(tdcPosition);
+      if (Math.abs(newExpectedPos.x - expectedJoystickPos.x) > 0.01 || 
+          Math.abs(newExpectedPos.y - expectedJoystickPos.y) > 0.01) {
+        setExpectedJoystickPos(newExpectedPos);
+        console.log('[TDC摇杆控制] 同步期望摇杆位置:', newExpectedPos);
+      }
+    }
+  }, [joystickEnabled, tdcPosition, expectedJoystickPos, tdcToJoystick, lockedTdcPosition]);
   
   // 添加useEffect来监控radarData的变化并更新本地状态
   React.useEffect(() => {
@@ -158,6 +357,21 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       setOwnHeading(radarData.own_heading);
     }
   }, [radarData]);
+  
+  // 组件卸载时清理摇杆控制状态
+  React.useEffect(() => {
+    return () => {
+      if (joystickEnabled) {
+        console.log('[摇杆控制] 组件卸载，清理状态');
+        setCalibrationOffset({x: 0, y: 0});
+        setExpectedJoystickPos({x: 0, y: 0});
+        setLockedTdcPosition(null);
+        setLockedAntennaElevation(null);
+        setAntennaElevationCalibrationOffset(0);
+        setExpectedSubY(0);
+      }
+    };
+  }, [joystickEnabled]);
   
   // 直接检查并处理targets
   React.useEffect(() => {
@@ -292,12 +506,21 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   // 处理按下Enter键时的TDC和目标选择逻辑
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape' && onTargetSelect) {
+      // 处理Escape键，解锁目标
+      console.log('RadarDisplay - Escape键被按下，解锁目标');
+      onTargetSelect({ targetId: undefined, lockX: undefined });
+      return;
+    }
+    
     if (e.key === 'Enter' && processedExternalTargets && onTargetSelect) {
-      console.log('RadarDisplay - Enter键被按下，TDC位置:', tdcPosition);
+      // 使用实际的TDC位置（可能是摇杆控制的位置）
+      const currentTdcPos = joystickEnabled ? calculatedTdcPosition : tdcPosition;
+      console.log('RadarDisplay - Enter键被按下，TDC位置:', currentTdcPos);
       
       // 计算TDC的X偏移量
       if (onTDCPositionSet) {
-        const offset = tdcPosition.x - centerX;
+        const offset = currentTdcPos.x - centerX;
         onTDCPositionSet(offset);
         console.log(`TDC位置已设置，偏移量: ${offset}px`);
       }
@@ -313,8 +536,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         const targetPos = actualPosition || target.position; // 如果没有实际位置，使用原始位置作为备选
         
         const distance = Math.sqrt(
-          Math.pow(targetPos.x - tdcPosition.x, 2) + 
-          Math.pow(targetPos.y - tdcPosition.y, 2)
+          Math.pow(targetPos.x - currentTdcPos.x, 2) + 
+          Math.pow(targetPos.y - currentTdcPos.y, 2)
         );
         
         if (distance < minDistance) {
@@ -328,7 +551,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         console.log('找到最近的目标:', closestTarget.id, '距离:', minDistance);
         onTargetSelect({
           targetId: closestTarget.id,
-          lockX: tdcPosition.x,
+          lockX: currentTdcPos.x,
           iffMode: iffMode,
           externalTargetsTimestamp: radarData?.externalTargetsTimestamp
         });
@@ -338,7 +561,123 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
     }
 
-  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions]);
+  }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions, joystickEnabled, calculatedTdcPosition]);
+
+  // 处理确认弹窗的确认操作
+  const handleConfirmYes = useCallback(() => {
+    // 先清空日志
+    if (onClearMessages) {
+      onClearMessages();
+    }
+    
+    // 然后重置任务
+    if (onResetForNextMission) {
+      onResetForNextMission();
+    }
+    setShowMissionConfirm(false);
+  }, [onClearMessages, onResetForNextMission]);
+
+  // 处理button7的位置锁定/解锁逻辑（长按按钮 - 下降沿检测）
+  React.useEffect(() => {
+    // 检测button7从true变为false的瞬间（按钮松开）
+    if (!button7 && previousButton7Ref.current && joystickEnabled) {
+      const currentTime = Date.now();
+      
+      // 防抖处理：如果距离上次触发时间太短，则忽略这次触发
+      if (currentTime - lastButton7TriggerTime.current < button7DebounceDelay) {
+        console.log('[位置锁定] Button7触发被防抖过滤');
+        previousButton7Ref.current = button7;
+        return;
+      }
+      
+      lastButton7TriggerTime.current = currentTime;
+      
+      // 优先检查是否有弹窗显示，如果有则触发确认
+      if (showMissionConfirm) {
+        console.log('[Button7] 任务弹窗显示中，触发确认');
+        handleConfirmYes();
+        previousButton7Ref.current = button7;
+        return;
+      }
+      
+      if (lockedTdcPosition || lockedAntennaElevation !== null) {
+        // TDC位置或天线高度已锁定，触发解锁功能
+        console.log('[Button7] 位置已锁定，触发解锁');
+        
+        // 保存当前锁定的位置和天线高度
+        const lastLockedPosition = lockedTdcPosition;
+        const lastLockedElevation = lockedAntennaElevation;
+        
+        // 解锁TDC位置和天线高度
+        setLockedTdcPosition(null);
+        setLockedAntennaElevation(null);
+        
+        // 同时解锁目标（如果有锁定的目标）
+        if (radarStore.lockedTargetId) {
+          const keyEvent = new KeyboardEvent('keydown', { key: 'Escape' });
+          handleKeyDown(keyEvent);
+        }
+        
+        // 重新校准摇杆（主轴）
+        if (mainPos && lastLockedPosition) {
+          const expectedPos = tdcToJoystick(lastLockedPosition);
+          const newOffset = {
+            x: Math.max(-1, Math.min(1, expectedPos.x - mainPos.x)),
+            y: Math.max(-1, Math.min(1, expectedPos.y - mainPos.y))
+          };
+          
+          setCalibrationOffset(newOffset);
+          setExpectedJoystickPos(expectedPos);
+          console.log('[Button7] 解锁后重新校准摇杆主轴');
+          console.log('[Button7] 解锁前TDC位置:', lastLockedPosition);
+          console.log('[Button7] 期望摇杆位置:', expectedPos);
+          console.log('[Button7] 当前摇杆位置:', mainPos);
+          console.log('[Button7] 校准偏移量:', newOffset);
+        }
+        
+        // 重新校准摇杆（副轴）
+        if (subY !== undefined && lastLockedElevation !== null) {
+          const expectedSubY = antennaElevationToSubY(lastLockedElevation);
+          const newAntennaOffset = Math.max(-1, Math.min(1, expectedSubY - subY));
+          
+          setAntennaElevationCalibrationOffset(newAntennaOffset);
+          setExpectedSubY(expectedSubY);
+          console.log('[Button7] 解锁后重新校准摇杆副轴');
+          console.log('[Button7] 解锁前天线高度:', lastLockedElevation);
+          console.log('[Button7] 期望副轴位置:', expectedSubY);
+          console.log('[Button7] 当前副轴位置:', subY);
+          console.log('[Button7] 校准偏移量:', newAntennaOffset);
+        }
+        
+        console.log('[Button7] TDC位置和天线高度已解锁，恢复摇杆控制');
+      } else {
+        // TDC位置和天线高度未锁定，触发锁定功能
+        console.log('[Button7] 位置未锁定，触发锁定');
+        
+        // 锁定当前TDC位置
+        let currentTdcPos = tdcPosition;
+        
+        if (joystickEnabled) {
+          // 使用摇杆控制的TDC位置
+          const calibratedJoystickPos = getCalibratedJoystickPos();
+          currentTdcPos = joystickToTdc(calibratedJoystickPos);
+        }
+        
+        setLockedTdcPosition(currentTdcPos);
+        console.log('[Button7] TDC位置已锁定:', currentTdcPos);
+        
+        // 锁定当前天线高度
+        const currentElevation = calculatedAntennaElevation;
+        setLockedAntennaElevation(currentElevation);
+        console.log('[Button7] 天线高度已锁定:', currentElevation);
+        
+        // 尝试锁定目标（如果TDC位置附近有目标）
+        const keyEvent = new KeyboardEvent('keydown', { key: 'Enter' });
+        handleKeyDown(keyEvent);
+      }
+    }
+    previousButton7Ref.current = button7;
+  }, [button7, joystickEnabled, handleKeyDown, lockedTdcPosition, lockedAntennaElevation, tdcPosition, getCalibratedJoystickPos, joystickToTdc, mainPos, tdcToJoystick, radarStore.lockedTargetId, subY, antennaElevationToSubY, calculatedAntennaElevation, showMissionConfirm, handleConfirmYes]);
   
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {
@@ -395,19 +734,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     }
     setIffMode(prev => !prev);
   };
-  
-  const handleConfirmYes = () => {
-    // 先清空日志
-    if (onClearMessages) {
-      onClearMessages();
-    }
-    
-    // 然后重置任务
-    if (onResetForNextMission) {
-      onResetForNextMission();
-    }
-    setShowMissionConfirm(false);
-  };
+
   
   // 监听自动激活IFF事件
   React.useEffect(() => {
@@ -421,6 +748,20 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     
     return () => {
       window.removeEventListener('resetIFF', handleResetIFF);
+    };
+  }, []);
+
+  // 监听摇杆双按钮IFF触发事件
+  React.useEffect(() => {
+    const handleJoystickIFFTrigger = () => {
+      console.log('RadarDisplay - 收到摇杆IFF触发事件');
+      handleIffButtonClick();
+    };
+
+    window.addEventListener('joystickIFFTrigger', handleJoystickIFFTrigger);
+    
+    return () => {
+      window.removeEventListener('joystickIFFTrigger', handleJoystickIFFTrigger);
     };
   }, []);
   
@@ -495,7 +836,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
             height,
             radarConfig,
             framePositions,
-            tdcPosition,
+            tdcPosition: joystickEnabled ? calculatedTdcPosition : tdcPosition, // 使用摇杆控制的位置或原始位置
             scanAngle: scanMode.scanAngle,
             centerOffset: scanMode.centerOffset,
             onTDCPositionSet,
@@ -508,6 +849,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     isStarted,
     sendMessage,
     heading: radarData?.own_heading,
+    joystickEnabled, // 添加摇杆控制状态
   };
   
   // Find the locked target object from the list
@@ -537,6 +879,29 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   return (
     <div style={{ position: 'relative', width, height }}>
+      
+      摇杆控制状态指示器
+      {joystickEnabled && (
+        <div style={{
+          position: 'absolute',
+          top: '10px',
+          right: '10px',
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          color: (lockedTdcPosition || lockedAntennaElevation !== null) ? '#FF6600' : '#00FF00',
+          padding: '8px 12px',
+          borderRadius: '4px',
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          border: `1px solid ${(lockedTdcPosition || lockedAntennaElevation !== null) ? '#FF6600' : '#00FF00'}`,
+          zIndex: 1000,
+          whiteSpace: 'pre-line'
+        }}>
+          {`摇杆控制: ${(lockedTdcPosition || lockedAntennaElevation !== null) ? '位置锁定' : '启用'}
+B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释放'} (角度) | B7: ${button7 ? '按下' : '释放'} (锁定)`}
+        </div>
+      )}
+      
+
       
       <Stage width={width} height={height}>
         <Layer>

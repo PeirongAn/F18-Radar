@@ -389,6 +389,14 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
   const [saThreats, setSaThreats] = useState<any[]>([]); // 重新添加 saThreats 状态
   
+  // 操纵杆相关状态
+  const [joystickEnabled, setJoystickEnabled] = useState<boolean>(true); // 是否启用操纵杆，默认为是
+  const [mainPos, setMainPos] = useState<{ x: number; y: number }>({ x: 0.0, y: 0.0 }); // 主轴位置
+  const [subY, setSubY] = useState<number>(0.0); // 副轴Y坐标
+  const [button1, setButton1] = useState<boolean>(false); // 按钮1状态
+  const [button2, setButton2] = useState<boolean>(false); // 按钮2状态
+  const [button7, setButton7] = useState<boolean>(false); // 按钮7状态
+  
   // 修改：任务重复信息状态，以支持多个任务类型
   const [repetitionInfos, setRepetitionInfos] = useState<AllRepetitionInfos>({
     RADAR_TARGETING: null,
@@ -535,6 +543,29 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
 
     console.log('[useRadarData] Processing message:', message);
 
+    // 处理操纵杆数据消息
+    if (message.type === 'joystick_data' && joystickEnabled) {
+      console.log('[useRadarData] Processing joystick_data:', message.data);
+      
+      if (message.data) {
+        // 更新主轴位置
+        setMainPos({ 
+          x: message.data.main_x || 0.0, 
+          y: message.data.main_y || 0.0 
+        });
+        
+        // 更新副轴Y坐标
+        setSubY(message.data.sub_y || 0.0);
+        
+        // 更新按钮状态
+        if (message.data.buttons) {
+          setButton1(message.data.buttons.button1 || false);
+          setButton2(message.data.buttons.button2 || false);
+          setButton7(message.data.buttons.button7 || false);
+        }
+      }
+    }
+
     // Handle AI parameter recommendations specifically
     if (message.type === 'ai_param_recommendation' && message.recommendation) {
       agentStore.setServerAIRecommendation(message.recommendation);
@@ -630,7 +661,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 
-  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired]);
+  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled]);
   
   const confirmAntennaAdjustmentHandled = useCallback(() => {
     console.log('Confirming to backend that antenna adjustment has been handled.');
@@ -682,6 +713,96 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice, is_ai_active: agentStore.isAIActive });
   }, [sendMessage]);
 
+  // 操纵杆按钮状态的前一状态引用
+  const previousButton1Ref = useRef(false);
+  const previousButton2Ref = useRef(false);
+  
+  // 防抖相关状态 - 防止快速重复触发
+  const lastButton1TriggerTime = useRef(0);
+  const lastButton2TriggerTime = useRef(0);
+  const lastDualButtonTriggerTime = useRef(0); // 添加双按钮防抖
+  const buttonDebounceDelay = 300; // 300ms防抖延迟
+  
+  // 监听button1状态变化（对应右侧index=1按钮 - 增加范围）
+  useEffect(() => {
+    // 检测button1从false变为true的瞬间（按钮按下），且button2未按下
+    if (button1 && !previousButton1Ref.current && !button2 && joystickEnabled) {
+      const currentTime = Date.now();
+      
+      // 防抖处理
+      if (currentTime - lastButton1TriggerTime.current < buttonDebounceDelay) {
+        console.log('[摇杆按钮] Button1触发被防抖过滤');
+        previousButton1Ref.current = button1;
+        return;
+      }
+      
+      lastButton1TriggerTime.current = currentTime;
+      console.log('[摇杆按钮] Button1单独按下，触发增加范围功能');
+      
+      // 发送自定义事件给Radar组件
+      const event = new CustomEvent('joystickRangeIncrease');
+      window.dispatchEvent(event);
+    }
+    previousButton1Ref.current = button1;
+  }, [button1, button2, joystickEnabled]);
+  
+  // 监听button2状态变化（对应左侧index=3按钮 - 切换扫描角度）
+  useEffect(() => {
+    // 检测button2从false变为true的瞬间（按钮按下），且button1未按下
+    if (button2 && !previousButton2Ref.current && !button1 && joystickEnabled) {
+      const currentTime = Date.now();
+      
+      // 防抖处理
+      if (currentTime - lastButton2TriggerTime.current < buttonDebounceDelay) {
+        console.log('[摇杆按钮] Button2触发被防抖过滤');
+        previousButton2Ref.current = button2;
+        return;
+      }
+      
+      lastButton2TriggerTime.current = currentTime;
+      console.log('[摇杆按钮] Button2单独按下，触发切换扫描角度功能');
+      
+      // 发送自定义事件给Radar组件
+      const event = new CustomEvent('joystickScanAngleSwitch');
+      window.dispatchEvent(event);
+    }
+    previousButton2Ref.current = button2;
+  }, [button1, button2, joystickEnabled]);
+
+  // 监听button1和button2同时按下（触发IFF功能）
+  useEffect(() => {
+    // 检测button1和button2同时按下的状态
+    if (button1 && button2 && joystickEnabled) {
+      const currentTime = Date.now();
+      
+      // 防抖处理
+      if (currentTime - lastDualButtonTriggerTime.current < buttonDebounceDelay) {
+        console.log('[摇杆按钮] 双按钮触发被防抖过滤');
+        return;
+      }
+      
+      lastDualButtonTriggerTime.current = currentTime;
+      console.log('[摇杆按钮] Button1和Button2同时按下，触发IFF功能');
+      
+      // 发送自定义事件给Radar组件
+      const event = new CustomEvent('joystickIFFTrigger');
+      window.dispatchEvent(event);
+    }
+  }, [button1, button2, joystickEnabled]);
+
+  // 操纵杆相关控制函数
+  const resetJoystickData = useCallback(() => {
+    setMainPos({ x: 0.0, y: 0.0 });
+    setSubY(0.0);
+    setButton1(false);
+    setButton2(false);
+    setButton7(false);
+    
+    // 重置状态引用
+    previousButton1Ref.current = false;
+    previousButton2Ref.current = false;
+  }, []);
+
   
   return { 
     connected, 
@@ -709,6 +830,16 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     repetitionInfos, // 导出新的字典状态
     saThreats, // 确保导出 saThreats
     lastMessage: globalWS.getLastMessage(), // 导出最后一条消息
+    
+    // 操纵杆相关状态
+    joystickEnabled, // 是否启用操纵杆
+    setJoystickEnabled, // 设置操纵杆启用状态的函数
+    mainPos, // 主轴位置 { x, y }
+    subY, // 副轴Y坐标
+    button1, // 按钮1状态
+    button2, // 按钮2状态
+    button7, // 按钮7状态
+    resetJoystickData, // 重置操纵杆数据的函数
   };
 };
 

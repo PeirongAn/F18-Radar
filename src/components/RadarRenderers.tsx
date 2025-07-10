@@ -27,6 +27,7 @@ interface RenderProps {
   isSilent?: boolean; // 雷达静默模式状态
   isStarted?: boolean; // 雷达启动状态
   sendMessage: (message: any) => void; // 发送消息函数
+  joystickEnabled?: boolean; // 摇杆控制状态
 }
   // 抽取刻度线相关的常量
 const scaleLineLength = 20;  // 刻度线长度
@@ -44,7 +45,8 @@ export const renderMainFrame = ({
   displayMode = 'AUTO', // 默认为AUTO模式
   hiMedToggle = 'HI', // 默认为HI
   isSilent = false, // 默认非静默模式
-  isStarted = true // 默认启动状态
+  isStarted = true, // 默认启动状态
+  joystickEnabled = false // 默认不启用摇杆控制
 }: RenderProps) => {
   const { startX, startY, endX, endY } = framePositions;
   
@@ -192,6 +194,7 @@ export const renderMainFrame = ({
         minY={minY}
         maxY={maxY}
         sendMessage={sendMessage}
+        joystickEnabled={joystickEnabled} // 传递摇杆控制状态
       />
 
 

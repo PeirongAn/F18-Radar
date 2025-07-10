@@ -11,6 +11,7 @@ interface AntennaElevationMarkerProps {
   maxY: number;  // 最大Y位置（对应3度或最高逻辑值）
   color: string;
   sendMessage: (message: any) => void;
+  joystickEnabled?: boolean; // 是否启用摇杆控制
 }
 
 // Helper to map elevation value to Y coordinate
@@ -36,6 +37,7 @@ const AntennaElevationMarker: React.FC<AntennaElevationMarkerProps> = observer((
   maxY,
   color,
   sendMessage,
+  joystickEnabled = false,
 }) => {
   // Marker Y position is now derived from the store's currentAntennaElevation
   const currentElevation = radarStore.currentAntennaElevation;
@@ -58,6 +60,7 @@ const AntennaElevationMarker: React.FC<AntennaElevationMarkerProps> = observer((
 
   }, [sendMessage]); // radarStore is a singleton, stable. Dependencies are implicit.
 
+  // 只有在摇杆控制未启用时才启用键盘控制
   useKeyboardControl({
     // moveStep is now conceptual, actual step is +1 or -1 degree in handleKeyAction
     // We can pass a nominal moveStep if the hook expects it, but it won't be used to calculate position directly here.
@@ -71,7 +74,7 @@ const AntennaElevationMarker: React.FC<AntennaElevationMarkerProps> = observer((
       down: 'b',
       // Left/Right are ignored by handleKeyAction
     },
-    onKeyAction: handleKeyAction,
+    onKeyAction: joystickEnabled ? () => {} : handleKeyAction, // 摇杆控制启用时禁用键盘控制
   });
 
   // No useEffect to update store from markerY, as markerY is derived from store.
