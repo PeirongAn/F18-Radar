@@ -384,7 +384,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
       if (saRepetitionInfo && typeof saRepetitionInfo !== 'string') {
         // 判断是否需要显示难度变化弹窗
-        const shouldShowDifficultyChangeModal = (saRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive;
+        const shouldShowDifficultyChangeModal = (saRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive && saRepetitionInfo.current === saRepetitionInfo.total;
         
         if (shouldShowDifficultyChangeModal) {
           setShowDifficultyChangeModal(true);

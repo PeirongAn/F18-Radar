@@ -72,7 +72,7 @@ const Radar: React.FC<RadarProps> = (({
   // 定义扫描模式状态
   const [scanMode, setScanMode] = useState<ScanModeType>({
     name: 'normal',
-    scanAngle: 60,
+    scanAngle: 30,
     scanFraction: 1.0,
     centerOffset: 0 // 设置扫描中心偏移量，0表示居中
   });
@@ -85,7 +85,7 @@ const Radar: React.FC<RadarProps> = (({
   const [unknownTargetCount, setUnknownTargetCount] = useState(5); // 默认显示全部5个未知目标
   
   // 添加雷达范围索引状态
-  const [rangeIndex, setRangeIndex] = useState(1); // 默认为20海里(索引1)
+  const [rangeIndex, setRangeIndex] = useState(3); // 默认为20海里(索引1)
   
   // 添加BR计数状态
   const [maxScanCount, setMaxScanCount] = useState(1); // 默认BR计数上限为1
@@ -138,13 +138,13 @@ const Radar: React.FC<RadarProps> = (({
     // Reset local state in Radar.tsx to initial values
     setScanMode({
       name: 'normal',
-      scanAngle: 60,
+      scanAngle: 30,
       scanFraction: 1.0,
       centerOffset: 0,
     });
     setShowVectorHUD(false);
     setShowUnknownTargets(true);
-    setRangeIndex(1); // 20nm
+    setRangeIndex(3); // 20nm
     setMaxScanCount(1);
     setDisplayMode('AUTO');
     setIsSilent(false);
@@ -584,6 +584,23 @@ const Radar: React.FC<RadarProps> = (({
       onRadarParamsUpdate(currentRange, currentAngle);
     }
   }, [rangeIndex, scanMode, isSilent, onRadarParamsUpdate]);
+
+  // 自动设置
+  useEffect(() => {
+    
+    if (initSettings && submitSettings) {
+      console.log('自动设置', initSettings)
+      const range = RADAR_RANGES[rangeIndex];
+      const scanAngle = initSettings.scanAngle;
+      submitSettings(
+        {
+          range,
+          scanAngle,
+        }
+      );
+    }
+
+  }, [submitSettings, initSettings])
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {

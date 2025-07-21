@@ -446,6 +446,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   
   // 发送参数设置给服务器
   const submitSettings = useCallback((settings: { range: number, scanAngle: number }) => {
+    console.log('自动设置 submitSettings', settings)
     if (!connected) {
       console.error('WebSocket未连接');
       return;
@@ -516,9 +517,9 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     // Handle other message types
     if (message.type === 'init_settings') {
       // Play sound only if it's a new task and the correct type
-      if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING' && message.audio_enabled && !message.is_ai_active) {
-        audioManager.play('radarRange');
-      }
+      // if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING' && message.audio_enabled && !message.is_ai_active) {
+      //   audioManager.play('radarRange');
+      // }
 
       console.log('[useRadarData] Processing full init_settings from server:', message);
       

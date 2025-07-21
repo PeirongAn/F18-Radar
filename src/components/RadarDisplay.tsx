@@ -371,7 +371,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         // onAddMessage('info', `重复进度: ${formatRepetitionText(radarRepetitionInfo)}`);
         
         // 判断是否需要显示难度变化弹窗
-        const shouldShowDifficultyChangeModal = (radarRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive;
+        const shouldShowDifficultyChangeModal = (radarRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive && radarRepetitionInfo.current === radarRepetitionInfo.total;
         
         if (shouldShowDifficultyChangeModal) {
           setShowDifficultyChangeModal(true);
