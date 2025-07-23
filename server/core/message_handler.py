@@ -9,6 +9,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, db_manager, TaskScenarioManager, generate_task_id, target_manager, threat_manager
+from models.threat_models import RadarConfig
+from network.message_protocol import message_protocol
 
 class MessageHandler:
     """消息处理器，负责处理客户端消息和业务逻辑"""
@@ -20,6 +22,8 @@ class MessageHandler:
             'target_elevation': None,
             'operations': []
         }
+        # 协议配置
+        self.use_enhanced_protocol = True  # 默认使用增强协议
     
     async def handle_client_message(self, message_str: str, session_state: Dict[str, Any], 
                                   websocket=None) -> Union[List[Dict[str, Any]], Tuple[Dict[str, Any], bool], bool]:
@@ -329,32 +333,89 @@ class MessageHandler:
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         
-        threats = threat_manager.generate_sa_threats(current_scenario['difficulty_config'])
-        
-        response = {
-            'type': 'sa_task_updated',
-            'saThreats': threats,
-            'repetition_info': current_scenario['repetition_info'],
-            'task_type': task_type,
-            'is_ai_active': current_scenario['is_ai_active'],
-            'ai_level': current_scenario.get('ai_level_name'),
-            'ai_configs': config_manager.get_ai_levels(),
-            'audio_enabled': current_scenario['audio_enabled']
-        }
-
-        if websocket:
-            # 设置当前任务ID到会话状态，供威胁管理器使用
-            session_state['current_task_id'] = self.current_session.get('task_id')
-            asyncio.create_task(
-                threat_manager.auto_send_sa_emergency(
-                    websocket,
-                    threats,
-                    user_id,
-                    event_owner,
-                    session_state
-                )
+        if self.use_enhanced_protocol:
+            # 使用增强协议生成完整威胁数据
+            print("[MessageHandler] 使用增强协议生成威胁")
+            
+            # 创建雷达配置（基于SAPage.tsx的正确配置：width=800, height=600）
+            radar_config = RadarConfig(
+                center_x=400.0,       # width / 2 = 800 / 2
+                center_y=360.0,       # height * 0.6 = 600 * 0.6  
+                radius1=100.0,
+                radius2=180.0,        # 底部线位置 - center_y = 540 - 360 = 180
+                radius3=306.0,        # radius2 * 1.7 = 180 * 1.7
+                canvas_width=800.0,
+                canvas_height=600.0
             )
-        return [response]
+            
+            # 生成增强威胁数据
+            threat_result = threat_manager.generate_enhanced_sa_threats(
+                current_scenario['difficulty_config'],
+                radar_config
+            )
+            
+            # 创建增强威胁消息
+            enhanced_response = message_protocol.create_enhanced_threats_message(
+                threat_result=threat_result,
+                task_type=task_type,
+                repetition_info=current_scenario['repetition_info'],
+                is_ai_active=current_scenario['is_ai_active'],
+                ai_level=current_scenario.get('ai_level_name'),
+                ai_configs=config_manager.get_ai_levels(),
+                audio_enabled=current_scenario['audio_enabled']
+            )
+            
+            if websocket:
+                # 设置当前任务ID到会话状态，供威胁管理器使用
+                session_state['current_task_id'] = self.current_session.get('task_id')
+                # 使用增强协议发送紧急事件
+                asyncio.create_task(
+                    threat_manager.auto_send_enhanced_sa_emergency(
+                        websocket,
+                        threat_result.threats,
+                        radar_config,
+                        user_id,
+                        event_owner,
+                        session_state,
+                        use_enhanced_protocol=True
+                    )
+                )
+            
+            # 只返回增强消息，避免协议冲突
+            print("[MessageHandler] 发送增强协议消息，威胁数量:", len(threat_result.threats))
+            print("[MessageHandler] 增强消息类型:", enhanced_response.get('type'))
+            print("[MessageHandler] 增强消息包含字段:", list(enhanced_response.keys()))
+            print("[MessageHandler] 威胁详情:", [{'id': t.id, 'type': t.type, 'position': t.position.to_dict()} for t in threat_result.threats])
+            return [enhanced_response]
+        else:
+            # 使用传统协议
+            print("[MessageHandler] 使用传统协议生成威胁")
+            threats = threat_manager.generate_sa_threats(current_scenario['difficulty_config'])
+            
+            response = {
+                'type': 'sa_task_updated',
+                'saThreats': threats,
+                'repetition_info': current_scenario['repetition_info'],
+                'task_type': task_type,
+                'is_ai_active': current_scenario['is_ai_active'],
+                'ai_level': current_scenario.get('ai_level_name'),
+                'ai_configs': config_manager.get_ai_levels(),
+                'audio_enabled': current_scenario['audio_enabled']
+            }
+
+            if websocket:
+                # 设置当前任务ID到会话状态，供威胁管理器使用
+                session_state['current_task_id'] = self.current_session.get('task_id')
+                asyncio.create_task(
+                    threat_manager.auto_send_sa_emergency(
+                        websocket,
+                        threats,
+                        user_id,
+                        event_owner,
+                        session_state
+                    )
+                )
+            return [response]
     
     # async def _handle_reset_targets(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
     #     """处理重置目标消息"""

@@ -48,6 +48,11 @@ export interface RadarData {
       label: string;
     }>;
     receivedAt?: number; // 接收时间戳，用于生成唯一ID
+    // 增强协议字段
+    enhanced_data?: any;
+    missile_threat?: any;
+    updated_threats?: any;
+    radar_config?: any;
   };
   // 新增: 允许服务端直接发送AI参数建议
   ai_param_recommendation?: ServerAIParameterRecommendation;
@@ -182,6 +187,19 @@ class GlobalWebSocketManager {
             // 添加接收时间戳作为唯一标识符
             receivedAt: Date.now()
         };
+        
+        // 如果是增强协议，添加增强数据字段
+        if (rawData.enhanced_data || rawData.missile_threat || rawData.updated_threats) {
+          console.log('【全局WS】处理增强SAEmergency消息');
+          emergencyData = {
+            ...emergencyData,
+            // 保持原有字段的同时，添加增强数据
+            enhanced_data: rawData.enhanced_data,
+            missile_threat: rawData.missile_threat,
+            updated_threats: rawData.updated_threats,
+            radar_config: rawData.radar_config
+          };
+        }
       } else if (rawData.emergency) {
         // 否则，如果 rawData 中有一个名为 emergency 的字段，则使用它
         emergencyData = {
@@ -352,13 +370,25 @@ interface AllRepetitionInfos {
 }
 
 // 修改后的useRadarData hook使用全局WebSocket管理器
-const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
+const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   const [connected, setConnected] = useState<boolean>(false);
   const [radarData, setRadarData] = useState<any>({});
   const [error, setError] = useState<string | null>(null);
   const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
   const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
   const [saThreats, setSaThreats] = useState<any[]>([]); // 重新添加 saThreats 状态
+  
+  // 增强协议状态
+  const [enhancedThreats, setEnhancedThreats] = useState<any[]>([]);
+  const [serverRadarConfig, setServerRadarConfig] = useState<any>(null);
+  const [useEnhancedProtocol, setUseEnhancedProtocol] = useState<boolean>(false);
+  
+  // // 调试：监听增强协议状态变化
+  // useEffect(() => {
+  //   console.log('[useRadarData] 状态变化 - useEnhancedProtocol:', useEnhancedProtocol);
+  //   console.log('[useRadarData] 状态变化 - enhancedThreats.length:', enhancedThreats.length);
+  //   console.log('[useRadarData] 状态变化 - serverRadarConfig:', serverRadarConfig ? '已设置' : '未设置');
+  // }, [useEnhancedProtocol, enhancedThreats, serverRadarConfig]);
   
   // 修改：任务重复信息状态，以支持多个任务类型
   const [repetitionInfos, setRepetitionInfos] = useState<AllRepetitionInfos>({
@@ -503,9 +533,13 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   
   // 处理接收到的消息
   const handleHookMessage = useCallback((message: any) => {
-    if (!message || !message.type) return;
+    if (!message || !message.type) {
+      console.log('[useRadarData] ⚠️ 收到无效消息:', message);
+      return;
+    }
 
-    console.log('[useRadarData] Processing message:', message);
+    console.log('[useRadarData] 🔄 开始处理消息，类型:', message.type);
+    console.log('[useRadarData] 消息时间戳:', message.timestamp);
 
     // Handle AI parameter recommendations specifically
     if (message.type === 'ai_param_recommendation' && message.recommendation) {
@@ -571,11 +605,36 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       console.log('Received server_ai_recommendation:', message.recommendation);
       agentStore.setServerAIRecommendation(message.recommendation);
     } else if (message.type === 'sa_task_updated') {
-      console.log('[useRadarData] Received sa_task_updated:', message);
-      // 更新 saThreats 状态
-      if (message.saThreats) {
+      console.log('[useRadarData] 🎯 收到 sa_task_updated 消息!');
+      console.log('[useRadarData] 完整消息内容:', message);
+      console.log('[useRadarData] 消息字段:', Object.keys(message));
+      
+      // 检查是否是增强协议消息（包含threats数组和radar_config）
+      if (message.threats && message.radar_config) {
+        console.log('[useRadarData] 处理增强sa_task_updated消息:', message.threats.length, '个威胁');
+        console.log('[useRadarData] 增强威胁详情:', message.threats);
+        console.log('[useRadarData] 雷达配置:', message.radar_config);
+        
+        // 更新增强协议状态（确保原子性更新）
+        console.log('[useRadarData] 开始更新增强协议状态...');
+        setEnhancedThreats(message.threats);
+        console.log('[useRadarData] ✓ enhancedThreats 已设置');
+        setServerRadarConfig(message.radar_config);
+        console.log('[useRadarData] ✓ serverRadarConfig 已设置');
+        setUseEnhancedProtocol(true);
+        console.log('[useRadarData] ✓ useEnhancedProtocol 已设置为 true');
+        console.log('[useRadarData] 增强威胁数据已更新，协议切换为增强模式');
+      } else if (message.saThreats) {
+        // 传统协议消息，更新 saThreats 状态
+        console.log('[useRadarData] 处理传统sa_task_updated消息:', message.saThreats.length, '个威胁');
+        console.log('[useRadarData] 传统威胁详情:', message.saThreats);
         setSaThreats(message.saThreats);
+        setUseEnhancedProtocol(false);
+        console.log('[useRadarData] 传统威胁数据已更新，协议切换为传统模式');
+      } else {
+        console.warn('[useRadarData] sa_task_updated消息缺少威胁数据:', message);
       }
+      
       if (message.task_type && message.repetition_info) {
         setRepetitionInfos(prev => ({
           ...prev,
@@ -584,6 +643,15 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       }
       //  初始化AI和任务状态
       agentStore.initializeFromServer(message);
+    } else if (message.type === 'SAEmergency') {
+      console.log('[useRadarData] Received SAEmergency:', message);
+      // 检查是否是增强协议的紧急事件
+      if (message.updated_threats) {
+        console.log('[useRadarData] 处理增强SAEmergency升级事件:', message.updated_threats.length, '个威胁');
+        // 更新增强威胁数据
+        setEnhancedThreats(message.updated_threats);
+        setUseEnhancedProtocol(true);
+      }
     } else if (message.type === 'all_tasks_completed') {
       console.log('[useRadarData] Received all_tasks_completed:', message);
       // 只有在正式模式下才显示任务完成弹窗
@@ -612,6 +680,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
   }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevation are stable from useState
 
   const lastProcessedMessageIdForHook = useRef<string>('');
+  const lastProcessedEmergencyId = useRef<string>('');
 
   useEffect(() => {
     // 确保连接到指定URL
@@ -649,6 +718,33 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
       unsubscribe();
     };
   }, [wsUrl, handleHookMessage]);
+
+  // 监听radarData.emergency变化，处理增强协议的紧急事件
+  useEffect(() => {
+    if (radarData?.emergency) {
+      const emergencyId = JSON.stringify(radarData.emergency);
+      if (emergencyId !== lastProcessedEmergencyId.current) {
+        console.log('[useRadarData] 处理emergency变化:', radarData.emergency);
+        
+                 // 处理增强协议的升级事件
+         if (radarData.emergency.event === 'upgrade' && radarData.emergency.updated_threats) {
+           console.log('[useRadarData] 处理增强升级事件，更新威胁数据:', radarData.emergency.updated_threats.length);
+           console.log('[useRadarData] 升级后的威胁详情:', radarData.emergency.updated_threats);
+           setEnhancedThreats(radarData.emergency.updated_threats);
+           setUseEnhancedProtocol(true);
+           console.log('[useRadarData] 已设置useEnhancedProtocol=true');
+           
+           // 如果有radar_config，也更新它
+           if (radarData.emergency.radar_config) {
+             setServerRadarConfig(radarData.emergency.radar_config);
+             console.log('[useRadarData] 已更新serverRadarConfig');
+           }
+         }
+        
+        lastProcessedEmergencyId.current = emergencyId;
+      }
+    }
+  }, [radarData?.emergency]);
   
   const sendResetSA = useCallback(() => {
     sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice, is_ai_active: agentStore.isAIActive });
@@ -681,6 +777,14 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8765') => {
     repetitionInfos, // 导出新的字典状态
     saThreats, // 确保导出 saThreats
     lastMessage: globalWS.getLastMessage(), // 导出最后一条消息
+    // 增强协议状态
+    enhancedThreats,
+    setEnhancedThreats,
+    serverRadarConfig,
+    useEnhancedProtocol,
+    // 调试信息
+    _debug_enhancedThreatsLength: enhancedThreats.length,
+    _debug_useEnhancedProtocol: useEnhancedProtocol,
   };
 };
 

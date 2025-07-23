@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, target_manager, get_logger
-from core import message_handler
+# 延迟导入 message_handler 以避免循环导入
 
 class WebSocketServer:
     """WebSocket服务器，负责处理客户端连接和消息传输"""
@@ -19,13 +19,35 @@ class WebSocketServer:
         self.port = port
         self.logger = get_logger("websocket")
     
+    async def _send_raw_message(self, websocket, json_str: str) -> bool:
+        """发送原始JSON字符串到WebSocket"""
+        # 先尝试标准的send方法
+        try:
+            await websocket.send(json_str)
+            return True
+        except AttributeError:
+            # 如果send方法不存在，尝试send_str方法
+            try:
+                await websocket.send_str(json_str)
+                return True
+            except AttributeError:
+                self.logger.error(f"WebSocket对象 {type(websocket)} 没有send或send_str方法")
+                return False
+            except Exception as e:
+                self.logger.error(f"使用send_str发送消息失败: {e}", exc_info=True)
+                return False
+        except Exception as e:
+            self.logger.error(f"使用send发送消息失败: {e}", exc_info=True)
+            return False
+    
     async def send_message(self, websocket, message: Dict[str, Any]) -> bool:
         """发送消息到客户端"""
         try:
             json_str = json.dumps(message)
-            await websocket.send(json_str)
-            self.logger.debug(f"发送消息: {message['type']}")
-            return True
+            success = await self._send_raw_message(websocket, json_str)
+            if success:
+                self.logger.debug(f"发送消息: {message['type']}")
+            return success
         except Exception as e:
             self.logger.error(f"发送消息失败: {e}", exc_info=True)
             return False
@@ -39,7 +61,7 @@ class WebSocketServer:
             # 初始连接时发送不包含目标数据的基础数据
             initial_data = target_manager.get_radar_data(include_targets=False)
             initial_json = json.dumps(initial_data)
-            await websocket.send(initial_json)
+            await self._send_raw_message(websocket, initial_json)
             self.logger.info(f"已发送基础数据（不含目标），长度: {len(initial_json)}")
             
             # 接收并处理客户端消息
@@ -49,7 +71,8 @@ class WebSocketServer:
                     message = await asyncio.wait_for(websocket.recv(), timeout=60)
                     self.logger.debug(f"接收到消息: {message[:50]}..." if len(message) > 50 else message)
                     
-                    # 将会话状态传递给消息处理器
+                    # 将会话状态传递给消息处理器（延迟导入避免循环依赖）
+                    from core import message_handler
                     result = await message_handler.handle_client_message(message, session_state, websocket)
                     
                     # 检查返回结果类型
@@ -62,7 +85,7 @@ class WebSocketServer:
                             # 确保验证消息在数据帧之前发送
                             if 'type' in settings_updated and settings_updated['type'] == 'settings_validation':
                                 self.logger.debug(f"发送验证结果: {settings_updated}")
-                                await websocket.send(json.dumps(settings_updated))
+                                await self._send_raw_message(websocket, json.dumps(settings_updated))
 
                             # 现在准备并发送主数据帧
                             data = target_manager.get_radar_data(include_targets=include_targets)
@@ -77,7 +100,7 @@ class WebSocketServer:
                             else:
                                 self.logger.debug(f"正在发送不含目标的数据，JSON长度: {len(data_json)}")
                             
-                            await websocket.send(data_json)
+                            await self._send_raw_message(websocket, data_json)
                             
                             if include_targets:
                                 self.logger.info("已发送更新后的数据（包含目标）")

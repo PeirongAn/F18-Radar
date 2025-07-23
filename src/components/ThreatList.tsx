@@ -62,12 +62,12 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, showDetailedInfo = fal
               </div>
               {showDetailedInfo && (
                 <div className="w-16 text-center text-blue-300">
-                  {threat.distance > 0 ? threat.distance.toFixed(0) : '--'}
+                  {(typeof threat.distance === 'number' && threat.distance >= 0) ? threat.distance.toFixed(2) : '--'}
                 </div>
               )}
               {showDetailedInfo && (
                 <div className="w-16 text-center text-orange-300">
-                  {threat.score > 0 ? threat.score.toFixed(2) : '--'}
+                  {(typeof threat.score === 'number' && threat.score >= 0) ? threat.score.toFixed(2) : '--'}
                 </div>
               )}
               <div className="w-12 flex items-center justify-center">

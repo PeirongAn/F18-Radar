@@ -1,45 +1,67 @@
-# 雷达系统服务器 - 模块化架构
-
+# 雷达与威胁排序系统说明
 ## 🚀 快速开始
 
-### 启动服务器
+**解压 radar.tar包**
+### 文件目录说明
+- public -- 配置项与用户手册
+- dist -- 前端打包文件
+- server -- 服务端（运行入口） 
+
+
+
+### 🐍 Python环境构建
+
+#### 1. Python版本要求
+- **Python 3.7+** （推荐 Python 3.12）
+- 检查Python版本：`python --version` 或 `python3 --version`
+
+#### 2. 创建虚拟环境（推荐）
 ```bash
-# 方式一：使用启动脚本（推荐）
-python start.py
+# 在项目根目录创建虚拟环境
+python -m venv radar_env
 
-# 方式二：直接运行主文件
-python main.py
+# 激活虚拟环境
+# Windows:
+radar_env\Scripts\activate
+# macOS/Linux:
+source radar_env/bin/activate
 
-# 方式三：使用旧版本（兼容）
-python legacy/radar_server.py
+# 确认虚拟环境已激活（命令行前会显示 (radar_env)）
 ```
 
-### 日志级别控制
+#### 3. 安装依赖
 ```bash
-# 设置日志级别（DEBUG, INFO, WARNING, ERROR, CRITICAL）
-LOG_LEVEL=DEBUG python start.py
+# 进入server目录
+cd server
 
-# 启用文件日志
-LOG_TO_FILE=true python start.py
+# 安装所需依赖
+pip install -r requirements.txt
 
-# 组合使用
-LOG_LEVEL=INFO LOG_TO_FILE=true python start.py
+# 或者使用国内镜像源（推荐）
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
 ```
 
-### 运行测试
+#### 4. 验证安装
 ```bash
 # 测试模块导入
 python tests/test_imports.py
 
-# 测试日志系统
-python tests/test_logger.py
-
-# 测试连接
-python tests/test_connection.py
-
-# 运行所有测试
-python tests/test.py
+# 如果看到 "✅ 所有模块导入成功" 表示环境配置正确
 ```
+
+### 🖥️ 启动服务器
+
+```bash
+# 基本启动 - 同时提供静态文件服务和WebSocket
+python main.py
+
+```
+
+**启动后访问：**
+- 🌐 **前端应用**: http://localhost:8080/index.html
+- 🔌 **WebSocket**: ws://localhost:8080/ws
+
+
 
 ## 📁 项目结构
 
@@ -60,7 +82,8 @@ server/
 │
 ├── 🌐 network/                 # 网络通信
 │   ├── __init__.py
-│   └── websocket_server.py     # WebSocket服务器
+│   ├── websocket_server.py     # WebSocket服务器
+│   └── http_server.py          # HTTP静态文件服务器 🆕
 │
 ├── 💾 data/                    # 数据存储
 │   └── radar_operations.db     # SQLite数据库
@@ -75,6 +98,7 @@ server/
 ├── 📚 docs/                    # 项目文档
 │   ├── project_structure.md    # 详细架构说明
 │   ├── logging_guide.md        # 日志使用指南 ⭐
+│   ├── static_files_guide.md   # 静态文件服务指南 🆕
 │   ├── README_refactoring.md   # 重构文档
 │   └── readme.md              # 原始说明
 │
@@ -82,29 +106,35 @@ server/
 │   ├── radar_server.py         # 原始服务器
 │   └── radar_server_backup.py  # 备份文件
 │
-├── main.py                     # 主入口文件
+├── main.py                     # 主入口文件 ⭐
 ├── start.py                    # 启动脚本
-├── requirements.txt            # 依赖列表
+├── requirements.txt            # 依赖列表 ⭐
 └── README.md                   # 本文件
 ```
 
-## ✨ 新架构优势
 
-1. **清晰的职责分离**: 每个模块专注于特定功能
-2. **易于维护**: 修改某个功能不影响其他模块
-3. **便于测试**: 每个模块可以独立测试
-4. **扩展性强**: 可以轻松添加新的管理器或功能
-5. **团队协作**: 不同开发者可以并行开发不同模块
-6. **统一日志**: 🆕 完整的日志系统，支持级别控制和彩色输出
+## 🔧 系统要求
 
-## 🔧 配置要求
+### 基础要求
+- **Python 3.7+** （推荐 3.12）
+- **操作系统**: Windows 10+, macOS 10.14+, Linux (Ubuntu 18.04+)
+- **内存**: 至少 512MB 可用内存
+- **磁盘**: 至少 100MB 可用空间
 
-- Python 3.7+
-- 依赖包: `pip install -r requirements.txt`
+### Python依赖
+```txt
+numpy==1.26.4          # 数值计算
+matplotlib>=3.7.0       # 图形绘制
+websockets>=11.0.3      # WebSocket通信
+colorama>=0.4.4         # 彩色终端输出
+aiohttp>=3.8.0          # HTTP服务器 🆕
+```
+
+### 可选配置
 - 配置文件: `../public/agent_level.json`
-- 可选依赖: `colorama` (用于彩色日志输出)
+- 前端构建目录: `../dist/` （用于静态文件服务）
 
-## 📋 模块说明
+## 📋 功能模块说明
 
 ### Core 模块
 - **message_handler.py**: 处理所有客户端消息的核心业务逻辑
@@ -112,134 +142,204 @@ server/
 ### Managers 模块
 - **config_manager.py**: 管理配置文件加载和访问
 - **database_manager.py**: 处理数据库连接和异步写入
-- **logger_manager.py**: 🆕 统一日志管理，支持级别控制和彩色输出
+- **logger_manager.py**: 统一日志管理，支持级别控制和彩色输出
 - **task_manager.py**: 管理用户任务和进度
 - **target_manager.py**: 管理雷达目标生成和更新
 - **threat_manager.py**: 管理SA威胁系统
 
 ### Network 模块
 - **websocket_server.py**: WebSocket服务器实现
+- **🆕 http_server.py**: HTTP静态文件服务器，支持SPA应用
 
-## 🆕 日志系统特性
 
-### 🎨 彩色日志输出
-- 🔍 **DEBUG**: 青色 - 调试信息
-- ✅ **INFO**: 绿色 - 一般信息
-- ⚠️ **WARNING**: 黄色 - 警告信息
-- ❌ **ERROR**: 红色 - 错误信息
-- 🚨 **CRITICAL**: 紫色 - 严重错误
+## 📋 配置文件说明
 
-### 🔧 级别控制
-```bash
-# 环境变量控制
-export LOG_LEVEL=DEBUG    # 显示所有日志
-export LOG_LEVEL=INFO     # 默认级别
-export LOG_LEVEL=WARNING  # 只显示警告和错误
-export LOG_LEVEL=ERROR    # 只显示错误
+### agent_level.json 配置
 
-# 启动时设置
-LOG_LEVEL=DEBUG python start.py
+位置：`public/agent_level.json`
+
+这是雷达系统的核心配置文件，控制AI智能体行为、游戏难度和系统设置。
+
+#### 🤖 AI智能体级别配置
+
+```json
+{
+  "current_level": "L2",
+  "levels": [
+    {
+      "level": "L0",
+      "desc": "低级智能体，延时最长，自动处理最慢",
+      "threat_select_delay_ms": 1000,
+      "tdc_select_delay_ms": 1000,
+      "decision_probabilities": [0.3, 0.5]
+    },
+    {
+      "level": "L1", 
+      "desc": "中级智能体，延时适中",
+      "threat_select_delay_ms": 500,
+      "tdc_select_delay_ms": 500,
+      "decision_probabilities": [0.7, 0.9]
+    },
+    {
+      "level": "L2",
+      "desc": "高级智能体，延时最短，自动处理最快",
+      "threat_select_delay_ms": 100,
+      "tdc_select_delay_ms": 100,
+      "decision_probabilities": [1.0]
+    }
+  ]
+}
 ```
 
-### 📁 文件日志
-```bash
-# 启用文件日志（可选）
-export LOG_TO_FILE=true
-python start.py
+#### 智能体参数说明
 
-# 日志文件位置: logs/radar_system_YYYY-MM-DD.log
+| 参数 | 说明 | 单位 |
+|------|------|------|
+| `current_level` | 当前激活的智能体级别 | L0/L1/L2 |
+| `level` | 智能体级别标识 | 字符串 |
+| `desc` | 智能体描述信息 | 字符串 |
+| `threat_select_delay_ms` | 威胁选择响应延时 | 毫秒 |
+| `tdc_select_delay_ms` | TDC选择响应延时 | 毫秒 |
+| `decision_probabilities` | 决策成功概率数组 | 0-1之间 |
+
+#### 🎮 游戏设置配置
+
+```json
+{
+  "game_settings": {
+    "current_difficulty": "high",
+    "audio_enabled": true,
+    "max_repetitions": 10,
+    "practice_repetitions": 1,
+    "difficulty_levels": {
+      "high": {
+        "name": "高",
+        "threat_count": 10,
+        "target_count": 10
+      },
+      "low": {
+        "name": "低", 
+        "threat_count": 5,
+        "target_count": 5
+      }
+    },
+    "execution_order": {
+      "difficulty_order": ["high", "low"],
+      "level_order": ["L0", "L1", "L2"],
+      "audio_options": [true, false]
+    }
+  }
+}
 ```
 
-### 📦 模块化日志
-每个模块都有独立的日志标识：
-- `database`: 数据库相关日志
-- `websocket`: WebSocket服务器日志
-- `config`: 配置管理日志
-- `main`: 主程序日志
+#### 游戏参数说明
 
-## 🚦 启动流程
+| 参数 | 说明 | 类型 |
+|------|------|------|
+| `current_difficulty` | 当前游戏难度 | high/low |
+| `audio_enabled` | 是否启用音频 | 布尔值 |
+| `max_repetitions` | 最大重复次数 | 数字 |
+| `practice_repetitions` | 练习重复次数 | 数字 |
 
-1. **环境检查**: 检查依赖项和配置文件
-2. **日志初始化**: 🆕 设置日志级别和输出格式
-3. **数据库初始化**: 自动创建必要的数据库表
-4. **管理器启动**: 初始化所有功能管理器
-5. **服务器启动**: 启动WebSocket服务器
-6. **就绪状态**: 等待客户端连接
+#### 难度级别设置
 
-## 🔄 从旧版本迁移
+| 难度 | 威胁数量 | 目标数量 | 说明 |
+|------|----------|----------|------|
+| **high** | 10 | 10 | 高难度模式 |
+| **low** | 5 | 5 | 低难度模式 |
 
-如果您之前使用的是单文件版本：
+#### 执行顺序配置
 
-1. 新架构完全兼容旧版本的数据库
-2. 配置文件路径保持不变
-3. WebSocket接口保持不变
-4. 🆕 所有print语句已替换为结构化日志
-5. 如有问题，可随时回退到 `legacy/radar_server.py`
+- **difficulty_order**: 难度级别执行顺序 `["high", "low"]`
+- **level_order**: 智能体级别执行顺序 `["L0", "L1", "L2"]`  
+- **audio_options**: 音频选项执行顺序 `[true, false]`
 
-## 🛠️ 开发指南
+### 🔧 配置修改
 
-### 添加新功能
-1. 在相应的管理器中添加功能
-2. 在 `message_handler.py` 中添加消息处理
-3. 更新相应的 `__init__.py` 文件
-4. 🆕 使用统一的日志系统记录操作
-
-### 日志最佳实践
-```python
-# 导入日志模块
-from managers.logger_manager import get_logger
-
-# 在类中使用
-class MyClass:
-    def __init__(self):
-        self.logger = get_logger("my_module")
-    
-    def do_something(self):
-        self.logger.info("开始执行操作")
-        try:
-            # 业务逻辑
-            self.logger.debug("详细的调试信息")
-        except Exception as e:
-            self.logger.error(f"操作失败: {e}", exc_info=True)
+#### 修改智能体级别
+```json
+{
+  "current_level": "L1"  // 改为中级智能体
+}
 ```
 
-### 运行测试
-```bash
-# 导入测试
-python tests/test_imports.py
-
-# 日志系统测试
-python tests/test_logger.py
-
-# 功能测试
-python tests/test.py
+#### 修改游戏难度
+```json
+{
+  "game_settings": {
+    "current_difficulty": "low"  // 改为低难度
+  }
+}
 ```
 
-### 调试模式
-```bash
-# 启用详细日志
-LOG_LEVEL=DEBUG python start.py
-
-# 启用文件日志进行故障排查
-LOG_TO_FILE=true LOG_LEVEL=DEBUG python start.py
+#### 自定义难度级别
+```json
+{
+  "difficulty_levels": {
+    "custom": {
+      "name": "自定义",
+      "threat_count": 15,
+      "target_count": 15
+    }
+  }
+}
 ```
 
-## 📞 支持
+#### 调整智能体响应时间
+```json
+{
+  "levels": [
+    {
+      "level": "L0",
+      "threat_select_delay_ms": 2000,  // 增加到2秒
+      "tdc_select_delay_ms": 1500      // 增加到1.5秒
+    }
+  ]
+}
+```
 
-如果遇到问题：
-1. 查看 `docs/` 目录下的详细文档
-2. 🆕 查看 `docs/logging_guide.md` 了解日志系统
-3. 运行测试脚本检查环境
-4. 检查日志输出中的错误信息
-5. 使用 `LOG_LEVEL=DEBUG` 获取详细信息
+### ⚠️ 配置注意事项
 
-## 📝 更新日志
+1. **文件格式**: 必须是有效的JSON格式
+2. **编码格式**: 使用UTF-8编码保存
+3. **备份配置**: 修改前建议备份原始配置
+4. **重启生效**: 修改配置后需要重启服务器
+5. **参数范围**: 
+   - 延时时间建议在50-3000ms之间
+   - 概率值必须在0-1之间
+   - 数量参数必须为正整数
 
-- **v2.1**: 🆕 集成统一日志系统
-  - 添加彩色日志输出
-  - 支持日志级别控制
-  - 模块化日志管理
-  - 可选文件日志输出
-  - 替换所有print语句
-- **v2.0**: 模块化架构重构
-- **v1.0**: 原始单文件版本（保留在legacy目录） 
+### 🚀 快速配置模板
+
+#### 训练模式（慢速响应）
+```json
+{
+  "current_level": "L0",
+  "game_settings": {
+    "current_difficulty": "low",
+    "practice_repetitions": 3
+  }
+}
+```
+
+#### 测试模式（快速响应）
+```json
+{
+  "current_level": "L2", 
+  "game_settings": {
+    "current_difficulty": "high",
+    "max_repetitions": 5
+  }
+}
+```
+
+#### 无音频模式
+```json
+{
+  "game_settings": {
+    "audio_enabled": false
+  }
+}
+```
+
+

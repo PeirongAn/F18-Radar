@@ -394,6 +394,7 @@ const App: React.FC = observer(() => {
 
   // 处理威胁列表数据更新
   const handleThreatListUpdate = useCallback((threatData: any[]) => {
+    console.log('App 威胁列表', threatData);
     setThreatListData(threatData);
   }, []);
   
@@ -520,7 +521,7 @@ const App: React.FC = observer(() => {
           
        
           {/* 威胁列表 - 最下面，只在SA页面时显示 */}
-          {activeDisplay === 'navigation' && threatListData.length > 0 && (
+          {activeDisplay === 'navigation' && (
             <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
           )}
         </div>
