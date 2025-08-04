@@ -134,6 +134,7 @@ class MessageProtocol:
             enhanced_data['missile_type'] = missile_threat.missile_type
             enhanced_data['missile_position'] = missile_threat.position.to_dict()
             enhanced_data['missile_score'] = missile_threat.score
+            updated_threats_dict = [threat.to_dict() for threat in updated_threats]
         elif event_type == 'upgrade' and updated_threats:
             updated_threats_dict = [threat.to_dict() for threat in updated_threats]
             # 如果有具体升级的威胁信息，使用它来计算升级统计

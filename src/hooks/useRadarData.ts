@@ -40,6 +40,7 @@ export interface RadarData {
   timestamp: number;      // 时间戳
   audioEnabled?: boolean;
   emergency?: {
+    type: 'SAEmergency' | 'SAUpgrade';
     event: 'upgrade' | 'missile';
     missileType?: 'MissileUp' | 'MissileDown';
     saThreats?: Array<{
@@ -182,7 +183,8 @@ class GlobalWebSocketManager {
         // 如果消息类型本身是 SAEmergency，则从顶层字段构造 emergency 对象
         emergencyData = {
             event: rawData.event,
-            missileType: rawData.missileType,
+            type: rawData.type,
+            missileType: rawData?.missile_threat?.missile_type,
             saThreats: rawData.saThreats,
             // 添加接收时间戳作为唯一标识符
             receivedAt: Date.now()

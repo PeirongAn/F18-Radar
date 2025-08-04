@@ -105,9 +105,10 @@ class PriorityCalculator:
             print(f"  最终 {threat['id']}: 分数={normalized_score}, 优先级={priority}")
         
         # 4. 排序威胁（复制前端排序逻辑）
-        sorted_threats = self._sort_threats_by_priority(threats_with_score)
+        # sorted_threats = self._sort_threats_by_priority(threats_with_score)
         
-        return sorted_threats
+        # return sorted_threats
+        return threats_with_score
     
     def sort_threats_by_priority(self, threats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

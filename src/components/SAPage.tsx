@@ -50,6 +50,9 @@ interface MissileData {
   type: 'MissileUp' | 'MissileDown';
   x: number;
   y: number;
+  label: string;
+  score: number;
+  distance_from_center: number;
 }
 
 // 增强威胁位置接口
@@ -671,7 +674,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         
         if (data.event === 'missile') {
           audioManager.play(data.missileType === 'MissileUp' ? 'missileUp' : 'missileDown');
-          
+          console.log(`🚀 增强导弹data: (${data.type}, ${data.missile_threat})`);
           // 检查是否是增强协议的导弹事件
           if (data.type === 'SAEmergency' && data.missile_threat) {
             // 使用增强协议：直接使用服务端提供的导弹数据
@@ -681,7 +684,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               id: data.missile_threat.id,
               type: data.missile_threat.missile_type as 'MissileUp' | 'MissileDown',
               x: data.missile_threat.position.x,
-              y: data.missile_threat.position.y
+              y: data.missile_threat.position.y,
+              score: data.missile_threat.score,
+              label: data.missile_threat.label,
+              distance_from_center: data.missile_threat.distance_from_center,
             };
             
             setMissiles(prev => [...prev, enhancedMissile]);
@@ -707,7 +713,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               id: Date.now().toString(),
               type: missileType,
               x,
-              y
+              y,
+              distance_from_center: 0,
+              score: 1.0,
+              label: missileType,
             };
             setMissiles(prev => [...prev, newMissile]);
             console.log(`🚀 传统导弹位置: (${x}, ${y})`);
@@ -785,38 +794,53 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
     // 简化的威胁分数和排序逻辑 - 优先使用服务端数据
   const threatsWithScore = useMemo(() => {
-    if (useEnhancedProtocol && enhancedThreats.length > 0) {
+    if (useEnhancedProtocol) {
       // 使用增强协议：直接使用服务端计算的分数和排序
       console.log('【SAPage】使用服务端优先级数据，威胁数量:', enhancedThreats.length);
       
       const allEnhancedThreats: ThreatWithScore[] = [];
-      
-      // 处理所有增强威胁（包括导弹和常规威胁）
-      enhancedThreats.forEach((enhancedThreat, index) => {
-        allEnhancedThreats.push({
-          threat: {
-            id: enhancedThreat.id,
-            type: enhancedThreat.type,
-            label: enhancedThreat.label,
-            // 如果是导弹，转换为MissileData格式
-            ...(enhancedThreat.is_missile ? {
-              x: enhancedThreat.position.x,
-              y: enhancedThreat.position.y
-            } : {})
-          },
-          score: enhancedThreat.score,
-          isMissile: enhancedThreat.is_missile,
-          originalIndex: index
+      if (enhancedThreats.length > 0) {
+        // 处理所有增强威胁（包括导弹和常规威胁）
+        enhancedThreats.forEach((enhancedThreat, index) => {
+          allEnhancedThreats.push({
+            threat: {
+              id: enhancedThreat.id,
+              type: enhancedThreat.type,
+              label: enhancedThreat.label,
+              // 如果是导弹，转换为MissileData格式
+              ...(enhancedThreat.is_missile ? {
+                x: enhancedThreat.position.x,
+                y: enhancedThreat.position.y
+              } : {})
+            },
+            score: enhancedThreat.score,
+            isMissile: enhancedThreat.is_missile,
+            originalIndex: index
+          });
         });
-      });
-      
-      console.log('【SAPage】增强威胁评分详情:', allEnhancedThreats.map(t => ({
-        id: t.threat.id,
-        type: t.threat.type,
-        score: t.score?.toFixed(2),
-        isMissile: t.isMissile
-      })));
-      
+        
+        console.log('【SAPage】增强威胁评分详情:', allEnhancedThreats.map(t => ({
+          id: t.threat.id,
+          type: t.threat.type,
+          score: t.score?.toFixed(2),
+          isMissile: t.isMissile
+        })));
+      }
+      if (missiles.length > 0) {
+        missiles.forEach((missile, index) => {
+          allEnhancedThreats.push({
+            threat: {
+              id: missile.id,
+              type: missile.type,
+              label: missile.label,
+            },
+            score: missile.score,
+            isMissile: true,
+            originalIndex: index,
+          })
+        }
+        );
+      }
       return allEnhancedThreats.sort((a, b) => {
         // 威胁已经在服务端排序，但我们保持排序逻辑以防万一
         const scoreDiff = b.score - a.score;
@@ -861,7 +885,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           
           allThreats.push({
             threat,
-            score: Math.min(score, 0.9), // 确保导弹分数最高
+            score: Math.min(score, 0.9), 
             isMissile: false,
             originalIndex: index
           });
@@ -945,7 +969,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       setEnhancedThreats(prev => {
         const newList = [...prev.filter(t => t.id !== threat.id)];
         const one = prev.find(t => t.id === threat.id);
-        newList.unshift({...one});
+        if (one) {
+          newList.unshift({...one});
+        }
         return newList;
       })
     } else {
@@ -1349,35 +1375,18 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const allBaseThreats = [
       ...saThreatsToUse,
       ...missiles.map((missile: any) => {
-        console.log('【威胁计算】添加导弹威胁:', missile.id, missile.type);
+        console.log('【威胁计算】添加导弹威胁:', missile.id, missile.type, missile.distance_from_center, missile.score);
         return {
           id: missile.id,
           type: missile.type,
-          label: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
-          source: missile.type === 'MissileUp' ? '上升导弹' : '下降导弹',
-          distance: 0,
+          label: missile.label,
+          source: missile.label,
+          distance: missile.distance_from_center,
           heading: 0,
-          priority: 'high' as const
+          priority: 'high' as const,
+          _enhanced: missile,
         };
       }),
-      // 如果使用增强协议，还需要添加增强威胁中的导弹
-      ...(useEnhancedProtocol && enhancedThreats.length > 0 
-        ? enhancedThreats
-            .filter(et => et.is_missile && !missiles.some(m => m.id === et.id))
-            .map(et => {
-              console.log('【威胁计算】添加增强导弹威胁:', et.id, et.type);
-              return {
-                id: et.id,
-                type: et.missile_type || et.type,
-                label: et.label,
-                source: et.label,
-                distance: et.distance_from_center,
-                heading: 0,
-                priority: 'high' as const,
-                _enhanced: et
-              };
-            })
-        : [])
     ];
     
     // 合并用户选择的威胁（仅用于显示顺序，不影响计算）
@@ -1401,16 +1410,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         priorityColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : 
                       (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff'
       };
-      
-      // console.log('【威胁列表】处理威胁:', {
-      //   id: cleanThreatData.id,
-      //   type: cleanThreatData.type,
-      //   label: cleanThreatData.label,
-      //   distance: cleanThreatData.distance?.toFixed(2),
-      //   score: cleanThreatData.score?.toFixed(2),
-      //   priorityLevel: cleanThreatData.priorityLevel,
-      //   hasEnhanced: !!threat._enhanced
-      // });
       
       return cleanThreatData;
     });

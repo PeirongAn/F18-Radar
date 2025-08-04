@@ -279,7 +279,7 @@ class ThreatManager:
                 specific_upgraded_threats=upgraded_threats_only  # 可选：标明具体升级的威胁
             )
         else:
-            # 导弹事件：重新生成所有现有威胁位置 + 添加新导弹
+        # 导弹事件：重新生成所有现有威胁位置 + 添加新导弹
             print(f"[SA增强导弹] 重新生成所有威胁位置并添加导弹")
             
             # 重新生成所有现有威胁的位置
@@ -288,17 +288,25 @@ class ThreatManager:
                 basic_threat_list, radar_config
             )
             
-            # 重新计算所有威胁的分数（紧急事件时使用默认难度）
-            threats_with_positions = list(zip(basic_threat_list, new_positions))
-            threats_with_scores = priority_calculator.calculate_threat_scores(
-                threats_with_positions, radar_config, None
+            # 生成导弹威胁（先获取基础导弹信息）
+            missile_type = random.choice(['MissileUp', 'MissileDown'])
+            enhanced_missile = self.generate_enhanced_missile_threat(missile_type, radar_config)
+            
+            # 将所有威胁（包括导弹）一起进行分数归一化计算
+            all_basic_threats = basic_threat_list + [{'id': enhanced_missile.id, 'type': enhanced_missile.type}]
+            all_positions = new_positions + [enhanced_missile.position]
+            
+            # 重新计算所有威胁的分数（包括导弹，紧急事件时使用默认难度）
+            all_threats_with_positions = list(zip(all_basic_threats, all_positions))
+            all_threats_with_scores = priority_calculator.calculate_threat_scores(
+                all_threats_with_positions, radar_config, None
             )
             
             # 创建重新定位的威胁列表
             relocated_threats = []
             for i, threat in enumerate(threats):
                 new_position = new_positions[i]
-                score_info = threats_with_scores[i]
+                score_info = all_threats_with_scores[i]  # 使用归一化后的分数
                 
                 relocated_threat = EnhancedThreat(
                     id=threat.id,
@@ -306,17 +314,19 @@ class ThreatManager:
                     label=threat.label,
                     position=new_position,  # 新位置
                     priority=threat.priority,
-                    score=score_info['score'],  # 重新计算的分数
+                    score=score_info['score'],  # 归一化后的分数
                     distance_from_center=score_info['distance_from_center'],
                     is_missile=threat.is_missile,
                     missile_type=threat.missile_type
                 )
                 relocated_threats.append(relocated_threat)
-                print(f"[SA增强导弹] 威胁重新定位: {threat.id}, 新位置: ({new_position.x:.1f}, {new_position.y:.1f})")
+                print(f"[SA增强导弹] 威胁重新定位: {threat.id}, 新位置: ({new_position.x:.1f}, {new_position.y:.1f}), 归一化分数: {score_info['score']:.2f}")
             
-            # 生成导弹威胁
-            missile_type = random.choice(['MissileUp', 'MissileDown'])
-            enhanced_missile = self.generate_enhanced_missile_threat(missile_type, radar_config)
+            # 更新导弹威胁的归一化分数
+            missile_score_info = all_threats_with_scores[-1]  # 导弹是最后一个
+            enhanced_missile.score = missile_score_info['score']
+            enhanced_missile.distance_from_center = missile_score_info['distance_from_center']
+            print(f"[SA增强导弹] 导弹威胁: {enhanced_missile.id}, 位置: ({enhanced_missile.position.x:.1f}, {enhanced_missile.position.y:.1f}), 归一化分数: {enhanced_missile.score:.2f}")
             
             # 延迟导入避免循环依赖
             from network.message_protocol import message_protocol
