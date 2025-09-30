@@ -162,7 +162,8 @@ class ThreatManager:
     def generate_enhanced_sa_emergency(
         self,
         threats: List[EnhancedThreat],
-        radar_config: RadarConfig
+        radar_config: RadarConfig,
+        difficulty_config: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         生成增强的SA紧急事件
@@ -229,7 +230,7 @@ class ThreatManager:
             # 重新计算所有威胁的分数（紧急事件时使用默认难度）
             threats_with_positions = list(zip(basic_threat_list, new_positions))
             threats_with_scores = priority_calculator.calculate_threat_scores(
-                threats_with_positions, radar_config, None
+                threats_with_positions, radar_config, difficulty_config
             )
             
             # 创建更新后的威胁对象
@@ -299,7 +300,7 @@ class ThreatManager:
             # 重新计算所有威胁的分数（包括导弹，紧急事件时使用默认难度）
             all_threats_with_positions = list(zip(all_basic_threats, all_positions))
             all_threats_with_scores = priority_calculator.calculate_threat_scores(
-                all_threats_with_positions, radar_config, None
+                all_threats_with_positions, radar_config, difficulty_config
             )
             
             # 创建重新定位的威胁列表
@@ -345,6 +346,7 @@ class ThreatManager:
         user_id: str,
         event_owner: str,
         session_state: Dict[str, Any],
+        difficulty_config: Dict[str, Any],
         use_enhanced_protocol: bool = True
     ) -> None:
         """
@@ -362,7 +364,7 @@ class ThreatManager:
         await asyncio.sleep(random.uniform(2, 3))
         
         if use_enhanced_protocol:
-            emergency_msg = self.generate_enhanced_sa_emergency(threats, radar_config)
+            emergency_msg = self.generate_enhanced_sa_emergency(threats, radar_config, difficulty_config)
         else:
             # 回退到传统协议
             legacy_threats = [

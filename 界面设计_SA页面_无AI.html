@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SA页面界面设计 - 无AI模式</title>
+    <style>
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: #000000;
+            color: #00ff00;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+            padding: 30px;
+        }
+        h1 {
+            text-align: center;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            font-size: 2.5em;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #ffff00;
+            border-bottom: 2px solid #ffff00;
+            padding-bottom: 10px;
+            margin-top: 30px;
+        }
+        h3 {
+            color: #ff6600;
+            margin-top: 25px;
+        }
+        .layout-grid {
+            display: grid;
+            grid-template-columns: 3fr 2fr;
+            gap: 30px;
+            margin-top: 20px;
+            height: 100%;
+            margin: 20px auto;
+            background: #111111;
+            border: 2px solid #00ff00;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .component-box {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 10px 0;
+        }
+        .sa-main {
+            background: #0a0a0a;
+            border: 2px solid #00ff00;
+            text-align: center;
+            padding: 40px;
+            border-radius: 10px;
+        }
+        .sa-display {
+            width: 300px;
+            height: 300px;
+            background: #000;
+            border: 2px solid #00ff00;
+            border-radius: 50%;
+            position: relative;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .sa-circles {
+            position: absolute;
+            border: 1px solid #00ff00;
+            border-radius: 50%;
+            opacity: 0.6;
+        }
+        .circle-1 { width: 100px; height: 100px; }
+        .circle-2 { width: 200px; height: 200px; }
+        .circle-3 { width: 280px; height: 280px; }
+        .sa-center {
+            width: 15px;
+            height: 15px;
+            background: #00ff00;
+            border-radius: 50%;
+            position: absolute;
+        }
+        .sa-buttons {
+            display: grid;
+            grid-template-columns: 1fr 800px 1fr;
+            grid-template-rows: auto auto auto;
+            gap: 15px;
+            margin: 20px 0;
+            align-items: center;
+        }
+        .sa-buttons-top {
+            grid-column: 2;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+        .sa-buttons-left {
+            grid-column: 1;
+            grid-row: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .sa-buttons-right {
+            grid-column: 3;
+            grid-row: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-start;
+        }
+        .sa-buttons-bottom {
+            grid-column: 2;
+            grid-row: 3;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+        .sa-btn {
+            background: #333;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 6px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 10px;
+            min-width: 30px;
+        }
+        .sa-btn:hover {
+            background: #004400;
+        }
+        .sa-btn.result-btn {
+            background: #444;
+            border-color: #ffff00;
+            color: #ffff00;
+            font-weight: bold;
+            min-width: 80px;
+        }
+        .threat-icon {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            background: #ff0000;
+            border: 2px solid #ffff00;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: bold;
+            color: #ffffff;
+            cursor: pointer;
+        }
+        .threat-icon:hover {
+            border-color: #ffffff;
+        }
+        .threat-icon.selected {
+            border-color: #00ff00;
+            box-shadow: 0 0 10px #00ff00;
+        }
+        .missile-icon {
+            background: #ff0000;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        .status-panel {
+            background: #1a1a1a;
+            border: 1px solid #ffff00;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        .status-label { color: #cccccc; }
+        .status-value { color: #00ff00; font-weight: bold; }
+        .emergency-status {
+            background: #2a0a0a;
+            border: 2px solid #ff0000;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            animation: blink 1.5s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { border-color: #ff0000; }
+            51%, 100% { border-color: #ff6666; }
+        }
+        .communication-log {
+            background: #0a0a0a;
+            border: 1px solid #00ffff;
+            border-radius: 8px;
+            padding: 15px;
+            height: 260px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        .log-time { color: #888; }
+        .log-type { color: #ffff00; font-weight: bold; }
+        .log-type.emergency { color: #ff0000; font-weight: bold; }
+        .log-type.threat { color: #ff6600; font-weight: bold; }
+        .log-content { color: #00ffff; }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        .feature-list li {
+            background: #2a2a2a;
+            margin: 5px 0;
+            padding: 10px;
+            border-left: 4px solid #00ff00;
+            border-radius: 4px;
+        }
+        .feature-list li.user-action {
+            border-left-color: #ffff00;
+        }
+        .feature-list li.system-action {
+            border-left-color: #ff6600;
+        }
+        .feature-list li.emergency-action {
+            border-left-color: #ff0000;
+        }
+        .task-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            border-radius: 8px;
+            padding: 15px;
+            font-size: 14px;
+            z-index: 100;
+        }
+        .sa-control-layout {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        .sa-middle-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .sa-buttons-top,
+        .sa-buttons-bottom {
+            display: flex;
+            gap: 10px;
+        }
+        .sa-buttons-left,
+        .sa-buttons-right {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .threat-list {
+            background: #1a1a1a;
+            border: 1px solid #ff6600;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .threat-item {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .threat-priority-high { border-left: 4px solid #ff0000; }
+        .threat-priority-medium { border-left: 4px solid #ffff00; }
+        .threat-priority-low { border-left: 4px solid #00ffff; }
+        .arc-display {
+            position: absolute;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 300px;
+            border: 2px solid #00ff00;
+            border-radius: 0 0 300px 300px;
+            border-top: none;
+        }
+        .direction-markers {
+            position: absolute;
+            color: #00ff00;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .scale-markers {
+            position: absolute;
+            width: 2px;
+            height: 15px;
+            background: #00ff00;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>威胁排序交互等效界面设计</h1>
+        <div style="text-align: center; margin-bottom: 30px;">
+        </div>
+
+        <div class="layout-grid">
+            <!-- 左侧主显示区域 -->
+            <div>
+                <h2>主显示区域（SA态势感知）</h2>
+              
+                <div class="component-box sa-main" style="position: relative;">
+                    <div style="height: 80px;"></div>   
+                    
+                    <!-- 任务进度信息（左上角） -->
+                    <div class="task-info">
+                        <div class="status-item">
+                            <span class="status-label">当前任务:</span>
+                            <span class="status-value">SA威胁排序</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">进度:</span>
+                            <span class="status-value">1/3</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">难度:</span>
+                            <span class="status-value">初级</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">模式:</span>
+                            <span class="status-value" style="color: #ff6600;">手动</span>
+                        </div>
+                    </div>
+                    
+                    <!-- SA控制按钮布局 -->
+                    <div class="sa-control-layout">
+                        <!-- 顶部按钮 -->
+                        <div class="sa-buttons-top">
+                            <div class="sa-btn">T1</div>
+                            <div class="sa-btn">T2</div>
+                            <div class="sa-btn result-btn">查看结果</div>
+                            <div class="sa-btn">T4</div>
+                            <div class="sa-btn">T5</div>
+                        </div>
+                        
+                        <!-- 中间区域：左侧按钮 + SA显示 + 右侧按钮 -->
+                        <div class="sa-middle-section">
+                            <!-- 左侧按钮 -->
+                            <div class="sa-buttons-left">
+                                <div class="sa-btn">L1</div>
+                                <div class="sa-btn">Next</div>
+                                <div class="sa-btn">L3</div>
+                                <div class="sa-btn">L4</div>
+                                <div class="sa-btn">L5</div>
+                            </div>
+                            
+                            <!-- 1:1 SA态势显示器（圆形） -->
+                            <div class="sa-display">
+                                <!-- 雷达扫描圆圈 -->
+                                <div class="sa-circles circle-1"></div>
+                                <div class="sa-circles circle-2"></div>
+                                <div class="sa-center"></div>
+                                
+                                <!-- 威胁图标示例 -->
+                                <div class="threat-icon" style="top: 80px; left: 120px;" title="一级空中威胁">
+                                    ✈
+                                </div>
+                                <div class="threat-icon" style="top: 180px; left: 200px;" title="二级防空炮">
+                                    🎯
+                                </div>
+                                <div class="threat-icon missile-icon" style="top: 120px; left: 230px;" title="导弹来袭">
+                                    🚀
+                                </div>
+                                <div class="threat-icon" style="top: 220px; left: 180px;" title="水面威胁">
+                                    🚢
+                                </div>
+                                
+                                <!-- 状态指示 -->
+                                <div style="position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); color: #00ff00; font-size: 12px; text-align: center;">
+                                    扫描状态: 活动 | 威胁数量: 4
+                                </div>
+                            </div>
+                            
+                            <!-- 右侧按钮 -->
+                            <div class="sa-buttons-right">
+                                <div class="sa-btn">R1</div>
+                                <div class="sa-btn">R2</div>
+                                <div class="sa-btn">R3</div>
+                                <div class="sa-btn">R4</div>
+                                <div class="sa-btn">R5</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 底部按钮 -->
+                        <div class="sa-buttons-bottom">
+                            <div class="sa-btn">B1</div>
+                            <div class="sa-btn">B2</div>
+                            <div class="sa-btn">B3</div>
+                            <div class="sa-btn">B4</div>
+                            <div class="sa-btn">B5</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- <h2>🎮 SA控制功能说明</h2>
+                <div class="feature-list">
+                    <li class="user-action">👤 手动点击威胁图标进行选择</li>
+                    <li class="user-action">👤 手动分析威胁优先级排序</li>
+                    <li class="user-action">👤 手动响应临机事件（导弹来袭、威胁升级）</li>
+                    <li class="system-action">⚙️ 实时显示威胁位置和类型</li>
+                    <li class="system-action">⚙️ 自动检测临机事件</li>
+                    <li class="emergency-action">🚨 紧急事件音频警报</li>
+                    <li class="user-action">👤 手动确认威胁排序结果</li>
+                </div> -->
+            </div>
+
+            <!-- 右侧控制和信息区域 -->
+            <div>
+                <h2>SA系统状态</h2>
+                
+                
+
+                <div class="status-panel">
+                    <h3>⚡ 系统状态</h3>
+                    
+                </div>
+
+
+
+                <div class="communication-log">
+                    <h3>📡 SA操作日志</h3>
+                    <div class="log-entry">
+                        <span class="log-time">[14:32:10]</span>
+                        <span class="log-type">[系统]</span>
+                        <span class="log-content">SA系统初始化完成，当前威胁数量：3</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:32:15]</span>
+                        <span class="log-type emergency">[临机事件]</span>
+                        <span class="log-content">警告！导弹来袭！类型：上升导弹</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:32:18]</span>
+                        <span class="log-type threat">[威胁处理]</span>
+                        <span class="log-content">[用户] 选择威胁：上升导弹，优先级：高，等待确认</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:32:25]</span>
+                        <span class="log-type threat">[威胁处理]</span>
+                        <span class="log-content">[用户] 选择威胁：一级空中威胁，优先级：高，等待确认</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:32:30]</span>
+                        <span class="log-type">[系统]</span>
+                        <span class="log-content">等待用户确认威胁排序结果</span>
+                    </div>
+                    <div class="emergency-status">
+                        <h3 style="color: #ff0000; margin: 0 0 10px 0;">🚨 临机事件状态</h3>
+                        <div class="status-item">
+                            <span class="status-label">事件类型:</span>
+                            <span class="status-value" style="color: #ff0000;">导弹来袭</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">事件时间:</span>
+                            <span class="status-value" style="color: #ffff00;">14:32:15</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">响应状态:</span>
+                            <span class="status-value" style="color: #ff6600;">等待处理</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="threat-list">
+                    <h3>🎯 威胁列表（手动排序）</h3>
+                    <div class="threat-item threat-priority-high">
+                        <div>
+                            <strong>上升导弹</strong><br>
+                            <small>距离: 不详 | 方位: 不详</small>
+                        </div>
+                        <div style="color: #ff0000;">高</div>
+                    </div>
+                  
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

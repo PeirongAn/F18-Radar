@@ -4,6 +4,7 @@ import RadarDisplay, { ScanModeType, ScanControlParams } from './RadarDisplay';
 import AntennaElevationMarker from './AntennaElevationMarker'; // Import AntennaElevationMarker
 import { useKeyboardControl } from '../hooks/useKeyboardControl';
 import useRadarData from '../hooks/useRadarData';
+import useExternalTDCControl, { CoordinateConfig, TDCCoordinateMessage, TDCPosition } from '../hooks/useExternalTDCControl';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '../stores/StoreProvider';
 import agentStore from '../stores/AgentStore'; // Import AgentStore directly
@@ -130,6 +131,65 @@ const Radar: React.FC<RadarProps> = (({
 
   // State for TDC position, managed locally in Radar.tsx
   const [tdcPosition, setTdcPosition] = useState({ x: width / 2, y: height / 2 });
+  
+  // 外部控制状态
+  const [hasRecentWebSocketControl, setHasRecentWebSocketControl] = useState(false);
+
+  // 外部TDC控制配置
+  const coordinateConfig: CoordinateConfig = React.useMemo(() => ({
+    frameStartX: framePositions.startX,
+    frameStartY: framePositions.startY,
+    radarWidth: radarConfig.mainBoxWidth,
+    radarHeight: radarConfig.mainBoxHeight,
+    padding: radarConfig.padding
+  }), [framePositions.startX, framePositions.startY, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight, radarConfig.padding]);
+
+  // 处理外部TDC更新
+  const handleExternalTDCUpdate = useCallback((
+    coordinate: TDCCoordinateMessage, 
+    pixelPosition: TDCPosition
+  ) => {
+    console.log('[Radar] 外部TDC坐标更新:', {
+      normalized: { x: coordinate.x, y: coordinate.y },
+      pixel: { x: pixelPosition.x, y: pixelPosition.y },
+      source: coordinate.source
+    });
+
+    // 更新TDC位置
+    setTdcPosition(pixelPosition);
+    
+    // 标记为外部控制活跃
+    setHasRecentWebSocketControl(true);
+    
+    // 2秒后允许键盘控制
+    setTimeout(() => setHasRecentWebSocketControl(false), 2000);
+  }, []);
+
+  // 处理外部ForcePress（模拟Enter键效果）
+  const handleExternalForcePress = useCallback(() => {
+    console.log('[Radar] 外部ForcePress激活，模拟Enter键效果');
+    
+    // 创建一个模拟的Enter键事件
+    const simulatedEnterEvent = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    
+    // 触发键盘事件处理
+    document.dispatchEvent(simulatedEnterEvent);
+  }, []);
+
+  // 使用外部TDC控制Hook
+  const externalTDC = useExternalTDCControl(
+    'ws://localhost:8765',
+    coordinateConfig,
+    handleExternalTDCUpdate,
+    handleExternalForcePress
+  );
 
   const handleClearAndReset = useCallback(() => {
     console.log('Clearing panel and resetting for next mission.');
@@ -211,7 +271,57 @@ const Radar: React.FC<RadarProps> = (({
     });
   }, [width, height, radarConfig.padding, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight, framePositions]); // resumeDataStream removed from dependencies
 
-  // Setup keyboard controls for TDC
+  // WebSocket坐标转换函数：将-1到1的归一化坐标转换为像素坐标
+  const convertNormalizedToPixel = useCallback((normalizedX: number, normalizedY: number) => {
+    // 确保坐标在有效范围内
+    const clampedX = Math.max(-1, Math.min(1, normalizedX));
+    const clampedY = Math.max(-1, Math.min(1, normalizedY));
+    
+    // 计算雷达显示区域的可用尺寸（减去padding）
+    const availableWidth = radarConfig.mainBoxWidth - 2 * radarConfig.padding;
+    const availableHeight = radarConfig.mainBoxHeight - 2 * radarConfig.padding;
+    
+    // 转换到雷达显示区域的像素坐标
+    const pixelX = framePositions.startX + radarConfig.padding + 
+      (clampedX + 1) * availableWidth / 2;
+    
+    const pixelY = framePositions.startY + radarConfig.padding + 
+      (clampedY + 1) * availableHeight / 2;
+    
+    console.log(`[TDC坐标转换] 归一化坐标(${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}) -> 像素坐标(${pixelX.toFixed(1)}, ${pixelY.toFixed(1)})`);
+    
+    return { x: pixelX, y: pixelY };
+  }, [framePositions, radarConfig]);
+
+  // WebSocket TDC坐标处理函数
+  const handleWebSocketTDCUpdate = useCallback((wsCoordinate: {x: number, y: number, timestamp: number}) => {
+    const pixelCoordinate = convertNormalizedToPixel(wsCoordinate.x, wsCoordinate.y);
+    setTdcPosition(pixelCoordinate);
+    console.log(`[TDC WebSocket] 更新位置到: (${pixelCoordinate.x.toFixed(1)}, ${pixelCoordinate.y.toFixed(1)})`);
+  }, [convertNormalizedToPixel]);
+
+  // 监听WebSocket TDC坐标更新
+  useEffect(() => {
+    if (radarData?.tdcCoordinate) {
+      console.log('[TDC WebSocket] 收到坐标数据:', radarData.tdcCoordinate);
+      handleWebSocketTDCUpdate(radarData.tdcCoordinate);
+    }
+  }, [radarData?.tdcCoordinate, handleWebSocketTDCUpdate]);
+
+  // 条件性启用键盘控制（当没有外部控制活跃时启用）
+  const enableKeyboardControl = !hasRecentWebSocketControl && !externalTDC.isTDCControlActive(2000);
+
+  // 混合键盘控制处理：只有在没有WebSocket活跃控制时才响应键盘操作
+  const hybridTdcKeyAction = useCallback((action: 'up' | 'down' | 'left' | 'right') => {
+    if (enableKeyboardControl) {
+      console.log(`[TDC键盘] 执行${action}操作`);
+      handleTdcKeyAction(action);
+    } else {
+      console.log(`[TDC键盘] WebSocket控制活跃，忽略${action}操作`);
+    }
+  }, [enableKeyboardControl, handleTdcKeyAction]);
+
+  // Setup keyboard controls for TDC (支持混合控制)
   useKeyboardControl({
     moveStep: 5, // This moveStep is now for context or can be removed if logic is fully in handleTdcKeyAction
     boundaries: {
@@ -225,7 +335,7 @@ const Radar: React.FC<RadarProps> = (({
       // Example: up: 'w', down: 's', left: 'a', right: 'd' 
       // If not specified, useKeyboardControl defaults to arrow keys for these actions.
     },
-    onKeyAction: handleTdcKeyAction,
+    onKeyAction: hybridTdcKeyAction, // 使用混合控制处理函数
   });
 
   // Effect for AI to automatically set radar parameters based on server recommendations
@@ -618,6 +728,7 @@ const Radar: React.FC<RadarProps> = (({
     
     // Add clear and reset functionality to the first left button
     if (position === 'left' && buttonIndex === 1) {
+      console.log('get button 1 clicked');
       handleClearAndReset();
       return; // Stop further processing for this button
     }
@@ -662,9 +773,19 @@ const Radar: React.FC<RadarProps> = (({
       
      
     }
-    // 添加左侧第2个按钮的功能，用于调整天线高度
+    // 添加左侧第2个按钮的功能，用于调整天线高度（向上）
     else if (position === 'left' && buttonIndex === 2) {
-     
+      console.log('天线向上按钮被点击');
+      const newElevation = Math.min(3, radarStore.currentAntennaElevation + 1); // 最大 +3 度
+      radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
+      console.log(`天线高度调整为: ${newElevation}度`);
+    }
+    // 添加左侧第4个按钮的功能，用于调整天线高度（向下）
+    else if (position === 'left' && buttonIndex === 4) {
+      console.log('天线向下按钮被点击');
+      const newElevation = Math.max(-3, radarStore.currentAntennaElevation - 1); // 最小 -3 度
+      radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
+      console.log(`天线高度调整为: ${newElevation}度`);
     }
     else if (position === 'left' && buttonIndex === 5) {
       // 左侧第5个按钮循环切换BR计数上限：1 -> 2 -> 4 -> 1
@@ -878,6 +999,38 @@ const Radar: React.FC<RadarProps> = (({
               接管控制 (F10)
             </button>
           )} */}
+
+          {/* 外部TDC控制状态显示 */}
+          {externalTDC.connected && (
+            <div 
+              style={{
+                position: 'absolute',
+                top: '10px',
+                left: '10px',
+                background: 'rgba(0, 0, 0, 0.8)',
+                color: 'white',
+                padding: '8px',
+                borderRadius: '4px',
+                fontSize: '11px',
+                zIndex: 100,
+                minWidth: '200px'
+              }}
+            >
+              <div style={{ color: '#00ff00', fontWeight: 'bold' }}>🎮 外部TDC控制</div>
+              <div>状态: <span style={{ color: externalTDC.connected ? '#00ff00' : '#ff0000' }}>
+                {externalTDC.connected ? '已连接' : '未连接'}
+              </span></div>
+              <div>消息: {externalTDC.messageCount}</div>
+              {externalTDC.lastTDCCoordinate && (
+                <div>
+                  坐标: ({externalTDC.lastTDCCoordinate.x.toFixed(3)}, {externalTDC.lastTDCCoordinate.y.toFixed(3)})
+                </div>
+              )}
+              <div>键盘控制: <span style={{ color: enableKeyboardControl ? '#00ff00' : '#ff6600' }}>
+                {enableKeyboardControl ? '启用' : '禁用'}
+              </span></div>
+            </div>
+          )}
         </div>
         
         {/* 右侧按钮 */}

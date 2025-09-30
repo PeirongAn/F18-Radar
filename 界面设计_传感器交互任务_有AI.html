@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>传感器交互任务界面设计 - 有AI模式</title>
+    <style>
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: #000000;
+            color: #00ff00;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+            padding: 30px;
+        }
+        h1 {
+            text-align: center;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00;
+            font-size: 2.5em;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #ffff00;
+            border-bottom: 2px solid #ffff00;
+            padding-bottom: 10px;
+            margin-top: 30px;
+        }
+        h3 {
+            color: #ff6600;
+            margin-top: 25px;
+        }
+        .layout-grid {
+            display: grid;
+            grid-template-columns: 3fr 2fr;
+            gap: 30px;
+            margin-top: 20px;
+            height: 100%;
+            margin: 20px auto;
+            background: #111111;
+            border: 2px solid #00ff00;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .component-box {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 10px 0;
+        }
+        .radar-main {
+            background: #0a0a0a;
+            border: 2px solid #00ff00;
+            text-align: center;
+            padding: 40px;
+            border-radius: 10px;
+        }
+        .radar-control-layout {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        .radar-middle-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .radar-display {
+            width: 300px;
+            height: 300px;
+            background: #000;
+            border: 2px solid #00ff00;
+            border-radius: 8px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .radar-center {
+            width: 20px;
+            height: 20px;
+            background: #00ff00;
+            border-radius: 50%;
+            position: absolute;
+        }
+        .radar-rings {
+            position: absolute;
+            border: 1px solid #00ff00;
+            border-radius: 8px;
+            opacity: 0.6;
+        }
+        .ring-1 { width: 100px; height: 100px; }
+        .ring-2 { width: 200px; height: 200px; }
+        .ring-3 { width: 280px; height: 280px; }
+        .radar-buttons-top,
+        .radar-buttons-bottom {
+            display: flex;
+            gap: 10px;
+        }
+        .radar-buttons-left,
+        .radar-buttons-right {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .radar-btn {
+            background: #333;
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 6px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 10px;
+            min-width: 30px;
+        }
+        .radar-btn:hover {
+            background: #004400;
+        }
+        .radar-btn.ai-controlled {
+            background: #004080;
+            border-color: #0080ff;
+            color: #0080ff;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        .status-panel {
+            background: #1a1a1a;
+            border: 1px solid #ffff00;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        .status-label { color: #cccccc; }
+        .status-value { color: #00ff00; font-weight: bold; }
+        .communication-log {
+            background: #0a0a0a;
+            border: 1px solid #00ffff;
+            border-radius: 8px;
+            padding: 15px;
+            height: 260px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        .log-time { color: #888; }
+        .log-type { color: #ffff00; font-weight: bold; }
+        .log-type.ai { color: #0080ff; font-weight: bold; }
+        .log-content { color: #00ffff; }
+        .ai-assistant {
+            background: #0a1a2a;
+            border: 2px solid #0080ff;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .ai-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .ai-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #0080ff;
+            animation: pulse 1.5s infinite;
+        }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        .feature-list li {
+            background: #2a2a2a;
+            margin: 5px 0;
+            padding: 10px;
+            border-left: 4px solid #00ff00;
+            border-radius: 4px;
+        }
+        .feature-list li.ai-action {
+            border-left-color: #0080ff;
+        }
+        .feature-list li.user-action {
+            border-left-color: #ffff00;
+        }
+        .feature-list li.system-action {
+            border-left-color: #ff6600;
+        }
+        .task-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: #1a1a1a;
+            border: 2px solid #00ff00;
+            border-radius: 8px;
+            padding: 15px;
+            font-size: 14px;
+            z-index: 100;
+        }
+        .ai-recommendations {
+            background: #1a1a2a;
+            border: 1px solid #0080ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .recommendation-item {
+            background: #0a0a1a;
+            margin: 8px 0;
+            padding: 10px;
+            border-left: 4px solid #0080ff;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .takeover-btn {
+            background: #ff6600;
+            border: 2px solid #ff8800;
+            color: #ffffff;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 15px;
+        }
+        .takeover-btn:hover {
+            background: #ff8800;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>传感器信任等效界面设计</h1>
+       
+
+        <div class="layout-grid">
+            <!-- 左侧主显示区域 -->
+            <div>
+                <h2>主显示区域</h2>
+                <div class="component-box radar-main" style="position: relative;">
+                    <div style="height: 80px;"></div>
+                    
+                    <!-- 任务进度信息（左上角） -->
+                    <div class="task-info">
+                        <div class="status-item">
+                            <span class="status-label">当前任务:</span>
+                            <span class="status-value">传感器目标识别</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">进度:</span>
+                            <span class="status-value">2/5</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">难度:</span>
+                            <span class="status-value">中级</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">模式:</span>
+                            <span class="status-value" style="color: #0080ff;">AI辅助</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 传感器控制按钮布局 -->
+                    <div class="radar-control-layout">
+                        <!-- 顶部按钮 -->
+                        <div class="radar-buttons-top">
+                            <div class="radar-btn">T1</div>
+                            <div class="radar-btn ai-controlled">T2</div>
+                            <div class="radar-btn">T3</div>
+                            <div class="radar-btn ai-controlled">T4</div>
+                            <div class="radar-btn">T5</div>
+                        </div>
+                        
+                        <!-- 中间区域：左侧按钮 + 传感器显示 + 右侧按钮 -->
+                        <div class="radar-middle-section">
+                            <!-- 左侧按钮 -->
+                            <div class="radar-buttons-left">
+                                <div class="radar-btn ai-controlled">L1</div>
+                                <div class="radar-btn">L2</div>
+                                <div class="radar-btn ai-controlled">L3</div>
+                                <div class="radar-btn">L4</div>
+                                <div class="radar-btn">L5</div>
+                            </div>
+                            
+                            <!-- 1:1传感器显示器 -->
+                            <div class="radar-display">
+                                <div class="radar-rings ring-1"></div>
+                                <div class="radar-rings ring-2"></div>
+                                <div class="radar-rings ring-3"></div>
+                                <div class="radar-center"></div>
+                                <div style="color: #ff0000; font-weight: bold;">目标点显示区域</div>
+                       
+                            </div>
+                            
+                            <!-- 右侧按钮 -->
+                            <div class="radar-buttons-right">
+                                <div class="radar-btn">R1</div>
+                                <div class="radar-btn ai-controlled">R2</div>
+                                <div class="radar-btn">R3</div>
+                                <div class="radar-btn ai-controlled">R4</div>
+                                <div class="radar-btn">R5</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 底部按钮 -->
+                        <div class="radar-buttons-bottom">
+                            <div class="radar-btn ai-controlled">B1</div>
+                            <div class="radar-btn">B2</div>
+                            <div class="radar-btn">B3</div>
+                            <div class="radar-btn ai-controlled">B4</div>
+                            <div class="radar-btn">B5</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- <h2>🎮 控制功能说明</h2>
+                <div class="feature-list">
+                    <li class="ai-action">🤖 AI自动调整传感器参数（范围、角度）</li>
+                    <li class="ai-action">🤖 AI自动选择和锁定目标</li>
+                    <li class="ai-action">🤖 AI自动调整天线高度</li>
+                    <li class="user-action">👤 用户可随时手动接管控制</li>
+                    <li class="user-action">👤 用户可观察AI决策过程</li>
+                    <li class="system-action">⚙️ 系统提供AI推理日志</li>
+                    <li class="system-action">⚙️ 实时显示AI建议和操作</li>
+                </div> -->
+            </div>
+
+            <!-- 右侧控制和信息区域 -->
+            <div>
+                <h2>控制与信息区域</h2>
+                
+                <div class="ai-assistant">
+                    <div class="ai-status">
+                        <div class="ai-indicator"></div>
+                        <span style="color: #0080ff; font-weight: bold; font-size: 16px;">AI辅助系统：ACTIVE</span>
+                    </div>
+                 
+                  
+                </div>
+
+                <div class="status-panel">
+                    <h3>⚡ 系统状态</h3>
+                    <div class="status-item">
+                        <span class="status-label">连接状态:</span>
+                        <span class="status-value">已连接</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">雷达范围:</span>
+                        <span class="status-value" style="color: #0080ff;">40 海里 (AI调整)</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">扫描角度:</span>
+                        <span class="status-value" style="color: #0080ff;">30° (AI调整)</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">天线高度:</span>
+                        <span class="status-value" style="color: #0080ff;">+3° (AI调整)</span>
+                    </div>
+                  
+                </div>
+
+    
+
+                <div class="communication-log">
+                    <h3>📡 操作日志</h3>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:15]</span>
+                        <span class="log-type">[系统]</span>
+                        <span class="log-content">飞行员 PILOT_001 已登入系统</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:16]</span>
+                        <span class="log-type ai">[AI]</span>
+                        <span class="log-content">AI系统已激活，开始自动分析传感器数据</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:18]</span>
+                        <span class="log-type ai">[AI]</span>
+                        <span class="log-content">自动调整传感器范围至40海里，扫描角度至30°</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:22]</span>
+                        <span class="log-type ai">[AI]</span>
+                        <span class="log-content">自动调整天线高度至+3°</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:25]</span>
+                        <span class="log-type ai">[AI]</span>
+                        <span class="log-content">检测到目标，正在分析威胁等级...</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:28]</span>
+                        <span class="log-type ai">[AI]</span>
+                        <span class="log-content">目标已锁定：敌方战斗机，距离35海里，高度23,000英尺</span>
+                    </div>
+                    <div class="log-entry">
+                        <span class="log-time">[14:30:30]</span>
+                        <span class="log-type">[成功]</span>
+                        <span class="log-content">AI辅助任务完成，等待下一步指令</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

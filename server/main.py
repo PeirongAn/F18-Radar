@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from managers import config_manager, db_manager, target_manager, info, error
 from network import websocket_server
 from network.http_server import http_server
+# from network.external_device_server import start_external_device_client  # 已注释，客户端直接连接
 
 async def initialize_system():
     """初始化系统组件"""
@@ -60,17 +61,31 @@ async def main():
     parser = argparse.ArgumentParser(description='雷达系统服务器')
     parser.add_argument('--static-dir', type=str, help='静态文件目录路径 (默认: ../dist)')
     parser.add_argument('--http-port', type=int, default=8080, help='HTTP服务器端口 (默认: 8080)')
+    parser.add_argument('--external-port', type=int, default=8765, help='外部设备WebSocket服务端口 (默认: 8765)')
     parser.add_argument('--ws-only', action='store_true', help='仅启动WebSocket服务器（不提供静态文件服务）')
+    parser.add_argument('--no-external', action='store_true', help='不启动外部设备WebSocket客户端')
     args = parser.parse_args()
     
     try:
         # 初始化系统
         await initialize_system()
         
+        # 创建任务列表
+        tasks = []
+        
+        # 启动外部设备WebSocket客户端（除非明确禁用） - 已注释，客户端直接连接8765端口
+        # if not args.no_external:
+        #     info(f"启动外部设备WebSocket客户端，连接到端口: {args.external_port}", "main")
+        #     # 异步启动外部设备客户端，不阻塞主流程
+        #     tasks.append(asyncio.create_task(start_external_device_client("localhost", args.external_port)))
+        # else:
+        #     info("外部设备WebSocket客户端已禁用", "main")
+        info("外部设备TDC控制: 客户端直接连接8765端口，服务器端转发已禁用", "main")
+        
         if args.ws_only:
             # 仅启动WebSocket服务器
             info("启动模式: 仅WebSocket服务器", "main")
-            await websocket_server.start_server()
+            tasks.append(asyncio.create_task(websocket_server.start_server()))
         else:
             # 启动HTTP服务器（包含静态文件服务和WebSocket）
             info("启动模式: HTTP服务器 (静态文件 + WebSocket)", "main")
@@ -83,7 +98,11 @@ async def main():
             http_server.update_static_directory(static_dir)
             
             # 启动HTTP服务器
-            await http_server.start_server()
+            tasks.append(asyncio.create_task(http_server.start_server()))
+        
+        # 等待所有任务完成
+        if tasks:
+            await asyncio.gather(*tasks)
         
     except KeyboardInterrupt:
         info("收到中断信号，正在关闭服务器...", "main")

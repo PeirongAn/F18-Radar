@@ -138,6 +138,17 @@ class HTTPServer:
         self.logger.info("WebSocket客户端已连接")
         session_state = {}  # 为每个连接创建独立的会话状态
         
+        # 注册到外部设备服务器以接收TDC坐标 - 已注释，客户端直接连接8765端口
+        # try:
+        #     from network.external_device_server import register_radar_client, unregister_radar_client
+        #     self.logger.info("正在注册雷达客户端到外部设备服务器...")
+        #     await register_radar_client(ws)
+        #     self.logger.info("雷达客户端注册成功")
+        # except ImportError as e:
+        #     self.logger.warning(f"外部设备服务器模块未找到: {e}，TDC外部控制功能不可用")
+        # except Exception as e:
+        #     self.logger.error(f"注册雷达客户端到外部设备服务器失败: {e}")
+        
         try:
             # 发送初始数据
             initial_data = target_manager.get_radar_data(include_targets=False)
@@ -174,6 +185,13 @@ class HTTPServer:
         except Exception as e:
             self.logger.error(f"WebSocket处理错误: {e}", exc_info=True)
         finally:
+            # 从外部设备服务器注销 - 已注释，客户端直接连接8765端口
+            # try:
+            #     self.logger.info("正在从外部设备服务器注销雷达客户端...")
+            #     unregister_radar_client(ws)
+            #     self.logger.info("雷达客户端注销成功")
+            # except Exception as e:
+            #     self.logger.warning(f"注销雷达客户端失败: {e}")
             self.logger.info("WebSocket客户端已断开连接")
             
         return ws

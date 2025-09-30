@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雷达系统前端模块架构图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .container {
+            max-width: 1600px;
+            width: 95vw;
+            height: calc(95vw * 4 / 3);
+            max-height: 1800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 
+                0 0 40px rgba(52, 152, 219, 0.3),
+                0 10px 30px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            overflow-y: auto;
+            border: 2px solid rgba(52, 152, 219, 0.3);
+        }
+
+        .title {
+            text-align: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            background: linear-gradient(45deg, #3498db, #2c3e50);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .architecture-diagram {
+            display: grid;
+            grid-template-rows: auto auto auto auto auto;
+            gap: 25px;
+            height: calc(100% - 120px);
+        }
+
+        /* 主应用层 */
+        .app-layer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(231, 76, 60, 0.3);
+            color: white;
+            min-height: 100px;
+        }
+
+        /* 视图切换层 */
+        .view-layer {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            min-height: 150px;
+        }
+
+        .view-item {
+            background: linear-gradient(135deg, #9b59b6, #8e44ad);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(155, 89, 182, 0.3);
+            color: white;
+            text-align: center;
+        }
+
+        /* 组件层 */
+        .component-layer {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            min-height: 300px;
+        }
+
+        .component-group {
+            background: linear-gradient(135deg, #f39c12, #e67e22);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(243, 156, 18, 0.3);
+            color: white;
+        }
+
+        .component-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin: 5px 0;
+            font-size: 0.9em;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        /* Hook和Store层 */
+        .hook-store-layer {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            min-height: 180px;
+        }
+
+        .hook-group {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(39, 174, 96, 0.3);
+            color: white;
+        }
+
+        .store-group {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(52, 152, 219, 0.3);
+            color: white;
+        }
+
+        .utils-group {
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(149, 165, 166, 0.3);
+            color: white;
+        }
+
+        /* 底层服务 */
+        .service-layer {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            min-height: 120px;
+        }
+
+        .service-item {
+            background: linear-gradient(135deg, #34495e, #2c3e50);
+            padding: 15px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(52, 73, 94, 0.3);
+            color: white;
+            text-align: center;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-align: center;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .component {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            font-weight: 500;
+            text-align: center;
+        }
+
+        .component.large {
+            padding: 15px 20px;
+            font-size: 1.1em;
+        }
+
+        .arrow {
+            text-align: center;
+            font-size: 2em;
+            color: #2c3e50;
+            margin: 10px 0;
+            opacity: 0.7;
+        }
+
+        .flow-description {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            font-size: 0.9em;
+            color: #555;
+        }
+
+        .data-flow {
+            background: linear-gradient(90deg, transparent, #3498db, transparent);
+            height: 2px;
+            flex-grow: 1;
+            margin: 0 10px;
+            opacity: 0.6;
+        }
+
+        /* 特性标签 */
+        .features {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+            justify-content: center;
+        }
+
+        .feature-tag {
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            padding: 4px 8px;
+            border-radius: 15px;
+            font-size: 0.7em;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        /* 数据流箭头 */
+        .flow-arrows {
+            text-align: center;
+            font-size: 1.5em;
+            color: #3498db;
+            margin: 5px 0;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 1200px) {
+            .component-layer, .hook-store-layer, .service-layer {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            
+            .view-layer {
+                grid-template-columns: 1fr;
+            }
+            
+            .title {
+                font-size: 2em;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+                width: 98vw;
+                height: calc(98vw * 4 / 3);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">🎯 雷达系统前端模块架构图</h1>
+        
+        <div class="architecture-diagram">
+            <!-- 主应用层 -->
+            <div class="app-layer">
+                <div>
+                    <div class="section-title">🏠 主应用组件 (App.tsx)</div>
+                    <div class="component large">React + TypeScript + MobX</div>
+                    <div class="features">
+                        <span class="feature-tag">状态管理</span>
+                        <span class="feature-tag">路由切换</span>
+                        <span class="feature-tag">WebSocket连接</span>
+                        <span class="feature-tag">用户认证</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flow-arrows">⬇️ 视图切换 ⬇️</div>
+
+            <!-- 视图层 -->
+            <div class="view-layer">
+                <div class="view-item">
+                    <div class="section-title">🎯 雷达显示模式</div>
+                    <div class="component">Radar.tsx</div>
+                    <div class="component">RadarDisplay.tsx</div>
+                    <div class="component">RadarButtons.tsx</div>
+                    <div class="features">
+                        <span class="feature-tag">目标跟踪</span>
+                        <span class="feature-tag">雷达扫描</span>
+                        <span class="feature-tag">参数控制</span>
+                    </div>
+                </div>
+                <div class="view-item">
+                    <div class="section-title">🗺️ SA威胁模式</div>
+                    <div class="component">SAPage.tsx</div>
+                    <div class="component">SAButtons.tsx</div>
+                    <div class="component">ThreatList.tsx</div>
+                    <div class="features">
+                        <span class="feature-tag">威胁评估</span>
+                        <span class="feature-tag">临机事件</span>
+                        <span class="feature-tag">优先级排序</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flow-arrows">⬇️ 组件层次 ⬇️</div>
+
+            <!-- 核心组件层 -->
+            <div class="component-layer">
+                <!-- 雷达组件群 -->
+                <div class="component-group">
+                    <div class="section-title">🎯 雷达组件群</div>
+                    <div class="component-item">RadarRenderers.tsx</div>
+                    <div class="component-item">UnknownTarget.tsx</div>
+                    <div class="component-item">EnemyTarget.tsx</div>
+                    <div class="component-item">ScanLine.tsx</div>
+                    <div class="component-item">TDC.tsx</div>
+                    <div class="component-item">BScan.tsx</div>
+                    <div class="component-item">AntennaElevationControl.tsx</div>
+                    <div class="component-item">VelocityVector.tsx</div>
+                </div>
+
+                <!-- 界面控制组件 -->
+                <div class="component-group">
+                    <div class="section-title">🎮 界面控制</div>
+                    <div class="component-item">InitialFormModal.tsx</div>
+                    <div class="component-item">CompletionModal.tsx</div>
+                    <div class="component-item">DifficultyChangeModal.tsx</div>
+                    <div class="component-item">TaskInfoDisplay.tsx</div>
+                    <div class="component-item">CommunicationLog.tsx</div>
+                    <div class="component-item">ConnectionStatus.tsx</div>
+                </div>
+
+                <!-- AI与助手组件 -->
+                <div class="component-group">
+                    <div class="section-title">🤖 AI与助手</div>
+                    <div class="component-item">AIAssistant.tsx</div>
+                    <div class="component-item">AIChat.tsx</div>
+                    <div class="component-item">ThreatAssistant.tsx</div>
+                    <div class="component-item">HorizonHUD.tsx</div>
+                    <div class="component-item">NavigationHUD.tsx</div>
+                </div>
+            </div>
+
+            <div class="flow-arrows">⬇️ 状态管理与Hook ⬇️</div>
+
+            <!-- Hook和Store层 -->
+            <div class="hook-store-layer">
+                <!-- Hooks -->
+                <div class="hook-group">
+                    <div class="section-title">🔗 自定义Hooks</div>
+                    <div class="component-item">useRadarData.ts</div>
+                    <div class="component-item">useAIAgent.ts</div>
+                    <div class="component-item">useKeyboardControl.ts</div>
+                    <div class="features">
+                        <span class="feature-tag">数据获取</span>
+                        <span class="feature-tag">状态管理</span>
+                        <span class="feature-tag">键盘控制</span>
+                    </div>
+                </div>
+
+                <!-- MobX Stores -->
+                <div class="store-group">
+                    <div class="section-title">🗃️ 状态仓库 (MobX)</div>
+                    <div class="component-item">RadarStore.ts</div>
+                    <div class="component-item">AgentStore.ts</div>
+                    <div class="component-item">StoreProvider.tsx</div>
+                    <div class="features">
+                        <span class="feature-tag">响应式状态</span>
+                        <span class="feature-tag">全局共享</span>
+                        <span class="feature-tag">自动更新</span>
+                    </div>
+                </div>
+
+                <!-- 工具模块 -->
+                <div class="utils-group">
+                    <div class="section-title">🛠️ 工具模块</div>
+                    <div class="component-item">difficultyUtils.ts</div>
+                    <div class="component-item">repetitionUtils.ts</div>
+                    <div class="component-item">AudioManager.ts</div>
+                    <div class="features">
+                        <span class="feature-tag">辅助函数</span>
+                        <span class="feature-tag">音频管理</span>
+                        <span class="feature-tag">数据处理</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flow-arrows">⬇️ 底层服务 ⬇️</div>
+
+            <!-- 底层服务 -->
+            <div class="service-layer">
+                <div class="service-item">
+                    <div class="section-title">🎨 图标组件</div>
+                    <div class="component">8个威胁图标</div>
+                    <div class="component">导弹图标</div>
+                    <div class="component">目标标记</div>
+                </div>
+                <div class="service-item">
+                    <div class="section-title">📡 WebSocket通信</div>
+                    <div class="component">实时数据传输</div>
+                    <div class="component">消息协议</div>
+                    <div class="component">连接管理</div>
+                </div>
+                <div class="service-item">
+                    <div class="section-title">🔊 媒体服务</div>
+                    <div class="component">音频播放</div>
+                    <div class="component">声音效果</div>
+                    <div class="component">提示音管理</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 数据流说明 -->
+        <div style="margin-top: 20px; padding: 15px; background: rgba(52, 152, 219, 0.1); border-radius: 10px;">
+            <h3 style="color: #2c3e50; margin-bottom: 10px;">📊 数据流向说明</h3>
+            <div style="font-size: 0.9em; line-height: 1.6; color: #555;">
+                <strong>1. 用户交互</strong>: 用户操作 → 组件事件 → Hook处理 → Store更新 → 组件重渲染<br>
+                <strong>2. 服务器通信</strong>: WebSocket → useRadarData → Store状态 → 组件显示<br>
+                <strong>3. AI决策</strong>: AgentStore → 自动操作 → 消息发送 → 服务器响应<br>
+                <strong>4. 视图切换</strong>: App.tsx 控制 → 组件卸载/挂载 → 状态重置
+            </div>
+        </div>
+
+        <!-- 技术特性 -->
+        <div style="margin-top: 15px; text-align: center;">
+            <div class="features">
+                <span class="feature-tag">🔄 React 18</span>
+                <span class="feature-tag">📘 TypeScript</span>
+                <span class="feature-tag">📦 MobX状态管理</span>
+                <span class="feature-tag">🎨 Konva 2D渲染</span>
+                <span class="feature-tag">📡 WebSocket通信</span>
+                <span class="feature-tag">🎵 音频管理</span>
+                <span class="feature-tag">📱 响应式设计</span>
+                <span class="feature-tag">🤖 AI智能体</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

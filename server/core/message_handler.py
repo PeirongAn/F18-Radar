@@ -55,6 +55,8 @@ class MessageHandler:
                 return await self._handle_record_bulk_operations(message, session_state, client_event_owner)
             elif message_type in ['SwitchSA', 'ResetSA']:
                 return await self._handle_sa_operations(message, session_state, websocket)
+            elif message_type == 'tdc_coordinate':
+                return await self._handle_tdc_coordinate(message, session_state, websocket)
             # elif message_type == 'reset_targets':
             #     return await self._handle_reset_targets(message, session_state)
             else:
@@ -332,6 +334,7 @@ class MessageHandler:
                 'event_owner': event_owner
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
+        db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
         
         if self.use_enhanced_protocol:
             # 使用增强协议生成完整威胁数据
@@ -377,6 +380,7 @@ class MessageHandler:
                         user_id,
                         event_owner,
                         session_state,
+                        current_scenario['difficulty_config'],
                         use_enhanced_protocol=True
                     )
                 )
@@ -510,6 +514,42 @@ class MessageHandler:
         except Exception as e:
             print(f"天线调整出错: {e}")
             return {"type": "ERROR", "message": f"处理天线调整时出错: {e}"}, False
+
+    async def _handle_tdc_coordinate(self, message: Dict[str, Any], session_state: Dict[str, Any], websocket=None) -> Tuple[Dict[str, Any], bool]:
+        """处理TDC坐标控制消息"""
+        try:
+            print("\n===== 处理TDC坐标控制 =====")
+            print(f"收到坐标消息: {message}")
+            
+            # 提取坐标数据
+            x = message.get('x', 0)
+            y = message.get('y', 0)
+            timestamp = message.get('timestamp')
+            
+            # 验证坐标范围
+            if not (-1 <= x <= 1 and -1 <= y <= 1):
+                print(f"坐标范围无效: x={x}, y={y}")
+                return {
+                    "type": "tdc_coordinate_error",
+                    "message": "坐标必须在-1到1范围内"
+                }, False
+            
+            print(f"TDC坐标验证通过: x={x:.3f}, y={y:.3f}")
+            
+            # 构造响应消息（广播给所有客户端）
+            coordinate_data = {
+                'type': 'tdc_coordinate',
+                'x': x,
+                'y': y,
+                'timestamp': timestamp or time.time()
+            }
+            
+            print(f"广播TDC坐标: {coordinate_data}")
+            return coordinate_data, False  # 不需要包含目标数据
+            
+        except Exception as e:
+            print(f"处理TDC坐标时出错: {e}")
+            return {"type": "ERROR", "message": f"处理TDC坐标时出错: {e}"}, False
 
 # 全局消息处理器实例
 message_handler = MessageHandler() 

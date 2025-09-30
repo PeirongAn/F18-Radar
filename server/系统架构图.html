@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雷达威胁排序系统架构图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .container {
+            max-width: 1400px;
+            width: 95vw;
+            height: calc(95vw * 4 / 3);
+            max-height: 1800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 
+                0 0 40px rgba(102, 126, 234, 0.3),
+                0 10px 30px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            overflow-y: auto;
+            border: 2px solid rgba(102, 126, 234, 0.3);
+        }
+
+        .title {
+            text-align: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .architecture-diagram {
+            display: grid;
+            grid-template-rows: auto auto auto;
+            gap: 25px;
+            height: calc(100% - 120px);
+        }
+
+        /* 客户端层 */
+        .client-layer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #74b9ff, #0984e3);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(116, 185, 255, 0.3);
+            color: white;
+            min-height: 120px;
+        }
+
+        /* 网络通信层 */
+        .network-layer {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            background: linear-gradient(135deg, #00b894, #00a085);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(0, 184, 148, 0.3);
+            color: white;
+            min-height: 120px;
+        }
+
+        .network-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        /* 服务层 */
+        .service-layer {
+            display: grid;
+            grid-template-columns: 1fr 2fr 1fr;
+            gap: 20px;
+            min-height: 350px;
+        }
+
+        .core-section, .managers-section, .models-section {
+            background: linear-gradient(135deg, #fd79a8, #e84393);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(253, 121, 168, 0.3);
+            color: white;
+        }
+
+        .managers-section {
+            background: linear-gradient(135deg, #fdcb6e, #e17055);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            padding: 15px;
+        }
+
+        .manager-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        /* 数据层 */
+        .data-layer {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            background: linear-gradient(135deg, #a29bfe, #6c5ce7);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(162, 155, 254, 0.3);
+            color: white;
+            min-height: 100px;
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            text-align: center;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .component {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            font-weight: 500;
+            text-align: center;
+        }
+
+        .component.large {
+            padding: 15px 20px;
+            font-size: 1.1em;
+        }
+
+        .arrow {
+            text-align: center;
+            font-size: 2em;
+            color: #2c3e50;
+            margin: 10px 0;
+            opacity: 0.7;
+        }
+
+        .flow-description {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0;
+            font-size: 0.9em;
+            color: #555;
+        }
+
+        .data-flow {
+            background: linear-gradient(90deg, transparent, #667eea, transparent);
+            height: 2px;
+            flex-grow: 1;
+            margin: 0 10px;
+            opacity: 0.6;
+        }
+
+        /* 特性标签 */
+        .features {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+            justify-content: center;
+        }
+
+        .feature-tag {
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 1200px) {
+            .service-layer {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            
+            .managers-section {
+                grid-template-columns: 1fr;
+            }
+            
+            .title {
+                font-size: 2em;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+                width: 98vw;
+                height: calc(98vw * 4 / 3);
+            }
+            
+            .network-layer {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .data-layer {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">🎯 雷达威胁排序系统架构图</h1>
+        
+        <div class="architecture-diagram">
+            <!-- 客户端层 -->
+            <div class="client-layer">
+                <div class="section-title">🖥️ 客户端层 (Frontend)</div>
+                <div class="component large">React + TypeScript + Vite</div>
+                <div class="component">雷达显示界面</div>
+                <div class="component">威胁管理面板</div>
+                <div class="component">AI智能体控制</div>
+                <div class="features">
+                    <span class="feature-tag">实时可视化</span>
+                    <span class="feature-tag">交互式操作</span>
+                    <span class="feature-tag">状态管理(Zustand)</span>
+                </div>
+            </div>
+
+            <div class="arrow">⬇️</div>
+            <div class="flow-description">
+                <span>HTTP/WebSocket 通信</span>
+                <div class="data-flow"></div>
+                <span>实时数据交换</span>
+            </div>
+
+            <!-- 网络通信层 -->
+            <div class="network-layer">
+                <div class="network-item">
+                    <div class="section-title">🌐 HTTP服务器</div>
+                    <div class="component">aiohttp 框架</div>
+                    <div class="component">静态文件服务</div>
+                    <div class="component">SPA路由支持</div>
+                </div>
+                <div class="network-item">
+                    <div class="section-title">📡 WebSocket</div>
+                    <div class="component">实时双向通信</div>
+                    <div class="component">会话状态管理</div>
+                    <div class="component">消息协议处理</div>
+                </div>
+                <div class="network-item">
+                    <div class="section-title">🔄 消息路由</div>
+                    <div class="component">消息类型识别</div>
+                    <div class="component">业务逻辑分发</div>
+                    <div class="component">响应数据组装</div>
+                </div>
+            </div>
+
+            <div class="arrow">⬇️</div>
+            <div class="flow-description">
+                <span>消息处理</span>
+                <div class="data-flow"></div>
+                <span>业务逻辑调用</span>
+            </div>
+
+            <!-- 服务层 -->
+            <div class="service-layer">
+                <!-- 核心处理 -->
+                <div class="core-section">
+                    <div class="section-title">🎯 核心处理层</div>
+                    <div class="component">消息处理器</div>
+                    <div class="component">业务逻辑路由</div>
+                    <div class="component">会话状态管理</div>
+                    <div class="component">异步任务调度</div>
+                </div>
+
+                <!-- 管理器层 -->
+                <div class="managers-section">
+                    <div class="section-title" style="grid-column: 1 / -1;">🔧 管理器层 (Managers)</div>
+                    <div class="manager-item">📊 目标管理器<br><small>雷达目标生成与更新</small></div>
+                    <div class="manager-item">⚠️ 威胁管理器<br><small>SA威胁生成与评估</small></div>
+                    <div class="manager-item">📋 任务管理器<br><small>用户任务与进度跟踪</small></div>
+                    <div class="manager-item">⚙️ 配置管理器<br><small>系统配置与AI级别</small></div>
+                    <div class="manager-item">💾 数据库管理器<br><small>异步数据存储</small></div>
+                    <div class="manager-item">📝 日志管理器<br><small>系统日志与监控</small></div>
+                </div>
+
+                <!-- 服务组件 -->
+                <div class="models-section">
+                    <div class="section-title">🔧 服务组件</div>
+                    <div class="component">位置计算服务</div>
+                    <div class="component">优先级计算服务</div>
+                    <div class="component">威胁模型</div>
+                    <div class="component">消息协议</div>
+                </div>
+            </div>
+
+            <div class="arrow">⬇️</div>
+            <div class="flow-description">
+                <span>数据持久化</span>
+                <div class="data-flow"></div>
+                <span>配置读取</span>
+            </div>
+
+            <!-- 数据层 -->
+            <div class="data-layer">
+                <div>
+                    <div class="section-title">💾 数据存储层</div>
+                    <div class="component">SQLite数据库</div>
+                    <div class="component">用户操作记录</div>
+                    <div class="component">任务进度数据</div>
+                </div>
+                <div>
+                    <div class="section-title">⚙️ 配置文件</div>
+                    <div class="component">agent_level.json</div>
+                    <div class="component">AI智能体配置</div>
+                    <div class="component">系统参数配置</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 系统特性 -->
+        <div style="margin-top: 20px; text-align: center;">
+            <div class="features">
+                <span class="feature-tag">🔄 模块化架构</span>
+                <span class="feature-tag">⚡ 异步处理</span>
+                <span class="feature-tag">🧪 可测试性</span>
+                <span class="feature-tag">📈 可扩展性</span>
+                <span class="feature-tag">🔒 类型安全</span>
+                <span class="feature-tag">🎮 实时交互</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

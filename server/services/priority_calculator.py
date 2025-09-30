@@ -45,7 +45,7 @@ class PriorityCalculator:
         difficulty_factor = self._get_difficulty_factor(difficulty_config)
         
         print(f"[优先级计算] 开始计算 {len(threats_with_positions)} 个威胁的优先级...")
-        print(f"[优先级计算] 难度系数: {difficulty_factor:.2f} ({'高难度-小差异' if difficulty_factor < 1.0 else '低难度-大差异'})")
+        print(f"[优先级计算] 难度系数: {difficulty_config.get('name')} {difficulty_factor:.2f} ({'高难度-小差异' if difficulty_factor < 1.0 else '低难度-大差异'})")
         
         # 1. 计算所有威胁的原始分数
         for i, (threat, position) in enumerate(threats_with_positions):
@@ -271,20 +271,20 @@ class PriorityCalculator:
         
         # 根据难度名称映射系数
         difficulty_mapping = {
-            'easy': 1.3,      # 低难度：增大差异30%
+            'low': 1.3,      # 低难度：增大差异30%
             'normal': 1.0,    # 中等难度：保持原有差异
-            'hard': 0.7,      # 高难度：缩小差异30%
-            'expert': 0.5,    # 专家难度：缩小差异50%
-            'master': 0.3     # 大师难度：缩小差异70%
+            # 'hard': 0.7,      # 高难度：缩小差异30%
+            # 'expert': 0.5,    # 专家难度：缩小差异50%
+            'high': 0.7    # 大师难度：缩小差异70%
         }
         
         # 支持中文难度名称
         chinese_mapping = {
-            '简单': 1.3,
-            '普通': 1.0,
-            '困难': 0.7,
-            '专家': 0.5,
-            '大师': 0.3
+            '低': 1.3,
+            '中': 1.0,
+            # '困难': 0.7,
+            # '专家': 0.5,
+            '高': 0.6
         }
         
         # 优先使用英文映射，然后中文映射

@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>方案对比</title>
+  <style>
+      * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+      }
+
+      body {
+          font-family: 'Microsoft YaHei', sans-serif;
+          background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+          min-height: 100vh;
+          padding: 20px;
+          position: relative;
+          overflow-x: hidden;
+          font-size: 18px;
+      }
+
+      body::before {
+          content: '';
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: 
+              radial-gradient(circle at 20% 80%, rgba(52, 152, 219, 0.1) 0%, transparent 50%),
+              radial-gradient(circle at 80% 20%, rgba(46, 204, 113, 0.1) 0%, transparent 50%);
+          pointer-events: none;
+          z-index: -1;
+      }
+
+      .container {
+          max-width: 1200px;
+          width: 90vw;
+          height: calc(90vw * 4 / 3);
+          max-height: 1600px;
+          margin: 0 auto;
+          background: rgba(255, 255, 255, 0.95);
+          border-radius: 20px;
+          box-shadow: 
+              0 0 40px rgba(52, 152, 219, 0.3),
+              0 10px 30px rgba(0, 0, 0, 0.1),
+              inset 0 1px 0 rgba(255, 255, 255, 0.8);
+          padding: 40px;
+          border: 2px solid rgba(52, 152, 219, 0.2);
+          backdrop-filter: blur(10px);
+          box-sizing: border-box;
+          overflow-y: auto;
+      }
+
+      .title {
+          text-align: center;
+          font-size: 3.2em;
+          font-weight: bold;
+          color: #2c3e50;
+          margin-bottom: 50px;
+          position: relative;
+          text-shadow: 
+              0 0 10px rgba(52, 152, 219, 0.6),
+              0 0 20px rgba(52, 152, 219, 0.4),
+              0 0 30px rgba(52, 152, 219, 0.2);
+          animation: titleGlow 3s ease-in-out infinite alternate;
+      }
+
+      @keyframes titleGlow {
+          0% {
+              text-shadow: 
+                  0 0 10px rgba(52, 152, 219, 0.6),
+                  0 0 20px rgba(52, 152, 219, 0.4),
+                  0 0 30px rgba(52, 152, 219, 0.2);
+          }
+          100% {
+              text-shadow: 
+                  0 0 15px rgba(52, 152, 219, 0.8),
+                  0 0 25px rgba(52, 152, 219, 0.6),
+                  0 0 35px rgba(52, 152, 219, 0.4);
+          }
+      }
+
+      .title::after {
+          content: '';
+          position: absolute;
+          bottom: -15px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 150px;
+          height: 4px;
+          background: linear-gradient(90deg, transparent, #3498db, #2ecc71, transparent);
+          border-radius: 2px;
+          box-shadow: 
+              0 0 15px rgba(52, 152, 219, 0.8),
+              0 0 25px rgba(46, 204, 113, 0.6);
+          animation: lineGlow 2s ease-in-out infinite alternate;
+      }
+
+      @keyframes lineGlow {
+          0% { opacity: 0.7; transform: translateX(-50%) scaleX(0.8); }
+          100% { opacity: 1; transform: translateX(-50%) scaleX(1); }
+      }
+
+      .comparison-container {
+          display: flex;
+          justify-content: space-around;
+          gap: 60px;
+          margin-bottom: 40px;
+      }
+
+      .scheme {
+          flex: 1;
+          text-align: center;
+      }
+
+      .scheme-title {
+          font-size: 2.2em;
+          font-weight: bold;
+          color: #34495e;
+          margin-bottom: 30px;
+          text-shadow: 0 0 8px rgba(52, 152, 219, 0.3);
+      }
+
+      .chart-container {
+          display: flex;
+          justify-content: center;
+          gap: 40px;
+          margin-bottom: 30px;
+          height: 250px;
+          align-items: flex-end;
+      }
+
+      .bar-chart {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+          height: 100%;
+      }
+
+      .bar-wrapper {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          height: 220px;
+          justify-content: flex-end;
+      }
+
+      .bar {
+          width: 60px;
+          border-radius: 8px 8px 4px 4px;
+          position: relative;
+          box-shadow: 
+              0 4px 8px rgba(0, 0, 0, 0.1),
+              0 0 20px rgba(255, 255, 255, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 2px solid rgba(255, 255, 255, 0.8);
+      }
+
+      .attack-bar {
+          background: linear-gradient(180deg, #e74c3c, #c0392b);
+          box-shadow: 
+              0 4px 8px rgba(0, 0, 0, 0.1),
+              0 0 25px rgba(231, 76, 60, 0.5),
+              inset 0 2px 0 rgba(255, 255, 255, 0.3);
+          animation: attackGlow 3s ease-in-out infinite alternate;
+      }
+
+      @keyframes attackGlow {
+          0% {
+              box-shadow: 
+                  0 4px 8px rgba(0, 0, 0, 0.1),
+                  0 0 25px rgba(231, 76, 60, 0.5),
+                  inset 0 2px 0 rgba(255, 255, 255, 0.3);
+          }
+          100% {
+              box-shadow: 
+                  0 4px 8px rgba(0, 0, 0, 0.1),
+                  0 0 35px rgba(231, 76, 60, 0.7),
+                  inset 0 2px 0 rgba(255, 255, 255, 0.4);
+          }
+      }
+
+      .intercept-bar {
+          background: linear-gradient(180deg, #f39c12, #e67e22);
+          box-shadow: 
+              0 4px 8px rgba(0, 0, 0, 0.1),
+              0 0 25px rgba(243, 156, 18, 0.5),
+              inset 0 2px 0 rgba(255, 255, 255, 0.3);
+          animation: interceptGlow 3s ease-in-out infinite alternate;
+      }
+
+      @keyframes interceptGlow {
+          0% {
+              box-shadow: 
+                  0 4px 8px rgba(0, 0, 0, 0.1),
+                  0 0 25px rgba(243, 156, 18, 0.5),
+                  inset 0 2px 0 rgba(255, 255, 255, 0.3);
+          }
+          100% {
+              box-shadow: 
+                  0 4px 8px rgba(0, 0, 0, 0.1),
+                  0 0 35px rgba(243, 156, 18, 0.7),
+                  inset 0 2px 0 rgba(255, 255, 255, 0.4);
+          }
+      }
+
+      .bar-label {
+          color: white;
+          font-weight: bold;
+          font-size: 1.1em;
+          text-shadow: 
+              0 0 5px rgba(0, 0, 0, 0.5),
+              0 0 10px rgba(255, 255, 255, 0.3);
+      }
+
+      .bar-title {
+          margin-top: 10px;
+          font-size: 1.1em;
+          color: #2c3e50;
+          font-weight: 600;
+      }
+
+      .legend {
+          display: flex;
+          justify-content: center;
+          gap: 30px;
+          margin-bottom: 30px;
+      }
+
+      .legend-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 1.2em;
+          color: #2c3e50;
+          font-weight: 600;
+      }
+
+      .legend-color {
+          width: 16px;
+          height: 16px;
+          border-radius: 3px;
+          box-shadow: 0 0 8px rgba(0, 0, 0, 0.2);
+      }
+
+      .attack-color {
+          background: linear-gradient(135deg, #e74c3c, #c0392b);
+      }
+
+      .intercept-color {
+          background: linear-gradient(135deg, #f39c12, #e67e22);
+      }
+
+      .details-container {
+          display: flex;
+          gap: 40px;
+          margin-top: 40px;
+      }
+
+      .details-box {
+          flex: 1;
+          background: rgba(255, 255, 255, 0.8);
+          border: 3px solid rgba(52, 152, 219, 0.4);
+          border-radius: 15px;
+          padding: 25px;
+          position: relative;
+          box-shadow: 
+              0 0 30px rgba(52, 152, 219, 0.3),
+              0 8px 25px rgba(0, 0, 0, 0.1),
+              inset 0 2px 0 rgba(255, 255, 255, 0.8);
+          backdrop-filter: blur(5px);
+          animation: boxGlow 4s ease-in-out infinite alternate;
+      }
+
+      @keyframes boxGlow {
+          0% {
+              box-shadow: 
+                  0 0 30px rgba(52, 152, 219, 0.3),
+                  0 8px 25px rgba(0, 0, 0, 0.1),
+                  inset 0 2px 0 rgba(255, 255, 255, 0.8);
+              border-color: rgba(52, 152, 219, 0.4);
+          }
+          100% {
+              box-shadow: 
+                  0 0 40px rgba(52, 152, 219, 0.5),
+                  0 8px 25px rgba(0, 0, 0, 0.1),
+                  inset 0 2px 0 rgba(255, 255, 255, 0.9);
+              border-color: rgba(52, 152, 219, 0.6);
+          }
+      }
+
+      .details-box::before {
+          content: '';
+          position: absolute;
+          top: -3px;
+          left: -3px;
+          right: -3px;
+          bottom: -3px;
+          background: linear-gradient(45deg, 
+              rgba(52, 152, 219, 0.4), 
+              rgba(46, 204, 113, 0.4), 
+              rgba(52, 152, 219, 0.4));
+          border-radius: 18px;
+          z-index: -1;
+          opacity: 0.6;
+      }
+
+      .pros {
+          color: #27ae60;
+          font-weight: bold;
+          margin-bottom: 10px;
+          font-size: 1.4em;
+          text-shadow: 0 0 8px rgba(39, 174, 96, 0.4);
+      }
+
+      .cons {
+          color: #e74c3c;
+          font-weight: bold;
+          margin-bottom: 10px;
+          margin-top: 20px;
+          font-size: 1.4em;
+          text-shadow: 0 0 8px rgba(231, 76, 60, 0.4);
+      }
+
+      .detail-text {
+          line-height: 1.6;
+          color: #2c3e50;
+          margin-bottom: 8px;
+          font-size: 1.1em;
+          font-weight: 500;
+          text-shadow: 0 0 3px rgba(255, 255, 255, 0.5);
+      }
+
+      @media (max-width: 768px) {
+          .container {
+              width: 95vw;
+              height: calc(95vw * 4 / 3);
+              padding: 20px;
+          }
+
+          .comparison-container {
+              flex-direction: column;
+              gap: 40px;
+          }
+
+          .details-container {
+              flex-direction: column;
+              gap: 20px;
+          }
+
+          .chart-container {
+              gap: 20px;
+          }
+
+          .title {
+              font-size: 2.4em;
+          }
+      }
+  </style>
+</head>
+<body>
+  <div class="container">
+      <h1 class="title">方案对比</h1>
+      
+      <div class="comparison-container">
+          <div class="scheme">
+              <h2 class="scheme-title">方案1</h2>
+              <div class="chart-container">
+                  <div class="bar-chart">
+                      <div class="bar-wrapper">
+                          <div class="bar attack-bar" style="height: 200px;">
+                              <div class="bar-label">100%</div>
+                          </div>
+                      </div>
+                      <div class="bar-title">攻击成功率</div>
+                  </div>
+                  <div class="bar-chart">
+                      <div class="bar-wrapper">
+                          <div class="bar intercept-bar" style="height: 53px;">
+                              <div class="bar-label">26.3%</div>
+                          </div>
+                      </div>
+                      <div class="bar-title">拦截成功率</div>
+                  </div>
+              </div>
+          </div>
+
+          <div class="scheme">
+              <h2 class="scheme-title">方案2</h2>
+              <div class="chart-container">
+                  <div class="bar-chart">
+                      <div class="bar-wrapper">
+                          <div class="bar attack-bar" style="height: 145px;">
+                              <div class="bar-label">72.4%</div>
+                          </div>
+                      </div>
+                      <div class="bar-title">攻击成功率</div>
+                  </div>
+                  <div class="bar-chart">
+                      <div class="bar-wrapper">
+                          <div class="bar intercept-bar" style="height: 154px;">
+                              <div class="bar-label">76.9%</div>
+                          </div>
+                      </div>
+                      <div class="bar-title">拦截成功率</div>
+                  </div>
+              </div>
+          </div>
+      </div>
+
+      <div class="legend">
+          <div class="legend-item">
+              <div class="legend-color attack-color"></div>
+              <span>攻击成功率</span>
+          </div>
+          <div class="legend-item">
+              <div class="legend-color intercept-color"></div>
+              <span>拦截成功率</span>
+          </div>
+      </div>
+
+      <div class="details-container">
+          <div class="details-box">
+              <div class="pros">优点：</div>
+              <div class="detail-text">攻击成功率高。</div>
+              <div class="detail-text">目标打击成功率100%。</div>
+              
+              <div class="cons">缺点：</div>
+              <div class="detail-text">我方幻影2000飞机拦截对方F16战机，成功率低，飞机损失率高。</div>
+          </div>
+
+          <div class="details-box">
+              <div class="pros">优点：</div>
+              <div class="detail-text">拦截成功率高。</div>
+              <div class="detail-text">如果拦截成功，我方损失很小，任务成功率高。</div>
+              
+              <div class="cons">缺点：</div>
+              <div class="detail-text">有任务失败的风险。</div>
+              <div class="detail-text">如果对方飞机突破或绕过拦截，我方将遭受重大损失。</div>
+          </div>
+      </div>
+  </div>
+</body>
+</html>

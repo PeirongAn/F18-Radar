@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F16d (101) HUD界面设计文档</title>
+  <style>
+      * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+      }
+      
+      body {
+          font-family: 'Courier New', monospace;
+          background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 50%, #b0c4de 100%);
+          height: 100vh;
+          overflow: hidden;
+          position: relative;
+      }
+      
+      .hud-container {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          color: #00ff00;
+          font-weight: bold;
+      }
+      
+      .horizon-line {
+          position: absolute;
+          top: 50%;
+          left: 0;
+          right: 0;
+          height: 2px;
+          background: #00ff00;
+          transform: translateY(-1px);
+      }
+      
+      .top-left-info {
+          position: absolute;
+          top: 20px;
+          left: 20px;
+          font-size: 18px;
+      }
+      
+      .top-center-info {
+          position: absolute;
+          top: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          text-align: center;
+          font-size: 32px;
+      }
+      
+      .center-crosshair {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 200px;
+          height: 150px;
+      }
+      
+      .crosshair-lines {
+          position: relative;
+          width: 100%;
+          height: 100%;
+      }
+      
+      .horizontal-line {
+          position: absolute;
+          top: 50%;
+          left: 0;
+          right: 0;
+          height: 2px;
+          background: #00ff00;
+      }
+      
+      .vertical-line {
+          position: absolute;
+          left: 50%;
+          top: 0;
+          bottom: 0;
+          width: 2px;
+          background: #00ff00;
+      }
+      
+      .target-brackets {
+          position: absolute;
+          width: 60px;
+          height: 40px;
+          border: 2px solid #00ff00;
+          border-radius: 4px;
+      }
+      
+      .bracket-1 { top: 20%; left: 20%; }
+      .bracket-2 { top: 20%; right: 20%; }
+      .bracket-3 { top: 70%; left: 30%; }
+      .bracket-4 { top: 70%; right: 30%; }
+      
+      .fire-result {
+          position: absolute;
+          top: 45%;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(0, 0, 0, 0.7);
+          padding: 10px 20px;
+          border: 2px solid #00ff00;
+          text-align: center;
+          font-size: 18px;
+      }
+      
+      .bottom-left-info {
+          position: absolute;
+          bottom: 20px;
+          left: 20px;
+          font-size: 18px;
+      }
+      
+      .bottom-right-info {
+          position: absolute;
+          bottom: 20px;
+          right: 20px;
+          font-size: 14px;
+          text-align: right;
+      }
+      
+      .distance-info {
+          position: absolute;
+          left: 20px;
+          top: 60%;
+          font-size: 14px;
+      }
+      
+      .speed-info {
+          position: absolute;
+          right: 20px;
+          top: 60%;
+          font-size: 14px;
+          text-align: right;
+      }
+      
+      .corner-brackets {
+          position: absolute;
+          width: 30px;
+          height: 30px;
+          border: 2px solid #00ff00;
+      }
+      
+      .top-left-bracket {
+          top: 100px;
+          left: 100px;
+          border-right: none;
+          border-bottom: none;
+      }
+      
+      .top-right-bracket {
+          top: 100px;
+          right: 100px;
+          border-left: none;
+          border-bottom: none;
+      }
+      
+      .bottom-left-bracket {
+          bottom: 100px;
+          left: 100px;
+          border-right: none;
+          border-top: none;
+      }
+      
+      .bottom-right-bracket {
+          bottom: 100px;
+          right: 100px;
+          border-left: none;
+          border-top: none;
+      }
+      
+      .dotted-line {
+          position: absolute;
+          border: 1px dashed #00ff00;
+      }
+      
+      .dotted-horizontal {
+          top: 30%;
+          left: 25%;
+          right: 25%;
+          height: 0;
+      }
+      
+      .dotted-vertical {
+          left: 40%;
+          top: 25%;
+          bottom: 25%;
+          width: 0;
+      }
+      
+      .altitude-ladder {
+          position: absolute;
+          right: 50px;
+          top: 30%;
+          bottom: 30%;
+      }
+      
+      .altitude-mark {
+          position: relative;
+          margin: 20px 0;
+          font-size: 12px;
+      }
+      
+      .heading-indicator {
+          position: absolute;
+          top: 80px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 200px;
+          text-align: center;
+          font-size: 12px;
+      }
+      
+      .blink {
+          animation: blink 1s infinite;
+      }
+      
+      @keyframes blink {
+          0%, 50% { opacity: 1; }
+          51%, 100% { opacity: 0.3; }
+      }
+  </style>
+</head>
+<body>
+  <div class="hud-container">
+      <!-- 顶部信息 -->
+      <div class="top-left-info">
+          任务截止时间: 28.613
+      </div>
+      
+      <div class="top-center-info">
+          第一视角
+      </div>
+      
+
+      
+      <!-- 中心十字准星区域 -->
+      <div class="center-crosshair">
+          <div class="crosshair-lines">
+              <div class="horizontal-line"></div>
+              <div class="vertical-line"></div>
+          </div>
+      </div>
+      
+      <!-- 目标方框 -->
+      <div class="target-brackets bracket-1"></div>
+      <div class="target-brackets bracket-2"></div>
+      <div class="target-brackets bracket-3"></div>
+      <div class="target-brackets bracket-4"></div>
+      
+      <!-- 角落方框 -->
+      <div class="corner-brackets top-left-bracket"></div>
+      <div class="corner-brackets top-right-bracket"></div>
+      <div class="corner-brackets bottom-left-bracket"></div>
+      <div class="corner-brackets bottom-right-bracket"></div>
+      
+ 
+      
+      <!-- 开火结果显示 -->
+      <div class="fire-result blink">
+          开火结果<br>提示
+      </div>
+      
+      <!-- 距离信息 -->
+      <div class="distance-info">
+          距离: 493.6m
+      </div>
+      
+      <!-- 速度信息 -->
+      <div class="speed-info">
+          186.1
+      </div>
+      
+      <!-- 底部信息 -->
+      <div class="bottom-left-info">
+          当前: 玩家控制
+      </div>
+      
+      <!-- 航向指示器 -->
+      <div class="heading-indicator">
+          ← 270° | 000° | 090° →
+      </div>
+      
+      <!-- 高度标尺 -->
+      <div class="altitude-ladder">
+          <div class="altitude-mark">1000</div>
+          <div class="altitude-mark">800</div>
+          <div class="altitude-mark">600</div>
+          <div class="altitude-mark">400</div>
+          <div class="altitude-mark">200</div>
+      </div>
+  </div>
+  
+  <!-- 设计文档说明 -->
+  <div style="position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; font-size: 18px; max-width: 300px; border-radius: 5px;">
+      <ul style="margin-left: 20px; margin-top: 5px;">
+          <li>绿色HUD显示系统</li>
+          <li>实时任务信息显示</li>
+          <li>目标锁定方框</li>
+          <li>开火结果反馈</li>
+          <li>飞行参数监控</li>
+          <li>地平线参考线</li>
+          <li>距离和速度显示</li>
+      </ul>
+  </div>
+</body>
+</html>
