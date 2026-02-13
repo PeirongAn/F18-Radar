@@ -362,16 +362,18 @@ class TaskScenarioManager:
 
         # 手动模式
         manual_scenarios = []
+
         for diff_conf in difficulties: 
-            for audio in audio_options:
-                manual_scenarios.append({
-                    "is_ai_active": False, 
-                    "audio_enabled": audio,
-                    "ai_level_name": None, 
-                    "ai_level_config": None,
-                    "difficulty_name": diff_conf['difficulty_name'], 
-                    "difficulty_config": diff_conf
-                })
+            # for audio in audio_options:
+            audio = True
+            manual_scenarios.append({
+                "is_ai_active": False, 
+                "audio_enabled": audio,
+                "ai_level_name": None, 
+                "ai_level_config": None,
+                "difficulty_name": diff_conf['difficulty_name'], 
+                "difficulty_config": diff_conf
+            })
     
         # 为每个手动场景添加类型编号和难度变化预测
         total_manual_scenarios = len(manual_scenarios)

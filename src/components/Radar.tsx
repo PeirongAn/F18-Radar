@@ -96,6 +96,9 @@ const Radar: React.FC<RadarProps> = (({
   // 添加雷达静默状态
   const [isSilent, setIsSilent] = useState(false);
 
+  // 添加认知负荷等级状态：低（详细信息）、中（概要信息）、高（无额外信息）
+  const [cognitiveLoad, setCognitiveLoad] = useState<'low' | 'medium' | 'high'>('low');
+
   // 定义扫描控制参数状态
   const [scanControl, setScanControl] = useState<ScanControlParams>({
     sinCoefficient: Math.PI/2,   // 控制正弦映射的系数
@@ -812,6 +815,28 @@ const Radar: React.FC<RadarProps> = (({
 
   return (
     <div className="flex flex-col items-center justify-center relative">
+      {/* 认知负荷选择按钮 */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-green-500 font-mono text-sm mr-1">认知负荷:</span>
+        {([
+          { key: 'low' as const, label: '低' },
+          { key: 'medium' as const, label: '中' },
+          { key: 'high' as const, label: '高' },
+        ]).map(({ key, label }) => (
+          <button
+            key={key}
+            className={`font-mono text-sm px-3 py-1 border rounded transition-colors ${
+              cognitiveLoad === key
+                ? 'bg-green-700 border-green-400 text-green-100'
+                : 'bg-gray-900 border-gray-600 text-gray-400 hover:border-green-600 hover:text-green-300'
+            }`}
+            onClick={() => setCognitiveLoad(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* 控制面板 */}
       {/* 顶部按钮 */}
       <RadarButtons 
@@ -861,6 +886,7 @@ const Radar: React.FC<RadarProps> = (({
             resetIFF={resetIffRef}
             onAddMessage={onAddMessage}
             onClearMessages={onClearMessages}
+            cognitiveLoad={cognitiveLoad}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}

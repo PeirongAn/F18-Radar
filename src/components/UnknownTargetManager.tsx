@@ -47,6 +47,14 @@ interface UnknownTargetManagerProps {
    * 目标点击事件回调
    */
   onTargetClick?: (target: UnknownTargetData) => void;
+  /**
+   * 认知负荷等级：low=详细信息, medium=概要信息, high=无额外信息
+   */
+  cognitiveLoad?: 'low' | 'medium' | 'high';
+  /**
+   * 当前雷达量程（海里），用于距离分档
+   */
+  range?: number;
 }
 
 /**
@@ -62,7 +70,9 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
   framePositions,
   iffMode = false,
   scanAngle = 60, // 默认值为60
-  onTargetClick
+  onTargetClick,
+  cognitiveLoad = 'low',
+  range = 20
 }) => {
   // 如果不显示目标或者没有目标数据，但有垂直线需要显示
   if ((!showTargets || !externalTargets || externalTargets.length === 0) && verticalLineX === undefined) {
@@ -116,6 +126,8 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
             framePositions={framePositions}
             scanAngle={scanAngle}
             onTargetClick={onTargetClick}
+            cognitiveLoad={cognitiveLoad}
+            range={range}
           />
         );
       })}
