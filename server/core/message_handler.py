@@ -332,7 +332,7 @@ class MessageHandler:
                 'event_owner': event_owner
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
-        
+        db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
         if self.use_enhanced_protocol:
             # 使用增强协议生成完整威胁数据
             print("[MessageHandler] 使用增强协议生成威胁")
