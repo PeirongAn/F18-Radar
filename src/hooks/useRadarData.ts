@@ -638,10 +638,6 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
       const ts = Date.now();
       recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
     } else if (message.type === 'adjust_antenna') {
-      // Only play sound if an adjustment is not already pending
-      if (!antennaAdjustmentRequired && !agentStore.isAIActive) {
-        audioManager.play('radarHeight'); // 播放提示音
-      }
       if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
       console.log('[useRadarData] Received adjust_antenna message:', message);
       const ts = Date.now();

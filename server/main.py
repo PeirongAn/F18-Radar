@@ -18,8 +18,16 @@ from network import websocket_server
 from joystick.joystick_event_handler import JoystickEventHandler
 from network.http_server import http_server
 
+_initialized = False
+_joystick_handler = None
+
 async def initialize_system():
-    """初始化系统组件"""
+    """初始化系统组件（延迟调用，首次客户端连接时触发）"""
+    global _initialized, _joystick_handler
+    if _initialized:
+        return _joystick_handler
+    _initialized = True
+
     info("=== 雷达系统初始化 ===", "main")
     
     # 1. 初始化数据库
@@ -36,22 +44,21 @@ async def initialize_system():
     
     # 3. 初始化操纵杆事件处理器
     info("3. 初始化操纵杆事件处理器...", "main")
-    joystick_handler = JoystickEventHandler()
+    _joystick_handler = JoystickEventHandler()
     
     # 4. 将操纵杆处理器集成到WebSocket服务器和HTTP服务器
     info("4. 集成操纵杆处理器到服务器...", "main")
-    websocket_server.set_joystick_handler(joystick_handler)
-    http_server.set_joystick_handler(joystick_handler)
+    websocket_server.set_joystick_handler(_joystick_handler)
+    http_server.set_joystick_handler(_joystick_handler)
     
     # 5. 启动操纵杆事件处理器（在异步上下文中启动）
     info("5. 启动操纵杆事件处理器...", "main")
-    # 给操纵杆处理器一个机会获取事件循环
     await asyncio.sleep(0.1)
-    joystick_handler.start()
+    _joystick_handler.start()
     
     info("=== 系统初始化完成 ===", "main")
     
-    return joystick_handler
+    return _joystick_handler
 
 def setup_static_directory(static_dir=None):
     """设置静态文件目录"""
@@ -79,12 +86,7 @@ async def main():
     parser.add_argument('--ws-only', action='store_true', help='仅启动WebSocket服务器（不提供静态文件服务）')
     args = parser.parse_args()
     
-    joystick_handler = None
-    
     try:
-        # 初始化系统
-        joystick_handler = await initialize_system()
-        
         if args.ws_only:
             # 仅启动WebSocket服务器
             info("启动模式: 仅WebSocket服务器", "main")
@@ -109,11 +111,10 @@ async def main():
         error(f"服务器启动失败: {e}", "main", exc_info=True)
         sys.exit(1)
     finally:
-        # 清理资源
-        if joystick_handler:
+        if _joystick_handler:
             info("正在清理操纵杆资源...", "main")
             try:
-                joystick_handler.stop()
+                _joystick_handler.stop()
             except Exception as e:
                 error(f"清理操纵杆资源时出错: {e}", "main")
 

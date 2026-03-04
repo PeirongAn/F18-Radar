@@ -95,11 +95,6 @@ class MessageHandler:
         # 从管理器获取下一个任务场景
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
         
-        if current_scenario == "ALL_COMPLETED":
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": "祝贺！所有雷达目标识别任务已完成。"}]
-        if not current_scenario:
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": f"当前模式的{task_type}任务已完成。"}]
-
         self.current_session[f'{task_type}_scenario'] = current_scenario
         task_id = generate_task_id()
         self.current_session['task_id'] = task_id
@@ -314,10 +309,6 @@ class MessageHandler:
         
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
         
-        if current_scenario == "ALL_COMPLETED":
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": "祝贺！所有SA威胁应对任务已完成。"}]
-        if not current_scenario:
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": "当前模式的SA任务已完成。"}]
         task_id = generate_task_id()
         self.current_session['task_id'] = task_id
         self.current_session[f'{task_type}_scenario'] = current_scenario

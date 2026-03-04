@@ -39,7 +39,8 @@ class ConfigManager:
         }
     
     def get_config(self) -> Dict[str, Any]:
-        """获取完整配置"""
+        """获取完整配置（每次从文件重新读取最新内容）"""
+        self.load_config()
         return self.config
     
     def get_game_settings(self) -> Dict[str, Any]:

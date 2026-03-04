@@ -14,8 +14,6 @@ import useRadarData from '../hooks/useRadarData';
 import agentStore from '../stores/AgentStore';
 import ScenarioCompletionModal from './ScenarioCompletionModal';
 import audioManager from '../managers/AudioManager';
-import { useDifficultyChangeDetection } from '../utils/difficultyUtils';
-import DifficultyChangeModal from './DifficultyChangeModal';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -75,6 +73,7 @@ export interface RadarDisplayProps {
   radarData: import('../hooks/useRadarData').RadarData | null;
   error: string | null;
   onResetForNextMission?: () => void;
+  onNavigateToSA?: () => void;
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
   cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级：低/中/高
@@ -104,6 +103,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   radarData,
   error,
   onResetForNextMission,
+  onNavigateToSA,
   onAddMessage,
   onClearMessages,
   cognitiveLoad = 'low'
@@ -137,7 +137,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
   const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
-  const [showDifficultyChangeModal, setShowDifficultyChangeModal] = React.useState(false);
   
   // 摇杆控制TDC相关状态
   const [calibrationOffset, setCalibrationOffset] = React.useState({x: 0, y: 0});
@@ -524,17 +523,21 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   // 处理确认弹窗的确认操作
   const handleConfirmYes = useCallback(() => {
-    // 先清空日志
     if (onClearMessages) {
       onClearMessages();
     }
-    
-    // 然后重置任务
-    if (onResetForNextMission) {
-      onResetForNextMission();
+
+    const hasLockedTarget = !!radarStore.lockedTargetId;
+    if (hasLockedTarget && onNavigateToSA) {
+      setShowMissionConfirm(false);
+      onNavigateToSA();
+    } else {
+      if (onResetForNextMission) {
+        onResetForNextMission();
+      }
+      setShowMissionConfirm(false);
     }
-    setShowMissionConfirm(false);
-  }, [onClearMessages, onResetForNextMission]);
+  }, [onClearMessages, onResetForNextMission, onNavigateToSA]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
@@ -664,12 +667,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       if (radarRepetitionInfo && typeof radarRepetitionInfo !== 'string') {
         // onAddMessage('info', `重复进度: ${formatRepetitionText(radarRepetitionInfo)}`);
         
-        // 判断是否需要显示难度变化弹窗
-        const shouldShowDifficultyChangeModal = (radarRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive && isLastRepetition(radarRepetitionInfo);
-        
-        if (shouldShowDifficultyChangeModal) {
-          setShowDifficultyChangeModal(true);
-        } else if (isLastRepetition(radarRepetitionInfo) && agentStore.isAIActive) {
+        if (isLastRepetition(radarRepetitionInfo) && agentStore.isAIActive) {
           setShowScenarioCompletionModal(true);
           // onAddMessage('info', '⚠️ 这是人机模式下当前场景的最后一次任务，请联系主试');
         } else {
@@ -830,7 +828,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   return (
     <div style={{ position: 'relative', width, height }}>
       
-      摇杆控制状态指示器
+      {/* 摇杆控制状态指示器
       {joystickEnabled && (
         <div style={{
           position: 'absolute',
@@ -849,7 +847,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
           {`摇杆控制: ${(lockedTdcPosition || lockedAntennaElevation !== null) ? '位置锁定' : '启用'}
 B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释放'} (角度) | B7: ${button7 ? '按下' : '释放'} (锁定)`}
         </div>
-      )}
+      )} */}
       
 
       
@@ -988,10 +986,6 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
        <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}
         onClose={() => {setShowScenarioCompletionModal(false); setShowMissionConfirm(true);}}
-      />
-      <DifficultyChangeModal 
-        isOpen={showDifficultyChangeModal} 
-        onClose={() => {setShowDifficultyChangeModal(false); setShowMissionConfirm(true);}} 
       />
 
       {/* Non-Konva components are here, positioned over the canvas */}

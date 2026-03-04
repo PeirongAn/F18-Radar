@@ -2,22 +2,19 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Radar from './components/Radar';
 import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
-import InitialFormModal from './components/InitialFormModal';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
 import TaskInfoDisplay from './components/TaskInfoDisplay';
-import useRadarData from './hooks/useRadarData';
+import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
 import radarStore from './stores/RadarStore';
 import { Toaster, toast } from 'react-hot-toast';
 import CompletionModal from './components/CompletionModal';
-import DifficultyChangeModal from './components/DifficultyChangeModal';
 // import ScenarioCompletionModal from './components/ScenarioCompletionModal';
 import ThreatList from './components/ThreatList';
 // import ConnectionStatus from './components/ConnectionStatus';
 // import audioManager from './managers/AudioManager';
-import { useDifficultyChangeDetection } from './utils/difficultyUtils';
 import JoystickInitializationPage from './pages/JoystickInitializationPage';
 
 // 日志类型声明，需与CommunicationLog保持一致
@@ -33,7 +30,6 @@ interface TargetSelectParams {
 const App: React.FC = observer(() => {
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation' | 'joystick'>('radar');
-  const [showInitialForm, setShowInitialForm] = useState<boolean>(true);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
   const [isPractice, setIsPractice] = useState<boolean>(true);
@@ -104,30 +100,6 @@ const App: React.FC = observer(() => {
   useEffect(() => {
     radarStore.setUserId(userId);
   }, [userId, radarStore]);
-  
-  // 检查是否有保存的用户名（页面重置后恢复）
-  useEffect(() => {
-    const preservedUserId = sessionStorage.getItem('preservedUserId');
-    const preservedIncludeAI = sessionStorage.getItem('preservedIncludeAI');
-    
-    if (preservedUserId) {
-      console.log('检测到保存的用户信息，正在恢复:', { 
-        userId: preservedUserId, 
-        includeAI: preservedIncludeAI === 'true' 
-      });
-      
-      // 预填充用户信息到表单，但仍然显示表单让用户确认
-      setUserId(preservedUserId);
-      setIncludeAI(preservedIncludeAI === 'true');
-      // 保持showInitialForm为true，让用户可以重新选择AI选项
-      
-      // 清除保存的信息，避免下次启动时误用
-      sessionStorage.removeItem('preservedUserId');
-      sessionStorage.removeItem('preservedIncludeAI');
-      
-      console.log('✅ 用户信息已预填充到表单');
-    }
-  }, []); // 只在组件挂载时运行一次
   
   // 监听WebSocket连接状态，在连接成功时初始化系统
   useEffect(() => {
@@ -228,42 +200,60 @@ const App: React.FC = observer(() => {
     // AI 的操作所有者恢复应该由 AI 的控制逻辑自行处理
   }, [sendMessage]);
   
-  // 处理初始表单提交
-  const handleStartApp = (id: string, withAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean) => {
+  // 处理启动（从JSON配置自动调用，或手动调用）
+  const handleStartApp = useCallback((id: string, withAI: boolean, taskType: 'radar' | 'sa', practice: boolean, useJoystick: boolean) => {
     setUserId(id);
     setIncludeAI(withAI);
-    setIsPractice(isPractice);
+    setIsPractice(practice);
     
-    // 1. 更新所有相关的 store 状态
-    radarStore.startSystem(id, withAI, isPractice); // This now only sets state in radarStore
-    agentStore.setAIActive(withAI); // Explicitly set AI state here
+    // 摇杆连接
+    if (useJoystick) {
+      const connectJoystick = () => {
+        globalWS.sendMessage({ type: 'joystick_connect', timestamp: Date.now(), user_id: id });
+        globalWS.sendMessage({ type: 'joystick_subscribe', timestamp: Date.now(), user_id: id });
+      };
+      if (globalWS.getState().connected) {
+        connectJoystick();
+      } else {
+        setTimeout(connectJoystick, 1000);
+      }
+    }
     
-    // 2. 更新 App.tsx 的本地 UI 状态
-    setShowInitialForm(false);
-    setIsStarted(true); // 设置系统为已启动状态
+    radarStore.startSystem(id, withAI, practice);
+    agentStore.setAIActive(withAI);
+    setIsStarted(true);
     
-    // 根据选择的任务类型设置初始视图
     if (taskType === 'sa') {
       setActiveDisplay('navigation');
-      // 启动时如果选择SA，则立即发送SwitchSA消息以加载数据
       sendMessage({
         type: 'SwitchSA',
         timestamp: Date.now(),
         user_id: id,
-        is_practice: isPractice,
+        is_practice: practice,
         is_ai_active: withAI,
       });
     } else {
       setActiveDisplay('radar');
     }
     
-    // 3. 日志记录和系统初始化调用（雷达任务）
-    console.log(`应用已启动 - 用户ID: ${id}, 启用AI: ${withAI}, 任务: ${taskType}, 练习: ${isPractice}`);
-    // 只有雷达任务需要这个初始化
+    console.log(`应用已启动 - 用户ID: ${id}, 启用AI: ${withAI}, 任务: ${taskType}, 练习: ${practice}, 摇杆: ${useJoystick}`);
     if (taskType === 'radar') {
-      initializeSystem(id, withAI, isPractice);
+      initializeSystem(id, withAI, practice);
     }
-  };
+  }, [sendMessage, initializeSystem, radarStore]);
+
+  // 点击"开始传感器任务"后加载配置并启动
+  const handleStartTask = useCallback(() => {
+    fetch('/init_config.json')
+      .then(res => res.json())
+      .then((cfg: { userId: string; includeAI: boolean; taskType: 'radar' | 'sa'; isPractice: boolean; useJoystick: boolean }) => {
+        console.log('加载启动配置:', cfg);
+        handleStartApp(cfg.userId, cfg.includeAI, cfg.taskType, cfg.isPractice, cfg.useJoystick);
+      })
+      .catch(err => {
+        console.error('加载 init_config.json 失败:', err);
+      });
+  }, [handleStartApp]);
   
   // 处理雷达参数更新
   const handleRadarParamsUpdate = (range: number, angle: number) => {
@@ -412,6 +402,27 @@ const App: React.FC = observer(() => {
 
   return (
     <div className="min-h-screen bg-black text-gray-300">
+      {/* 启动 Modal */}
+      {!isStarted && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90">
+          <div className="bg-gray-900 border border-green-700 rounded-lg p-10 text-center shadow-2xl">
+            <h2 className="text-green-400 font-mono text-2xl mb-3">JF-17 航电系统</h2>
+            <p className="text-gray-400 font-mono text-sm mb-8">传感器任务训练平台</p>
+            <button
+              className={`px-8 py-3 font-mono text-lg rounded transition-colors ${
+                connected
+                  ? 'bg-green-700 hover:bg-green-600 text-white cursor-pointer'
+                  : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+              }`}
+              disabled={!connected}
+              onClick={handleStartTask}
+            >
+              {connected ? '开始传感器任务' : '正在连接服务器...'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <Toaster 
         position="bottom-right"
         toastOptions={{
@@ -430,14 +441,6 @@ const App: React.FC = observer(() => {
         isOpen={showScenarioCompletionModal}
         onClose={() => setShowScenarioCompletionModal(false)}
       /> */}
-      {/* 显示初始表单模态框 */}
-      {showInitialForm && (
-        <InitialFormModal 
-          onStart={handleStartApp} 
-          defaultUserId={userId}
-          defaultIncludeAI={includeAI}
-        />
-      )}
       
       <h1 className="text-center text-2xl text-green-500 font-mono pt-6 pb-4">
         JF-17 航电系统 {userId ? `- 飞行员: ${userId}` : ''}
@@ -457,12 +460,12 @@ const App: React.FC = observer(() => {
         >
           SA页面
         </button>
-        <button 
+        {/* <button 
           className={`px-4 py-2 mx-2 font-mono rounded ${activeDisplay === 'joystick' ? 'bg-green-700 text-white' : 'bg-gray-800 text-green-500'}`}
           onClick={() => handleDisplayChange('joystick')}
         >
           操纵杆初始化
-        </button>
+        </button> */}
       </div>
       
       <div className="flex flex-col lg:flex-row gap-8 px-4 max-w-8xl mx-auto">
@@ -479,10 +482,11 @@ const App: React.FC = observer(() => {
                 width={700} 
                 height={700} 
                 onTargetSelect={handleTargetSelect}
-                isStarted={isStarted} // 传递系统启动状态
-                onRadarParamsUpdate={handleRadarParamsUpdate} // 添加参数更新回调
-                onAddMessage={addMessage} // 添加日志记录功能
-                onClearMessages={clearMessages} // 添加清空日志功能
+                isStarted={isStarted}
+                onRadarParamsUpdate={handleRadarParamsUpdate}
+                onAddMessage={addMessage}
+                onClearMessages={clearMessages}
+                onNavigateToSA={() => handleDisplayChange('navigation')}
               />
             ) : activeDisplay === 'navigation' ? (
               <div className='flex justify-center'>

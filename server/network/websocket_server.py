@@ -146,6 +146,26 @@ class WebSocketServer:
                     
                     # 检查是否为操纵杆相关消息
                     message_type = message_data.get('type', '')
+
+                    # 收到 joystick_connect 时触发延迟初始化
+                    if message_type == 'joystick_connect' and not self.joystick_handler:
+                        try:
+                            from main import initialize_system
+                            await initialize_system()
+                        except Exception as e:
+                            self.logger.error(f"延迟初始化失败: {e}")
+
+                    # 处理外部配置更新消息
+                    if message_type == 'config_update':
+                        try:
+                            from network.external_ws_receiver import apply_config_update
+                            changes = apply_config_update(message_data)
+                            await self.send_message(websocket, {"type": "config_update_result", "status": "ok", "changes": changes})
+                        except Exception as e:
+                            self.logger.error(f"配置更新失败: {e}", exc_info=True)
+                            await self.send_message(websocket, {"type": "config_update_result", "status": "error", "message": str(e)})
+                        continue
+
                     if message_type.startswith('joystick_') and self.joystick_handler:
                         try:
                             # 使用操纵杆处理器处理消息

@@ -52,7 +52,7 @@ const CompletionModal: React.FC = observer(() => {
         <h2 className="text-2xl font-bold mb-4">任务完成</h2>
         <p className="text-lg mb-6 text-center">{message}</p>
         <div className="flex justify-around w-full">
-         
+{/*          
           <button
             onClick={handleCancel}
             className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
@@ -64,7 +64,7 @@ const CompletionModal: React.FC = observer(() => {
             className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded transition-colors duration-200"
           >
             确认
-          </button>
+          </button> */}
         </div>
       </div>
     </Modal>

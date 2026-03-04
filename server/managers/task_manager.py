@@ -1,6 +1,7 @@
 import json
 from typing import Dict, Any, Optional, List
 from .database_manager import db_manager
+from .config_manager import config_manager
 from .logger_manager import get_logger
 import time
 import random
@@ -306,87 +307,51 @@ class TaskScenarioManager:
                 self.logger.debug(f"Formal mode: Queued is_manual_completed={is_completed} update for user '{self.user_id}', task '{self.task_type}'")
 
     def _initialize_new_progress(self) -> None:
-        """为新用户或新任务生成全新的队列和状态"""
+        """为新用户或新任务生成全新的队列和状态
+        
+        只生成 1 个 AI 场景和 1 个手动场景，具体参数由配置文件实时决定。
+        """
         self.logger.info(f"Initializing new progress for user '{self.user_id}', task '{self.task_type}'")
-        all_levels = self.config.get('levels', [])
         game_settings = self.config.get('game_settings', {})
+        current_diff = game_settings.get('current_difficulty', 'low')
         all_difficulties = game_settings.get('difficulty_levels', {})
-        
-        # 从配置文件中获取执行顺序
-        execution_order = game_settings.get('execution_order', {})
-        preferred_difficulty_order = execution_order.get('difficulty_order', ['high', 'low'])
-        preferred_level_order = execution_order.get('level_order', ['L0', 'L1', 'L2'])
-        audio_options = execution_order.get('audio_options', [True, False])
-        
-        # 创建按指定顺序排列的level列表
-        ordered_levels = []
-        for level_name in preferred_level_order:
-            for level_conf in all_levels:
-                if level_conf.get('level') == level_name:
-                    ordered_levels.append(level_conf)
-                    break
-        
-        difficulties = []
-        for diff_name in preferred_difficulty_order:
-            if diff_name in all_difficulties:
-                diff_conf = all_difficulties[diff_name]
-                diff_conf['difficulty_name'] = diff_name  # 确保配置中包含难度名称
-                difficulties.append(diff_conf)
+        diff_conf = all_difficulties.get(current_diff, {}).copy()
+        diff_conf['difficulty_name'] = current_diff
 
-        # AI模式
-        ai_scenarios = []
-        for diff_conf in difficulties:
-            for level_conf in ordered_levels:
-                for audio in audio_options:
-                    ai_scenarios.append({
-                        "is_ai_active": True, 
-                        "audio_enabled": audio,
-                        "ai_level_name": level_conf['level'], 
-                        "ai_level_config": level_conf,
-                        "difficulty_name": diff_conf['difficulty_name'], 
-                        "difficulty_config": diff_conf
-                    })
-        
-        # 为每个AI场景添加类型编号和难度变化预测
-        total_ai_scenarios = len(ai_scenarios)
-        for i, scenario in enumerate(ai_scenarios):
-            scenario['scenario_info'] = {'index': i + 1, 'total': total_ai_scenarios}
-            # 预测下一个任务是否会改变难度（只看difficulty_name）
-            if i < total_ai_scenarios - 1:
-                next_scenario = ai_scenarios[i + 1]
-                scenario['will_difficulty_change'] = scenario['difficulty_name'] != next_scenario['difficulty_name']
-            else:
-                # 最后一个AI任务，如果有手动任务，看第一个手动任务的难度是否不同
-                scenario['will_difficulty_change'] = False  # 默认不变
-        self.ai_queue = ai_scenarios
+        current_level_name = self.config.get('current_level', 'L0')
+        current_level_conf = None
+        for lv in self.config.get('levels', []):
+            if lv.get('level') == current_level_name:
+                current_level_conf = lv
+                break
 
-        # 手动模式
-        manual_scenarios = []
+        audio = game_settings.get('audio_enabled', True)
 
-        for diff_conf in difficulties: 
-            # for audio in audio_options:
-            audio = True
-            manual_scenarios.append({
-                "is_ai_active": False, 
-                "audio_enabled": audio,
-                "ai_level_name": None, 
-                "ai_level_config": None,
-                "difficulty_name": diff_conf['difficulty_name'], 
-                "difficulty_config": diff_conf
-            })
-    
-        # 为每个手动场景添加类型编号和难度变化预测
-        total_manual_scenarios = len(manual_scenarios)
-        for i, scenario in enumerate(manual_scenarios):
-            scenario['scenario_info'] = {'index': i + 1, 'total': total_manual_scenarios}
-            # 预测下一个任务是否会改变难度（只看difficulty_name）
-            if i < total_manual_scenarios - 1:
-                next_scenario = manual_scenarios[i + 1]
-                scenario['will_difficulty_change'] = scenario['difficulty_name'] != next_scenario['difficulty_name']
-            else:
-                # 最后一个手动任务，标记为不会改变难度
-                scenario['will_difficulty_change'] = False
-        self.manual_queue = manual_scenarios
+        # AI 模式：1 个场景
+        ai_scenario = {
+            "is_ai_active": True,
+            "audio_enabled": audio,
+            "ai_level_name": current_level_name,
+            "ai_level_config": current_level_conf,
+            "difficulty_name": current_diff,
+            "difficulty_config": diff_conf,
+            "scenario_info": {"index": 1, "total": 1},
+            "will_difficulty_change": False
+        }
+        self.ai_queue = [ai_scenario]
+
+        # 手动模式：1 个场景
+        manual_scenario = {
+            "is_ai_active": False,
+            "audio_enabled": audio,
+            "ai_level_name": None,
+            "ai_level_config": None,
+            "difficulty_name": current_diff,
+            "difficulty_config": diff_conf,
+            "scenario_info": {"index": 1, "total": 1},
+            "will_difficulty_change": False
+        }
+        self.manual_queue = [manual_scenario]
         
         self.current_scenario = None
         self.repetition_counter = 0
@@ -405,6 +370,50 @@ class TaskScenarioManager:
             # 正式模式：通过_update_completion_status设置初始状态
             # 不直接在这里调用，因为可能还没有数据库记录，会在第一次_save_to_db时依赖默认值
             self.logger.debug(f"Formal mode: completion status will be set to default FALSE in database")
+
+    def _refresh_config(self) -> None:
+        """重新读取最新配置文件，更新运行时参数（max_repetitions 等）"""
+        self.config = config_manager.get_config()
+        game_settings = self.config.get('game_settings', {})
+        practice_reps = game_settings.get('practice_repetitions', 3)
+        formal_reps = game_settings.get('max_repetitions', 1)
+        self.max_repetitions = practice_reps if self.is_practice else formal_reps
+        self.logger.debug("Config refreshed from file")
+
+    def _refresh_scenario_config(self, scenario: Dict[str, Any]) -> None:
+        """用最新配置刷新场景中所有可配置字段"""
+        if not scenario:
+            return
+
+        game_settings = self.config.get('game_settings', {})
+        all_levels = self.config.get('levels', [])
+        all_difficulties = game_settings.get('difficulty_levels', {})
+
+        # 刷新 audio_enabled
+        scenario['audio_enabled'] = game_settings.get('audio_enabled', True)
+
+        # 用 current_difficulty 覆盖场景的难度
+        current_diff = game_settings.get('current_difficulty')
+        if current_diff and current_diff in all_difficulties:
+            scenario['difficulty_name'] = current_diff
+            diff_conf = all_difficulties[current_diff].copy()
+            diff_conf['difficulty_name'] = current_diff
+            scenario['difficulty_config'] = diff_conf
+        else:
+            # 回退：用场景自身的 difficulty_name 刷新 config
+            diff_name = scenario.get('difficulty_name')
+            if diff_name and diff_name in all_difficulties:
+                diff_conf = all_difficulties[diff_name].copy()
+                diff_conf['difficulty_name'] = diff_name
+                scenario['difficulty_config'] = diff_conf
+
+        # 刷新 ai_level_config
+        level_name = scenario.get('ai_level_name')
+        if level_name:
+            for level_conf in all_levels:
+                if level_conf.get('level') == level_name:
+                    scenario['ai_level_config'] = level_conf.copy()
+                    break
 
     def are_all_scenarios_completed(self) -> bool:
         """检查此任务类型的所有场景（AI和手动）是否都已完成"""
@@ -450,6 +459,9 @@ class TaskScenarioManager:
 
     def get_next_task_parameters(self, is_ai_active_request: bool) -> Optional[Dict[str, Any]]:
         """获取下一个场景参数，并自动保存进度"""
+        # 实时读取最新配置
+        self._refresh_config()
+        
         # 首先检查上一个任务的完成状态
         print('get_next_task_parameters# 0', is_ai_active_request)
         previous_task_completed = self._check_previous_task_completion_status()
@@ -504,28 +516,23 @@ class TaskScenarioManager:
             #     self.logger.warning(f"Forcing completion of previous task before starting new scenario")
                 # self._update_completion_status(True)  # True = 已完成
                 
-            if self.active_queue:
-                self.current_scenario = self.active_queue.pop(0)
-                self.repetition_counter = 1
-                self.logger.info(f"New scenario started for task '{self.task_type}': diff='{self.current_scenario['difficulty_name']}', ai='{self.current_scenario.get('ai_level_name') or 'N/A'}'")
-                # 新任务开始时，设置状态为未完成/进行中
-                self._update_completion_status(False)  # False = 未完成/进行中
-            else:
-                self.logger.info(f"Active queue empty for task '{self.task_type}'")
-                self.current_scenario = None
-                self.repetition_counter = 0
+            if not self.active_queue:
+                # 队列已空，重新初始化队列（用最新配置），覆盖旧记录继续
+                self.logger.info(f"Active queue empty, reinitializing for task '{self.task_type}'")
+                self._initialize_new_progress()
+                self.active_queue = self.ai_queue if is_ai_active_request else self.manual_queue
+
+            self.current_scenario = self.active_queue.pop(0)
+            self.repetition_counter = 1
+            self.logger.info(f"New scenario started for task '{self.task_type}': diff='{self.current_scenario['difficulty_name']}', ai='{self.current_scenario.get('ai_level_name') or 'N/A'}'")
+            self._update_completion_status(False)
         print('get_next_task_parameters# 5current_scenario', self.current_scenario)
-        # 如果当前场景为空（因为队列已空），检查是否所有任务都完成了
-        if not self.current_scenario:
-            # 没有当前场景时，标记任务为已完成
-            # self._update_completion_status(True)  # True = 已完成
-            if self.is_practice:
-                self._save_to_memory()
-            else:
-                self._save_to_db()
-            if self.are_all_scenarios_completed():
-                return {"status": "ALL_COMPLETED"}
-            return None
+        
+        # 在构建 repetition_info 之前，先用最新配置刷新场景
+        self._refresh_scenario_config(self.current_scenario)
+        print(f'[CONFIG REFRESH] audio_enabled={self.current_scenario.get("audio_enabled")}, '
+              f'difficulty_name={self.current_scenario.get("difficulty_name")}, '
+              f'difficulty_config={self.current_scenario.get("difficulty_config")}')
         
         repetition_info = {
             "current": self.repetition_counter,

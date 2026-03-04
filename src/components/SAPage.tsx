@@ -17,8 +17,6 @@ import radarStore from '../stores/RadarStore';
 import audioManager from '../managers/AudioManager';
 import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 import ScenarioCompletionModal from './ScenarioCompletionModal';
-import { useDifficultyChangeDetection } from '../utils/difficultyUtils';
-import DifficultyChangeModal from './DifficultyChangeModal';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -147,7 +145,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
   const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
-  const [showDifficultyChangeModal, setShowDifficultyChangeModal] = React.useState(false);
   const [userId, setUserId] = useState(originalUserId);
 
   useEffect(() => {
@@ -430,12 +427,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
       console.log('DEBUG saRepetitionInfo', saRepetitionInfo)
       if (saRepetitionInfo && typeof saRepetitionInfo !== 'string') {
-        // 判断是否需要显示难度变化弹窗
-        const shouldShowDifficultyChangeModal = (saRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive && isLastRepetition(saRepetitionInfo);
-        
-        if (shouldShowDifficultyChangeModal) {
-          setShowDifficultyChangeModal(true);
-        } else if (isLastRepetition(saRepetitionInfo) && agentStore.isAIActive) {
+        if (isLastRepetition(saRepetitionInfo) && agentStore.isAIActive) {
           setShowScenarioCompletionModal(true);
         } else {
           setShowTaskComplete(true);
@@ -1828,22 +1820,39 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             }}>
               {isCorrect === true ? '结果: 正确' : isCorrect === false ? '结果: 错误' : '结果: 未选择'}
             </p>
-            <h3 style={{ margin: 0, fontSize: '1.2em' }}>{isCorrect === true || isCorrect === false ? '是否进行下一次任务' : '重新完成当前任务'}</h3>
+            <h3 style={{ margin: 0, fontSize: '1.2em' }}>{isCorrect === true || isCorrect === false ? '当前任务已结束， 可以关闭当前窗口' : '重新完成当前任务'}</h3>
             <div style={{ marginTop: '20px' }}>
-              <button 
-                onClick={handleResetSA}
-                style={{
-                  backgroundColor: '#003300',
-                  border: '1px solid #00ff00',
-                  color: '#00ff00',
-                  padding: '8px 16px',
-                  margin: '0 10px',
-                  cursor: 'pointer',
-                  borderRadius: '4px'
-                }}
-              >
-                确定
-              </button>
+              {isCorrect === true || isCorrect === false ? (
+                <button 
+                  onClick={() => setShowTaskComplete(false)}
+                  style={{
+                    backgroundColor: '#003300',
+                    border: '1px solid #00ff00',
+                    color: '#00ff00',
+                    padding: '8px 16px',
+                    margin: '0 10px',
+                    cursor: 'pointer',
+                    borderRadius: '4px'
+                  }}
+                >
+                  确定
+                </button>
+              ) : (
+                <button 
+                  onClick={handleResetSA}
+                  style={{
+                    backgroundColor: '#003300',
+                    border: '1px solid #00ff00',
+                    color: '#00ff00',
+                    padding: '8px 16px',
+                    margin: '0 10px',
+                    cursor: 'pointer',
+                    borderRadius: '4px'
+                  }}
+                >
+                  确定
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1851,10 +1860,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         <ScenarioCompletionModal 
         isOpen={showScenarioCompletionModal}
         onClose={() => {setShowScenarioCompletionModal(false); setShowTaskComplete(true);}}
-      />
-      <DifficultyChangeModal 
-        isOpen={showDifficultyChangeModal} 
-        onClose={() => {setShowDifficultyChangeModal(false); setShowTaskComplete(true);}} 
       />
     </div>
   );

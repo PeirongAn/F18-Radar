@@ -10,6 +10,7 @@ import { useStore } from '../stores/StoreProvider';
 import agentStore from '../stores/AgentStore'; // Import AgentStore directly
 import radarStore from '../stores/RadarStore';
 import toast from 'react-hot-toast';
+import audioManager from '../managers/AudioManager';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -31,6 +32,7 @@ export interface RadarProps {
   onRadarParamsUpdate?: (range: number, scanAngle: number) => void; // 添加参数更新回调
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
+  onNavigateToSA?: () => void;
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -41,6 +43,7 @@ const Radar: React.FC<RadarProps> = (({
   onRadarParamsUpdate,
   onAddMessage,
   onClearMessages,
+  onNavigateToSA,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
   const { 
@@ -437,6 +440,14 @@ const Radar: React.FC<RadarProps> = (({
     }
   }, [isStarted, initSettings, submitSettings, rangeIndex, scanMode, agentStore.isAIActive]);
 
+
+  const prevAntennaRequiredRef = useRef(false);
+  useEffect(() => {
+    if (antennaAdjustmentRequired && !prevAntennaRequiredRef.current && !agentStore.isAIActive) {
+      audioManager.play('radarHeight');
+    }
+    prevAntennaRequiredRef.current = antennaAdjustmentRequired;
+  }, [antennaAdjustmentRequired]);
 
   useEffect(() => {
     // This effect detects when the manual or AI adjustment is complete.
@@ -1004,6 +1015,7 @@ const Radar: React.FC<RadarProps> = (({
             radarData={radarData}
             error={error}
             onResetForNextMission={handleClearAndReset}
+            onNavigateToSA={onNavigateToSA}
             resetIFF={resetIffRef}
             onAddMessage={onAddMessage}
             onClearMessages={onClearMessages}

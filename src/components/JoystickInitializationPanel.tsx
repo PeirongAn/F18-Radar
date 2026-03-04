@@ -73,10 +73,7 @@ const JoystickInitializationPanel: React.FC = () => {
     const initialState = globalWS.getState();
     handleWebSocketState(initialState);
     
-    // 如果WebSocket未连接，尝试连接
-    if (!initialState.connected) {
-      globalWS.connect('ws://localhost:8765');
-    }
+    // WebSocket 连接由 App.tsx 自动启动逻辑处理，此处不再单独连接
     
 
 

@@ -105,38 +105,10 @@ const useExternalTDCControl = (
   const lastButtonK3State = useRef<boolean>(false); // 上一次ButtonK3状态，用于检测边缘触发
   const forceSwitchLockedRef = useRef<boolean>(false); // ForceSwitch锁定状态（使用ref实现同步更新）
 
-  // 从配置文件加载 TDC Server URL
+  // tdcServer 连接已废弃，不再加载配置或自动连接
   useEffect(() => {
-    // 如果用户提供了 wsUrl 参数，直接使用，不需要加载配置
-    if (wsUrl) {
-      console.log(`[useExternalTDCControl] 使用用户提供的 URL: ${wsUrl}`);
-      setActualWsUrl(wsUrl);
-      setState(prev => ({ ...prev, configLoaded: true }));
-      return;
-    }
-
-    // 从网络加载配置文件
-    const loadConfig = async () => {
-      try {
-        console.log('[useExternalTDCControl] 从配置文件加载 TDC Server URL...');
-        const response = await fetch('/agent_level.json');
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const config = await response.json();
-        const tdcServerUrl = config.tdcServer || 'ws://localhost:8765';
-        console.log(`[useExternalTDCControl] 从配置文件读取到 TDC Server: ${tdcServerUrl}`);
-        setActualWsUrl(tdcServerUrl);
-        setState(prev => ({ ...prev, configLoaded: true }));
-      } catch (error) {
-        console.error('[useExternalTDCControl] 加载配置文件失败，使用默认 URL:', error);
-        setActualWsUrl('ws://localhost:8765');
-        setState(prev => ({ ...prev, configLoaded: true, error: '配置加载失败，使用默认地址' }));
-      }
-    };
-
-    loadConfig();
-  }, [wsUrl]);
+    setState(prev => ({ ...prev, configLoaded: false }));
+  }, []);
 
   // 将归一化坐标转换为像素坐标
   const convertNormalizedToPixel = useCallback((normalizedX: number, normalizedY: number): TDCPosition => {
@@ -473,18 +445,12 @@ const useExternalTDCControl = (
     console.log('[useExternalTDCControl] 🔓 手动解锁ForceSwitch');
   }, []);
 
-  // 初始化连接 - 等待配置加载完成后再连接
+  // 不再自动连接 tdcServer（外部TDC设备已废弃，TDC由摇杆控制）
   useEffect(() => {
-    if (state.configLoaded) {
-      console.log('[useExternalTDCControl] 配置已加载，开始连接...');
-      connect();
-    }
-
-    // 清理函数
     return () => {
       disconnect();
     };
-  }, [state.configLoaded, connect, disconnect]);
+  }, [disconnect]);
 
   // 返回hook接口
   return {
