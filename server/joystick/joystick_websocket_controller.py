@@ -156,7 +156,7 @@ class JoystickWebSocketController:
 
         return {
             "main_x": round(axis_0, 4),
-            "main_y": round(-axis_1, 4),  # 取反
+            "main_y": round(axis_1, 4),  # 取反
             "sub_x": hat_x,
             "sub_y": hat_y,
             "buttons": buttons,

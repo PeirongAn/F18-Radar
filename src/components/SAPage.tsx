@@ -169,7 +169,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     agentStore.toggleAudioEnabled();
   }, []);
 
-  const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol } = useRadarData();
+  const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, joystickEnabled } = useRadarData();
 
   // 计算当前难度和AI状态
   const currentDifficulty = useMemo(() => {
@@ -570,6 +570,18 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   //     window.removeEventListener('keydown', handleKeyPress);
   //   };
   // }, [handleTakeControl]);
+
+  // 摇杆光标位置（mainPos 归一化 -1~+1 映射到画布坐标）
+  const joystickCursorPos = React.useMemo(() => {
+    if (!joystickEnabled || !mainPos) return null;
+    const x = ((mainPos.x + 1) / 2) * width;
+    const y = ((mainPos.y + 1) / 2) * height;
+    return { x, y };
+  }, [mainPos, joystickEnabled, width, height]);
+
+  // 摇杆按钮上升沿检测 ref
+  const prevButton1Ref = React.useRef(false);
+  const prevButton2Ref = React.useRef(false);
 
   // 处理重置SA
   const handleResetSA = useCallback(() => {
@@ -1161,6 +1173,72 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     getBestThreat: getBestThreat
   });
 
+  // 摇杆 button1：选择光标附近最近的目标（等效点击目标）
+  React.useEffect(() => {
+    if (button1 && !prevButton1Ref.current && joystickEnabled && joystickCursorPos) {
+      console.log('[SAPage] Button1按下，查找光标附近目标');
+
+      // 构建带位置的威胁列表（与渲染逻辑一致）
+      let allThreats: { threat: any; pos: { x: number; y: number } }[] = [];
+
+      if (useEnhancedProtocol && enhancedThreats.length > 0) {
+        enhancedThreats
+          .filter(et => !et.is_missile)
+          .forEach(et => {
+            if (et.position) {
+              allThreats.push({
+                threat: { id: et.id, type: et.type, label: et.label, position: et.position, _enhanced: et },
+                pos: et.position
+              });
+            }
+          });
+      } else {
+        saThreats.forEach((threat: any, idx: number) => {
+          const pos = threatPositions[idx];
+          if (pos) {
+            allThreats.push({ threat, pos });
+          }
+        });
+      }
+
+      // 加入导弹
+      missiles.forEach(missile => {
+        allThreats.push({ threat: missile, pos: { x: missile.x, y: missile.y } });
+      });
+
+      // 找最近目标
+      let closest: any = null;
+      let minDist = 40;
+      allThreats.forEach(({ threat, pos }) => {
+        const dist = Math.sqrt(
+          Math.pow(pos.x - joystickCursorPos.x, 2) +
+          Math.pow(pos.y - joystickCursorPos.y, 2)
+        );
+        if (dist < minDist) {
+          minDist = dist;
+          closest = threat;
+        }
+      });
+
+      if (closest) {
+        console.log('[SAPage] 摇杆选中目标:', closest.id, '距离:', minDist.toFixed(1));
+        handleThreatIconClick(closest, 'manual');
+      } else {
+        console.log('[SAPage] 光标附近未找到目标');
+      }
+    }
+    prevButton1Ref.current = button1;
+  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick]);
+
+  // 摇杆 button2：查看结果（等效点击"查看结果"按钮）
+  React.useEffect(() => {
+    if (button2 && !prevButton2Ref.current && joystickEnabled) {
+      console.log('[SAPage] Button2按下，触发查看结果');
+      handleButtonClick('查看结果');
+    }
+    prevButton2Ref.current = button2;
+  }, [button2, joystickEnabled]);
+
   // const [isStarted, setIsStarted] = useState(false);
   // const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
   // const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
@@ -1463,20 +1541,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           
           {/* 雷达显示 - 仅包含雷达相关元素 */}
           <div className="sa-page bg-black relative" style={{ width, height }}>
-            {/* 接管控制按钮 - 位置更靠近操作区域 临时隐藏*/}
-            {/* {agentStore.isAIActive && (
-              <button 
-                className="absolute bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded shadow-lg transition-colors duration-200 z-50"
-                style={{
-                  top: '10px',
-                  right: '10px'
-                }}
-                onClick={handleTakeControl}
-                title="按F10或点击此按钮接管威胁排序控制"
-              >
-                接管控制 (F10)
-              </button>
-            )} */}
+        
             
             <Stage width={width} height={height}>
               <Layer>
@@ -1698,6 +1763,22 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
                 {/* 渲染导弹 */}
                 {renderMissiles()}
+
+                {/* 摇杆光标 */}
+                {joystickCursorPos && (
+                  <Group>
+                    <Line
+                      points={[joystickCursorPos.x - 15, joystickCursorPos.y, joystickCursorPos.x + 15, joystickCursorPos.y]}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                    />
+                    <Line
+                      points={[joystickCursorPos.x, joystickCursorPos.y - 15, joystickCursorPos.x, joystickCursorPos.y + 15]}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                    />
+                  </Group>
+                )}
 
               </Layer>
             </Stage>

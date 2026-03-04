@@ -1,5 +1,6 @@
 import os
 import asyncio
+import uuid
 from aiohttp import web, WSMsgType
 from aiohttp.web_ws import WebSocketResponse
 import json
@@ -22,7 +23,12 @@ class HTTPServer:
         self.logger = get_logger("http_server")
         self.app = web.Application()
         self._routes_setup = False
+        self.joystick_handler = None
         self._setup_routes()
+    
+    def set_joystick_handler(self, handler):
+        """设置操纵杆事件处理器"""
+        self.joystick_handler = handler
     
     def _setup_routes(self):
         """设置路由"""
@@ -135,8 +141,13 @@ class HTTPServer:
         ws = WebSocketResponse()
         await ws.prepare(request)
         
-        self.logger.info("WebSocket客户端已连接")
-        session_state = {}  # 为每个连接创建独立的会话状态
+        client_id = str(uuid.uuid4())
+        self.logger.info(f"WebSocket客户端已连接: {client_id}")
+        session_state = {}
+        
+        # 将连接注册到 websocket_server，使操纵杆数据广播能找到此客户端
+        from network import websocket_server
+        websocket_server.add_client(client_id, ws)
         
         try:
             # 发送初始数据
@@ -150,7 +161,28 @@ class HTTPServer:
                     message = msg.data
                     self.logger.debug(f"接收到WebSocket消息")
                     
-                    # 处理消息
+                    # 检查是否为操纵杆相关消息
+                    try:
+                        message_data = json.loads(message)
+                        message_type = message_data.get('type', '')
+                    except json.JSONDecodeError:
+                        message_data = None
+                        message_type = ''
+                    
+                    if message_type.startswith('joystick_') and self.joystick_handler:
+                        try:
+                            joystick_result = await self.joystick_handler.handle_message(client_id, message_data)
+                            await ws.send_str(json.dumps(joystick_result))
+                            continue
+                        except Exception as e:
+                            self.logger.error(f"操纵杆消息处理失败: {e}")
+                            await ws.send_str(json.dumps({
+                                'type': 'error',
+                                'message': f'操纵杆消息处理失败: {str(e)}'
+                            }))
+                            continue
+                    
+                    # 处理非操纵杆消息
                     result = await message_handler.handle_client_message(message, session_state, ws)
                     
                     # 发送响应
@@ -174,7 +206,8 @@ class HTTPServer:
         except Exception as e:
             self.logger.error(f"WebSocket处理错误: {e}", exc_info=True)
         finally:
-            self.logger.info("WebSocket客户端已断开连接")
+            websocket_server.remove_client(client_id)
+            self.logger.info(f"WebSocket客户端已断开连接: {client_id}")
             
         return ws
     

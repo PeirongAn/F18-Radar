@@ -4,6 +4,7 @@ import RadarDisplay, { ScanModeType, ScanControlParams } from './RadarDisplay';
 import AntennaElevationMarker from './AntennaElevationMarker'; // Import AntennaElevationMarker
 import { useKeyboardControl } from '../hooks/useKeyboardControl';
 import useRadarData from '../hooks/useRadarData';
+import useExternalTDCControl, { CoordinateConfig, TDCCoordinateMessage, TDCPosition } from '../hooks/useExternalTDCControl';
 import { observer } from 'mobx-react-lite';
 import { useStore } from '../stores/StoreProvider';
 import agentStore from '../stores/AgentStore'; // Import AgentStore directly
@@ -134,6 +135,58 @@ const Radar: React.FC<RadarProps> = (({
   // State for TDC position, managed locally in Radar.tsx
   const [tdcPosition, setTdcPosition] = useState({ x: width / 2, y: height / 2 });
 
+  // 外部控制状态
+  const [hasRecentWebSocketControl, setHasRecentWebSocketControl] = useState(false);
+
+  // 外部TDC控制配置
+  const coordinateConfig: CoordinateConfig = React.useMemo(() => ({
+    frameStartX: framePositions.startX,
+    frameStartY: framePositions.startY,
+    radarWidth: radarConfig.mainBoxWidth,
+    radarHeight: radarConfig.mainBoxHeight,
+    padding: radarConfig.padding
+  }), [framePositions.startX, framePositions.startY, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight, radarConfig.padding]);
+
+  // 处理外部TDC更新
+  const handleExternalTDCUpdate = useCallback((
+    coordinate: TDCCoordinateMessage, 
+    pixelPosition: TDCPosition
+  ) => {
+    console.log('[Radar] 外部TDC坐标更新:', {
+      normalized: { x: coordinate.x, y: coordinate.y },
+      pixel: { x: pixelPosition.x, y: pixelPosition.y },
+      source: coordinate.source
+    });
+
+    setTdcPosition(pixelPosition);
+    setHasRecentWebSocketControl(true);
+    setTimeout(() => setHasRecentWebSocketControl(false), 2000);
+  }, []);
+
+  // 处理外部ButtonK3（触发目标锁定，模拟Enter键效果）
+  const handleExternalButtonK3 = useCallback(() => {
+    console.log('[Radar] 外部ButtonK3激活，模拟Enter键效果（目标锁定）');
+    
+    const simulatedEnterEvent = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    });
+    
+    window.dispatchEvent(simulatedEnterEvent);
+  }, []);
+
+  // 使用外部TDC控制Hook
+  const externalTDC = useExternalTDCControl(
+    undefined,
+    coordinateConfig,
+    handleExternalTDCUpdate,
+    handleExternalButtonK3
+  );
+
   const handleClearAndReset = useCallback(() => {
     console.log('Clearing panel and resetting for next mission.');
 
@@ -214,9 +267,21 @@ const Radar: React.FC<RadarProps> = (({
     });
   }, [width, height, radarConfig.padding, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight, framePositions]); // resumeDataStream removed from dependencies
 
-  // Setup keyboard controls for TDC
+  // 条件性启用键盘控制（当没有外部控制活跃时启用）
+  const enableKeyboardControl = !hasRecentWebSocketControl && !externalTDC.isTDCControlActive(2000);
+
+  const hybridTdcKeyAction = useCallback((action: 'up' | 'down' | 'left' | 'right') => {
+    if (enableKeyboardControl) {
+      console.log(`[TDC键盘] 执行${action}操作`);
+      handleTdcKeyAction(action);
+    } else {
+      console.log(`[TDC键盘] WebSocket控制活跃，忽略${action}操作`);
+    }
+  }, [enableKeyboardControl, handleTdcKeyAction]);
+
+  // Setup keyboard controls for TDC (支持混合控制)
   useKeyboardControl({
-    moveStep: 5, // This moveStep is now for context or can be removed if logic is fully in handleTdcKeyAction
+    moveStep: 5,
     boundaries: {
       minX: framePositions.startX + radarConfig.padding,
       maxX: framePositions.endX - radarConfig.padding,
@@ -228,7 +293,7 @@ const Radar: React.FC<RadarProps> = (({
       // Example: up: 'w', down: 's', left: 'a', right: 'd' 
       // If not specified, useKeyboardControl defaults to arrow keys for these actions.
     },
-    onKeyAction: handleTdcKeyAction,
+    onKeyAction: hybridTdcKeyAction,
   });
 
   // Effect for AI to automatically set radar parameters based on server recommendations
@@ -785,23 +850,6 @@ const Radar: React.FC<RadarProps> = (({
     console.log('✅ 用户已接管雷达控制');
   }, [sendMessage]);
 
-  // 处理摇杆button1触发的范围增加功能
-  const handleJoystickRangeIncrease = useCallback(() => {
-    console.log('[摇杆控制] 执行范围增加功能');
-    
-    // 增加范围索引，实现循环（等同于右侧index=1按钮）
-    const newIndex = (rangeIndex + 1) % RADAR_RANGES.length;
-    setRangeIndex(newIndex);
-    
-    // 如果系统已准备就绪，向服务器发送雷达范围更新
-    if (isStarted) {
-      submitSettings({
-        range: RADAR_RANGES[newIndex],
-        scanAngle: scanMode.scanAngle
-      });
-    }
-  }, [rangeIndex, isStarted, submitSettings, scanMode.scanAngle]);
-
   // 处理摇杆button2触发的扫描角度切换功能
   const handleJoystickScanAngleSwitch = useCallback(() => {
     console.log('[摇杆控制] 执行扫描角度切换功能');
@@ -842,24 +890,16 @@ const Radar: React.FC<RadarProps> = (({
 
   // 监听摇杆按钮自定义事件
   useEffect(() => {
-    // 监听摇杆button1事件（范围增加）
-    const handleJoystickRangeIncreaseEvent = () => {
-      handleJoystickRangeIncrease();
-    };
-    
-    // 监听摇杆button2事件（扫描角度切换）
     const handleJoystickScanAngleSwitchEvent = () => {
       handleJoystickScanAngleSwitch();
     };
     
-    window.addEventListener('joystickRangeIncrease', handleJoystickRangeIncreaseEvent);
     window.addEventListener('joystickScanAngleSwitch', handleJoystickScanAngleSwitchEvent);
     
     return () => {
-      window.removeEventListener('joystickRangeIncrease', handleJoystickRangeIncreaseEvent);
       window.removeEventListener('joystickScanAngleSwitch', handleJoystickScanAngleSwitchEvent);
     };
-  }, [handleJoystickRangeIncrease, handleJoystickScanAngleSwitch]);
+  }, [handleJoystickScanAngleSwitch]);
 
   // 添加F10快捷键监听
   useEffect(() => {

@@ -586,8 +586,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
         
         // 更新按钮状态
         if (message.data.buttons) {
-          setButton1(message.data.buttons.button1 || false);
-          setButton2(message.data.buttons.button2 || false);
+          setButton1(message.data.buttons.button0 || false);
+          setButton2(message.data.buttons.button1 || false);
           setButton7(message.data.buttons.button7 || false);
         }
       }
@@ -806,78 +806,9 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   const previousButton1Ref = useRef(false);
   const previousButton2Ref = useRef(false);
   
-  // 防抖相关状态 - 防止快速重复触发
-  const lastButton1TriggerTime = useRef(0);
-  const lastButton2TriggerTime = useRef(0);
-  const lastDualButtonTriggerTime = useRef(0); // 添加双按钮防抖
-  const buttonDebounceDelay = 300; // 300ms防抖延迟
   
-  // 监听button1状态变化（对应右侧index=1按钮 - 增加范围）
-  useEffect(() => {
-    // 检测button1从false变为true的瞬间（按钮按下），且button2未按下
-    if (button1 && !previousButton1Ref.current && !button2 && joystickEnabled) {
-      const currentTime = Date.now();
-      
-      // 防抖处理
-      if (currentTime - lastButton1TriggerTime.current < buttonDebounceDelay) {
-        console.log('[摇杆按钮] Button1触发被防抖过滤');
-        previousButton1Ref.current = button1;
-        return;
-      }
-      
-      lastButton1TriggerTime.current = currentTime;
-      console.log('[摇杆按钮] Button1单独按下，触发增加范围功能');
-      
-      // 发送自定义事件给Radar组件
-      const event = new CustomEvent('joystickRangeIncrease');
-      window.dispatchEvent(event);
-    }
-    previousButton1Ref.current = button1;
-  }, [button1, button2, joystickEnabled]);
-  
-  // 监听button2状态变化（对应左侧index=3按钮 - 切换扫描角度）
-  useEffect(() => {
-    // 检测button2从false变为true的瞬间（按钮按下），且button1未按下
-    if (button2 && !previousButton2Ref.current && !button1 && joystickEnabled) {
-      const currentTime = Date.now();
-      
-      // 防抖处理
-      if (currentTime - lastButton2TriggerTime.current < buttonDebounceDelay) {
-        console.log('[摇杆按钮] Button2触发被防抖过滤');
-        previousButton2Ref.current = button2;
-        return;
-      }
-      
-      lastButton2TriggerTime.current = currentTime;
-      console.log('[摇杆按钮] Button2单独按下，触发切换扫描角度功能');
-      
-      // 发送自定义事件给Radar组件
-      const event = new CustomEvent('joystickScanAngleSwitch');
-      window.dispatchEvent(event);
-    }
-    previousButton2Ref.current = button2;
-  }, [button1, button2, joystickEnabled]);
+  // button1 的锁定逻辑和 button2(IFF) 逻辑已移至 RadarDisplay.tsx 中直接处理
 
-  // 监听button1和button2同时按下（触发IFF功能）
-  useEffect(() => {
-    // 检测button1和button2同时按下的状态
-    if (button1 && button2 && joystickEnabled) {
-      const currentTime = Date.now();
-      
-      // 防抖处理
-      if (currentTime - lastDualButtonTriggerTime.current < buttonDebounceDelay) {
-        console.log('[摇杆按钮] 双按钮触发被防抖过滤');
-        return;
-      }
-      
-      lastDualButtonTriggerTime.current = currentTime;
-      console.log('[摇杆按钮] Button1和Button2同时按下，触发IFF功能');
-      
-      // 发送自定义事件给Radar组件
-      const event = new CustomEvent('joystickIFFTrigger');
-      window.dispatchEvent(event);
-    }
-  }, [button1, button2, joystickEnabled]);
 
   // 操纵杆相关控制函数
   const resetJoystickData = useCallback(() => {
@@ -916,9 +847,23 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     userId: radarStore.userId,
     sendResetSA,
     confirmAntennaAdjustmentHandled,
-    repetitionInfos, // 导出新的字典状态
-    saThreats, // 确保导出 saThreats
-    lastMessage: globalWS.getLastMessage(), // 导出最后一条消息
+    repetitionInfos,
+    saThreats,
+    lastMessage: globalWS.getLastMessage(),
+    // 增强协议相关
+    enhancedThreats,
+    setEnhancedThreats,
+    serverRadarConfig,
+    useEnhancedProtocol,
+    // 操纵杆相关
+    joystickEnabled,
+    setJoystickEnabled,
+    mainPos,
+    subY,
+    button1,
+    button2,
+    button7,
+    resetJoystickData,
   };
 };
 

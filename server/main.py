@@ -38,9 +38,10 @@ async def initialize_system():
     info("3. 初始化操纵杆事件处理器...", "main")
     joystick_handler = JoystickEventHandler()
     
-    # 4. 将操纵杆处理器集成到WebSocket服务器
-    info("4. 集成操纵杆处理器到WebSocket服务器...", "main")
+    # 4. 将操纵杆处理器集成到WebSocket服务器和HTTP服务器
+    info("4. 集成操纵杆处理器到服务器...", "main")
     websocket_server.set_joystick_handler(joystick_handler)
+    http_server.set_joystick_handler(joystick_handler)
     
     # 5. 启动操纵杆事件处理器（在异步上下文中启动）
     info("5. 启动操纵杆事件处理器...", "main")
@@ -55,39 +56,13 @@ async def initialize_system():
 def setup_static_directory(static_dir=None):
     """设置静态文件目录"""
     if static_dir:
-        # 使用用户指定的目录
         if not os.path.isabs(static_dir):
-            # 相对路径转换为绝对路径
             static_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), static_dir))
     else:
-        # 默认使用项目根目录下的 dist 文件夹
         static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'dist')
     
     info(f"静态文件目录设置为: {static_dir}", "main")
     
-    # 检查目录是否存在
-    if os.path.exists(static_dir):
-        info("静态文件目录存在，可以提供前端文件服务", "main")
-    else:
-        info("静态文件目录不存在，请确保已将前端文件打包到该目录", "main")
-        info("提示: 使用 'npm run build' 或 'pnpm build' 构建前端项目", "main")
-    
-    return static_dir
-
-def setup_static_directory(static_dir=None):
-    """设置静态文件目录"""
-    if static_dir:
-        # 使用用户指定的目录
-        if not os.path.isabs(static_dir):
-            # 相对路径转换为绝对路径
-            static_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), static_dir))
-    else:
-        # 默认使用项目根目录下的 dist 文件夹
-        static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'dist')
-    
-    info(f"静态文件目录设置为: {static_dir}", "main")
-    
-    # 检查目录是否存在
     if os.path.exists(static_dir):
         info("静态文件目录存在，可以提供前端文件服务", "main")
     else:
