@@ -25,3 +25,4 @@ dist-ssr
 radar_env/
 *.pyc
 .claude/
+server/venv/

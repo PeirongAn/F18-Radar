@@ -45,5 +45,6 @@
       "level_order": ["L0", "L1", "L2"],
       "audio_options": [true, false]
     }
-  }
+  },
+  "tdcServer": "ws://localhost:8765"
 }

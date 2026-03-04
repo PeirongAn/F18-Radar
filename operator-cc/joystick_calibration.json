@@ -1,25 +1,17 @@
 {
-  "calibration": {
-    "x_center": 512,
-    "y_center": 512,
-    "rx_center": 48,
-    "ry_center": 512,
-    "x_min": 48,
-    "x_max": 976,
-    "y_min": 159,
-    "y_max": 803,
-    "rx_min": -452,
-    "rx_max": 548,
-    "ry_min": 48,
-    "ry_max": 976
+  "axis_boundaries": {
+    "x_min": 0,
+    "x_max": 0,
+    "y_min": 29424,
+    "y_max": 29424,
+    "ry_min": 128,
+    "ry_max": 65408
   },
-  "scale_factor": 9.76842105263158,
-  "device_info": {
-    "vendor_id": 1356,
-    "product_id": 98,
-    "product_name": "3D Joystick Keyboard",
-    "vendor_name": "China Longcctv"
+  "center_values": {
+    "x": 0,
+    "y": 16624,
+    "ry": 32768
   },
-  "timestamp": "2025-07-09T10:45:32.948289",
-  "version": "1.0"
+  "timestamp": "2026-03-04T17:06:51.020731",
+  "description": "操纵杆校准配置 - 边界检测和中心值"
 }

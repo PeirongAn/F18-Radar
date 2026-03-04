@@ -22,12 +22,14 @@ async def initialize_system():
     # 1. 初始化数据库
     info("1. 初始化数据库...", "main")
     db_manager.initialize_database()
+    info("✅ 数据库初始化完成", "main")
     
     # 2. 初始化目标管理器（使用默认难度）
     info("2. 初始化目标管理器...", "main")
     default_difficulty_name = config_manager.get_game_settings().get('current_difficulty', 'low')
     default_difficulty_config = config_manager.get_difficulty_levels().get(default_difficulty_name, {})
     target_manager.initialize_targets(default_difficulty_config)
+    info("✅ 目标管理器初始化完成", "main")
     
     # 3. 初始化操纵杆事件处理器
     info("3. 初始化操纵杆事件处理器...", "main")

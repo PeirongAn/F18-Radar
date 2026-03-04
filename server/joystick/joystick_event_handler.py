@@ -94,18 +94,7 @@ class JoystickEventHandler:
     def _handle_joystick_data(self, data: Dict[str, Any]):
         """处理操纵杆数据"""
         if not self.is_active or not self.websocket_server:
-            if not self.is_active:
-                print(f"[事件处理器] 处理器未激活，跳过数据处理")
-            if not self.websocket_server:
-                print(f"[事件处理器] WebSocket服务器未设置，跳过数据处理")
             return
-        
-        # 在边界检测模式下添加调试信息
-        if hasattr(self.joystick_controller, 'joystick') and hasattr(self.joystick_controller.joystick, 'boundary_detection_mode') and self.joystick_controller.joystick.boundary_detection_mode:
-            if self.joystick_controller.joystick.boundary_sample_count % 200 == 0:
-                print(f"[事件处理器] 边界检测数据流 #{self.joystick_controller.joystick.boundary_sample_count}: 订阅客户端数={len(self.joystick_clients)}")
-        
-        # 将数据放入队列中等待异步处理
         self._enqueue_data(data)
     
     def _handle_joystick_status(self, event: str, data: Dict[str, Any]):
