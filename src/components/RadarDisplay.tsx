@@ -77,6 +77,7 @@ export interface RadarDisplayProps {
   onResetForNextMission?: () => void;
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
+  cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级：低/中/高
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -104,7 +105,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   error,
   onResetForNextMission,
   onAddMessage,
-  onClearMessages
+  onClearMessages,
+  cognitiveLoad = 'low'
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -433,6 +435,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       // 明确返回值的类型为 RadarTarget，以保留所有原始字段
       return {
       ...target,
+      distance_nm: distanceNm, // 保留原始距离（海里）
       position: {
           x: screenX,
           y: screenY
@@ -710,7 +713,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         // onAddMessage('info', `重复进度: ${formatRepetitionText(radarRepetitionInfo)}`);
         
         // 判断是否需要显示难度变化弹窗
-        const shouldShowDifficultyChangeModal = (radarRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive;
+        const shouldShowDifficultyChangeModal = (radarRepetitionInfo as any).will_difficulty_change && !agentStore.isAIActive && isLastRepetition(radarRepetitionInfo);
         
         if (shouldShowDifficultyChangeModal) {
           setShowDifficultyChangeModal(true);
@@ -938,6 +941,8 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               iffMode={iffMode}
               scanAngle={scanMode.scanAngle}
               onTargetClick={handleTargetClickInIFF}
+              cognitiveLoad={cognitiveLoad}
+              range={range}
             />
           )}
           

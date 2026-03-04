@@ -40,6 +40,7 @@ export const renderMainFrame = ({
   scanAngle = 60, // 默认扫描角度为60
   centerOffset = 0, // 默认中心偏移为0
   onTDCPositionSet, // TDC位置设置回调函数
+  range = 20, // 当前雷达量程，默认20海里
   scanCount = 0, // 当前扫描计数
   maxScanCount = 4, // 最大扫描计数
   displayMode = 'AUTO', // 默认为AUTO模式
@@ -172,20 +173,33 @@ export const renderMainFrame = ({
         />
       ))}
 
-      {/* 左侧刻度线 */}
-      {[1, 2, 3].map((i) => (
-        <Line
-          key={`left-${i}`}
-          points={[
-            startX,
-            startY + (radarConfig.mainBoxHeight / 4) * i,
-            startX + scaleLineLength,
-            startY + (radarConfig.mainBoxHeight / 4) * i
-          ]}
-          stroke={mainColor}
-          strokeWidth={1}
-        />
-      ))}
+      {/* 左侧刻度线及仰角数字标注：上3、中0、下-3 */}
+      {[1, 2, 3].map((i) => {
+        const elevationLabels: Record<number, string> = { 1: '3', 2: '0', 3: '-3' };
+        const tickY = startY + (radarConfig.mainBoxHeight / 4) * i;
+        return (
+          <Group key={`left-${i}`}>
+            <Line
+              points={[
+                startX,
+                tickY,
+                startX + scaleLineLength,
+                tickY
+              ]}
+              stroke={mainColor}
+              strokeWidth={1}
+            />
+            <Text
+              text={elevationLabels[i]}
+              x={startX + scaleLineLength + 4}
+              y={tickY - 7}
+              fill={mainColor}
+              fontSize={13}
+              fontFamily="monospace"
+            />
+          </Group>
+        );
+      })}
 
       {/* 天线俯仰角刻度标记 */}
       <AntennaElevationMarker

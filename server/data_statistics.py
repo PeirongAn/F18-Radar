@@ -7,7 +7,7 @@ from datetime import datetime
 class DataStatistics:
     """数据统计分析器"""
     
-    def __init__(self, db_path: str = "./data/radar_operations.db"):
+    def __init__(self, db_path: str = "./server/data/radar_operations.db"):
         self.db_path = db_path
         self.conn = None
         

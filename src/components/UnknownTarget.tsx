@@ -14,6 +14,7 @@ export interface UnknownTargetData {
   selected?: boolean;               // 添加选中状态标记
   trail_length?: number;            // 新增：拖尾长度
   threat_score?: number;            // 后端计算的威胁评分
+  distance_nm?: number;             // 新增：原始距离（海里）
 }
 
 interface UnknownTargetProps {
@@ -27,9 +28,33 @@ interface UnknownTargetProps {
   };
   scanAngle?: number;
   onTargetClick?: (target: UnknownTargetData) => void; // 添加点击事件回调
+  cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级
+  range?: number; // 当前雷达量程（海里），用于距离分档
 }
 
-const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions, scanAngle = 60, onTargetClick }) => {
+// 将航向角度转换为方位词
+const degreesToCardinal = (degrees: number): string => {
+  // 归一化到 0-360
+  const normalized = ((degrees % 360) + 360) % 360;
+  if (normalized >= 337.5 || normalized < 22.5) return 'N';
+  if (normalized < 67.5) return 'NE';
+  if (normalized < 112.5) return 'E';
+  if (normalized < 157.5) return 'SE';
+  if (normalized < 202.5) return 'S';
+  if (normalized < 247.5) return 'SW';
+  if (normalized < 292.5) return 'W';
+  return 'NW';
+};
+
+// 将距离分为近/中/远（基于当前量程三等分）
+const distanceToCategory = (distanceNm: number, range: number): string => {
+  const third = range / 3;
+  if (distanceNm < third) return '近';
+  if (distanceNm < third * 2) return '中';
+  return '远';
+};
+
+const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions, scanAngle = 60, onTargetClick, cognitiveLoad = 'low', range = 20 }) => {
   // 从props解构需要的属性
   const { id, direction, type, speed, selected, position } = data;
   
@@ -205,6 +230,46 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
         shadowColor={selected ? 'cyan' : 'transparent'} // 选中时发光
         shadowBlur={selected ? 10 : 0}
       />
+
+      {/* 认知负荷信息标签 - 反向旋转使文字保持水平 */}
+      {cognitiveLoad !== 'high' && (
+        <Group rotation={-(rotationDegrees - 90)}>
+          {cognitiveLoad === 'low' && (
+            <>
+              <Text
+                text={data.distance_nm !== undefined ? `${data.distance_nm.toFixed(1)}nm` : ''}
+                x={10}
+                y={-18}
+                fill={color}
+                fontSize={10}
+                fontFamily="monospace"
+              />
+              <Text
+                text={data.direction_degrees !== undefined ? `${String(Math.round(data.direction_degrees)).padStart(3, '0')}°` : ''}
+                x={10}
+                y={-6}
+                fill={color}
+                fontSize={10}
+                fontFamily="monospace"
+              />
+            </>
+          )}
+          {cognitiveLoad === 'medium' && (
+            <Text
+              text={
+                (data.distance_nm !== undefined ? distanceToCategory(data.distance_nm, range) : '') +
+                ' ' +
+                (data.direction_degrees !== undefined ? degreesToCardinal(data.direction_degrees) : '')
+              }
+              x={10}
+              y={-10}
+              fill={color}
+              fontSize={10}
+              fontFamily="monospace"
+            />
+          )}
+        </Group>
+      )}
     </Group>
   );
 };
