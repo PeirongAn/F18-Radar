@@ -7,6 +7,8 @@ import json
 import time
 import sys
 
+
+
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -25,6 +27,18 @@ class HTTPServer:
         self._routes_setup = False
         self.joystick_handler = None
         self._setup_routes()
+        self.seen_users = set()
+        # 新增
+        self.WS_URL = "ws://localhost:8080/ws"
+        self.DEFAULT_CONFIG_TIMEOUT = 5 # 重连时间
+        self.DEFAULT_PAYLOAD = {
+            "userId": "test_pilot_103",
+            "includeAI": True,
+            "isPractice": False,# 固定
+            "current_difficulty": "high",# hig, low
+            "audio_enabled": False# 高工效 true
+        }
+
     
     def set_joystick_handler(self, handler):
         """设置操纵杆事件处理器"""
@@ -149,19 +163,21 @@ class HTTPServer:
         from network import websocket_server
         websocket_server.add_client(client_id, ws)
         
+
         try:
             # 发送初始数据
             initial_data = target_manager.get_radar_data(include_targets=False)
             await ws.send_str(json.dumps(initial_data))
             self.logger.info(f"已发送WebSocket初始数据")
-            
             # 消息处理循环
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     message = msg.data
                     self.logger.debug(f"接收到WebSocket消息")
                     
-                    # 检查是否为操纵杆相关消息
+
+
+                  # 检查是否为操纵杆相关消息
                     try:
                         message_data = json.loads(message)
                         message_type = message_data.get('type', '')
@@ -169,6 +185,31 @@ class HTTPServer:
                         message_data = None
                         message_type = ''
                     
+                    # 1) 如果收到的是config_update
+                    if  message_type == "config_update":
+                        cfg_msg = {"type": "config_update", **message_data}
+                        self.logger.info(f"收到payload，执行配置更新: {json.dumps(cfg_msg, ensure_ascii=False)}")
+                        print("根据json处理了更新")
+                        try:
+                            from network.external_ws_receiver import apply_config_update
+                            changes = apply_config_update(cfg_msg)
+
+                            await ws.send_str(json.dumps({
+                                "type": "config_update_result",
+                                "status": "ok",
+                                "changes": changes
+                            }, ensure_ascii=False))
+
+                        except Exception as e:
+                            self.logger.error(f"配置更新失败: {e}", exc_info=True)
+                            await ws.send_str(json.dumps({
+                                "type": "config_update_result",
+                                "status": "error",
+                                "message": str(e)
+                            }, ensure_ascii=False))
+                        
+                        continue  # 处理完毕，进入下一条
+
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'joystick_connect' and not self.joystick_handler:
                         try:
@@ -248,6 +289,19 @@ class HTTPServer:
         
         # 保持运行
         await asyncio.Future()
+
+    # 判断消息是否是json
+    def _looks_like_payload(self, data: dict) -> bool:
+        """判断消息是否是 DEFAULT_PAYLOAD 同结构（不要求首条）"""
+        if not isinstance(data, dict):
+            return False
+
+        # 如果显式带 type，那就交给 type 分支处理（避免误判）
+        if "type" in data:
+            return False
+
+        required = {"userId", "includeAI", "isPractice", "current_difficulty", "audio_enabled"}
+        return required.issubset(data.keys())
 
 # 全局HTTP服务器实例
 http_server = HTTPServer() 

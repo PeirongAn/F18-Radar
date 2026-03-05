@@ -1,0 +1,68 @@
+{
+  "current_level": "L2",
+  "levels": [
+    {
+      "level": "L0",
+      "desc": "低级智能体，延时最长，自动处理最慢",
+      "threat_select_delay_ms": 1000,
+      "tdc_select_delay_ms": 1000,
+      "decision_probabilities": [
+        0.3,
+        0.5
+      ]
+    },
+    {
+      "level": "L1",
+      "desc": "中级智能体，延时适中",
+      "threat_select_delay_ms": 500,
+      "tdc_select_delay_ms": 500,
+      "decision_probabilities": [
+        0.7,
+        0.9
+      ]
+    },
+    {
+      "level": "L2",
+      "desc": "高级智能体，延时最短，自动处理最快",
+      "threat_select_delay_ms": 100,
+      "tdc_select_delay_ms": 100,
+      "decision_probabilities": [
+        1.0
+      ]
+    }
+  ],
+  "game_settings": {
+    "current_difficulty": "high",
+    "audio_enabled": false,
+    "max_repetitions": 1,
+    "practice_repetitions": 1,
+    "difficulty_levels": {
+      "high": {
+        "name": "高",
+        "threat_count": 10,
+        "target_count": 10
+      },
+      "low": {
+        "name": "低",
+        "threat_count": 5,
+        "target_count": 5
+      }
+    },
+    "execution_order": {
+      "difficulty_order": [
+        "high",
+        "low"
+      ],
+      "level_order": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "audio_options": [
+        true,
+        false
+      ]
+    }
+  },
+  "tdcServer": "ws://localhost:8765"
+}
