@@ -112,8 +112,12 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // const { connected, radarData, error } = useRadarData(wsUrl);
   
   // 获取重复信息和摇杆数据
-  const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled } = useRadarData();
-
+  const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled, targetAntennaElevation, antennaAdjustmentRequired, confirmAntennaAdjustmentHandled } = useRadarData();
+ 
+  useEffect(()=> {
+    console.log('get values111', targetAntennaElevation, antennaAdjustmentRequired)
+  }, [targetAntennaElevation, antennaAdjustmentRequired])
+  
   // 计算当前难度和AI状态
   const currentDifficulty = useMemo(() => {
     const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
@@ -267,6 +271,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       if (newElevation !== radarStore.currentAntennaElevation) {
         console.log(`[天线高度] 副轴 ${subY > 0 ? '+1' : '-1'} → 天线高度 ${radarStore.currentAntennaElevation} → ${newElevation}`);
         radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
+      }
+      if(newElevation === targetAntennaElevation) {
+        confirmAntennaAdjustmentHandled()
       }
     }
     

@@ -447,8 +447,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   }, []);
   
   const resetAntennaAdjustment = useCallback(() => {
-    setAntennaAdjustmentRequired(false);
-    setTargetAntennaElevation(null);
+    // setAntennaAdjustmentRequired(false);
+    // setTargetAntennaElevation(null);
   }, []);
   
   // 验证参数是否在推荐范围内
@@ -723,10 +723,14 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   const confirmAntennaAdjustmentHandled = useCallback(() => {
     console.log('Confirming to backend that antenna adjustment has been handled.');
     setAntennaAdjustmentRequired(false);
-    setTargetAntennaElevation(null); // Reset the elevation state as the signal is handled
+    // setTargetAntennaElevation(null); // Reset the elevation state as the signal is handled
     console.log('[useRadarData] Antenna adjustment requirement handled and states reset.');
   }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevation are stable from useState
 
+  useEffect(() => {
+    console.log('get values333', targetAntennaElevation, antennaAdjustmentRequired)
+    
+  }, [antennaAdjustmentRequired, targetAntennaElevation])
   const lastProcessedMessageIdForHook = useRef<string>('');
   const lastProcessedEmergencyId = useRef<string>('');
 

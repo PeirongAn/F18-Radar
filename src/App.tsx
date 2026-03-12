@@ -62,6 +62,8 @@ const App: React.FC = observer(() => {
     radarData,
     lastMessage,
   } = useRadarData();
+
+
   
   // 统一管理通信日志
   const [messages, setMessages] = useState<LogMessage[]>([]);
@@ -76,6 +78,10 @@ const App: React.FC = observer(() => {
   // 新增：威胁列表状态
   const [threatListData, setThreatListData] = useState<any[]>([]);
   const [showDetailedInfo, setShowDetailedInfo] = useState(false);
+
+  useEffect(()=> {
+      console.log('get values222', targetAntennaElevation, antennaAdjustmentRequired)
+    }, [targetAntennaElevation, antennaAdjustmentRequired])
   
   // 使用useCallback包装addMessage函数
   const addMessage = useCallback((type: MessageType, content: string) => {
