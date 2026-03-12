@@ -114,9 +114,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 获取重复信息和摇杆数据
   const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled, targetAntennaElevation, antennaAdjustmentRequired, changeAntennaAdjustmentRequired } = useRadarData();
  
-  useEffect(()=> {
-    console.log('get values111', targetAntennaElevation, antennaAdjustmentRequired)
-  }, [targetAntennaElevation, antennaAdjustmentRequired])
   
   // 计算当前难度和AI状态
   const currentDifficulty = useMemo(() => {

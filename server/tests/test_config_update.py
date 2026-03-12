@@ -15,14 +15,20 @@ import websockets
 
 WS_URL = "ws://localhost:8080/ws"
 
+# DEFAULT_PAYLOAD = {
+#     "userId": "test_pilot_101",
+#     "includeAI": True,
+#     "isPractice": False,
+#     "current_difficulty": "high",
+#     "audio_enabled": False
+# }
 DEFAULT_PAYLOAD = {
     "userId": "test_pilot_101",
-    "includeAI": True,
-    "isPractice": False,
+    "includeAI": False,
+    "isPractice": True,
     "current_difficulty": "high",
-    "audio_enabled": False
+    "audio_enabled": True
 }
-
 
 async def send_config_update(payload: dict):
     print(f"连接 {WS_URL} ...")

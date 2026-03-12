@@ -62,8 +62,7 @@ const App: React.FC = observer(() => {
   } = useRadarData();
 
   // 从 MobX 全局 store 读取天线状态，避免多 hook 实例间的状态隔离问题
-  const antennaAdjustmentRequired = radarStore.antennaAdjustmentRequired;
-  const targetAntennaElevation = radarStore.targetAntennaElevation;
+  const {antennaAdjustmentRequired, targetAntennaElevation} = radarStore;
 
 
   
@@ -81,9 +80,7 @@ const App: React.FC = observer(() => {
   const [threatListData, setThreatListData] = useState<any[]>([]);
   const [showDetailedInfo, setShowDetailedInfo] = useState(false);
 
-  useEffect(()=> {
-      console.log('get values222', targetAntennaElevation, antennaAdjustmentRequired)
-    }, [targetAntennaElevation, antennaAdjustmentRequired])
+
   
   // 使用useCallback包装addMessage函数
   const addMessage = useCallback((type: MessageType, content: string) => {

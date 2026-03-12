@@ -733,10 +733,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     radarStore.setAntennaAdjustmentRequired(value);
   }, [setAntennaAdjustmentRequired]);
 
-  useEffect(() => {
-    console.log('get values333', targetAntennaElevation, antennaAdjustmentRequired)
-    
-  }, [antennaAdjustmentRequired, targetAntennaElevation])
+
   const lastProcessedMessageIdForHook = useRef<string>('');
   const lastProcessedEmergencyId = useRef<string>('');
 
