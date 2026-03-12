@@ -50,8 +50,6 @@ const App: React.FC = observer(() => {
     connected,
     error,
     taskId, 
-    antennaAdjustmentRequired, 
-    targetAntennaElevation,
     initSettings,
     operations,
     sendMessage,
@@ -62,6 +60,10 @@ const App: React.FC = observer(() => {
     radarData,
     lastMessage,
   } = useRadarData();
+
+  // 从 MobX 全局 store 读取天线状态，避免多 hook 实例间的状态隔离问题
+  const antennaAdjustmentRequired = radarStore.antennaAdjustmentRequired;
+  const targetAntennaElevation = radarStore.targetAntennaElevation;
 
 
   

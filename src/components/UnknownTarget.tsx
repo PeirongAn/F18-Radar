@@ -231,8 +231,8 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
         shadowBlur={selected ? 10 : 0}
       />
 
-      {/* 认知负荷信息标签 - 反向旋转使文字保持水平 */}
-      {cognitiveLoad !== 'high' && (
+      {/* 认知负荷信息标签- 临时去掉 - 反向旋转使文字保持水平 */}
+      {/* {cognitiveLoad !== 'high' && (
         <Group rotation={-(rotationDegrees - 90)}>
           {cognitiveLoad === 'low' && (
             <>
@@ -269,7 +269,7 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
             />
           )}
         </Group>
-      )}
+      )} */}
     </Group>
   );
 };

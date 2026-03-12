@@ -447,8 +447,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   }, []);
   
   const resetAntennaAdjustment = useCallback(() => {
-    // setAntennaAdjustmentRequired(false);
-    // setTargetAntennaElevation(null);
+    setAntennaAdjustmentRequired(false);
+    setTargetAntennaElevation(null);
   }, []);
   
   // 验证参数是否在推荐范围内
@@ -642,6 +642,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
       console.log('[useRadarData] Received adjust_antenna message:', message);
       const ts = Date.now();
       setAntennaAdjustmentRequired(true);
+      radarStore.setAntennaAdjustmentRequired(true);
       setTargetAntennaElevation(message.targetElevation);
       radarStore.setTargetAntennaElevation(message.targetElevation, ts); // 传递接收时间戳
       recordOperation({ operationType: 'antenna_adjustment_required', timestamp: ts, isActive: false, parameters: { targetElevation: message.targetElevation }});
@@ -723,9 +724,14 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   const confirmAntennaAdjustmentHandled = useCallback(() => {
     console.log('Confirming to backend that antenna adjustment has been handled.');
     setAntennaAdjustmentRequired(false);
-    // setTargetAntennaElevation(null); // Reset the elevation state as the signal is handled
+    setTargetAntennaElevation(null); // Reset the elevation state as the signal is handled
     console.log('[useRadarData] Antenna adjustment requirement handled and states reset.');
   }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevation are stable from useState
+
+  const changeAntennaAdjustmentRequired = useCallback((value: boolean) => {
+    setAntennaAdjustmentRequired(value);
+    radarStore.setAntennaAdjustmentRequired(value);
+  }, [setAntennaAdjustmentRequired]);
 
   useEffect(() => {
     console.log('get values333', targetAntennaElevation, antennaAdjustmentRequired)
@@ -864,6 +870,7 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     button2,
     button7,
     resetJoystickData,
+    changeAntennaAdjustmentRequired,
   };
 };
 

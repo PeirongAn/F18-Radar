@@ -947,8 +947,8 @@ const Radar: React.FC<RadarProps> = (({
 
   return (
     <div className="flex flex-col items-center justify-center relative">
-      {/* 认知负荷选择按钮 */}
-      <div className="flex items-center gap-2 mb-2">
+      {/* 临时去掉：认知负荷选择按钮 */}
+      {/* <div className="flex items-center gap-2 mb-2">
         <span className="text-green-500 font-mono text-sm mr-1">认知负荷:</span>
         {([
           { key: 'low' as const, label: '低' },
@@ -967,7 +967,7 @@ const Radar: React.FC<RadarProps> = (({
             {label}
           </button>
         ))}
-      </div>
+      </div> */}
 
       {/* 控制面板 */}
       {/* 顶部按钮 */}

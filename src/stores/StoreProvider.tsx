@@ -10,43 +10,29 @@ export const StoreContext = createContext({
 
 // Store Provider组件
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // 获取雷达数据hook
   const radarDataHook = useRadarData();
-  
-  // 将雷达数据hook注入到store
+  const { taskId, userId } = radarDataHook;
+
+  // hook 注入：仅在挂载时执行一次，store 持有 hook 引用
   useEffect(() => {
     radarStore.setRadarDataHook(radarDataHook);
-    
-    const syncTaskId = () => {
-      radarStore.setTaskId(radarDataHook.taskId);
-    };
-    
-    const syncAntennaStatus = () => {
-      radarStore.setAntennaAdjustmentRequired(radarDataHook.antennaAdjustmentRequired);
-    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    const syncUserId = () => {
-      if (radarDataHook.userId) {
-        radarStore.setUserId(radarDataHook.userId);
-      }
-    };
-    
-    // 初始同步
-    syncTaskId();
-    syncAntennaStatus();
-    syncUserId();
-    
-    // 创建一个轮询同步的计时器
-    const intervalId = setInterval(() => {
-      syncTaskId();
-      syncAntennaStatus();
-      syncUserId();
-    }, 1000); // 每秒同步一次
-    
-    return () => {
-      clearInterval(intervalId); // 清理计时器
-    };
-  }, [radarDataHook]);
+  // taskId 变化时同步（响应式，无需轮询）
+  useEffect(() => {
+    radarStore.setTaskId(taskId);
+  }, [taskId]);
+
+  // userId 变化时同步（响应式，无需轮询）
+  useEffect(() => {
+    if (userId) {
+      radarStore.setUserId(userId);
+    }
+  }, [userId]);
+
+  // 注意：antennaAdjustmentRequired 已在 useRadarData 内部直接写入 radarStore，
+  // 不在此处同步，避免 StoreProvider 实例的本地 state 覆盖其他实例的重置操作。
   
   return (
     <StoreContext.Provider value={{ radarStore }}>

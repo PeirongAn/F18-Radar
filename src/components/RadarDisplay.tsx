@@ -112,7 +112,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // const { connected, radarData, error } = useRadarData(wsUrl);
   
   // 获取重复信息和摇杆数据
-  const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled, targetAntennaElevation, antennaAdjustmentRequired, confirmAntennaAdjustmentHandled } = useRadarData();
+  const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled, targetAntennaElevation, antennaAdjustmentRequired, changeAntennaAdjustmentRequired } = useRadarData();
  
   useEffect(()=> {
     console.log('get values111', targetAntennaElevation, antennaAdjustmentRequired)
@@ -272,9 +272,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         console.log(`[天线高度] 副轴 ${subY > 0 ? '+1' : '-1'} → 天线高度 ${radarStore.currentAntennaElevation} → ${newElevation}`);
         radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
       }
-      if(newElevation === targetAntennaElevation) {
-        confirmAntennaAdjustmentHandled()
-      }
+      console.log('get values 000', newElevation)
+      changeAntennaAdjustmentRequired(newElevation !== targetAntennaElevation && newElevation !== null)
     }
     
     previousSubYRef.current = subY;

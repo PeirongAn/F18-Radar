@@ -204,11 +204,12 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
             <span className="text-green-300">{scanAngle || '未设置'}°</span>
           </div>
         </div> */}
-        {initSettings && (
+        {/* 当前不需要设置 */}
+        {/* {initSettings && (
           <div className="mt-1 text-xs text-white font-bold">
             请调整雷达范围{initSettings !== undefined ? ` 至 范围 ${initSettings.range}海里，扫描角度 ${initSettings.scanAngle}°` : ''}!
           </div>
-        )}
+        )} */}
         {antennaAdjustmentRequired && (
           <div className="mt-1 text-xs text-yellow-300 font-bold">
             请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
