@@ -69,14 +69,25 @@ class JoystickWebSocketController:
             self._notify_status("device_connection_failed", {"message": "未检测到控制器"})
             return False
 
-        target = None
+        # 优先选名称含 "joystick" 的设备，避免误选油门台（throttle）
+        # HOTAS Warthog 套装会同时枚举 Throttle 和 Joystick 两个设备
+        candidates = []
         for i in range(count):
             js = pygame.joystick.Joystick(i)
             js.init()
             name = js.get_name().lower()
-            if "warthog" in name or "joystick" in name or "thrustmaster" in name:
-                target = js
-                break
+            if "throttle" in name:
+                priority = 2          # 油门台最低优先级
+            elif "joystick" in name:
+                priority = 0          # 摇杆最高优先级
+            elif "warthog" in name or "thrustmaster" in name:
+                priority = 1
+            else:
+                priority = 3
+            candidates.append((priority, i, js))
+
+        candidates.sort(key=lambda x: x[0])
+        target = candidates[0][2] if candidates else None
 
         if target is None:
             target = pygame.joystick.Joystick(0)
@@ -121,9 +132,21 @@ class JoystickWebSocketController:
             self._poll_thread.join(timeout=2)
             self._poll_thread = None
 
+    def pump_and_tick(self):
+        """
+        在主线程中调用，用于刷新 pygame 事件队列。
+        部分 Windows 系统要求 pygame.event.pump() 必须在主线程执行；
+        若摇杆无响应，请在主线程循环中定期调用此方法（约 20ms 一次）。
+        """
+        try:
+            pygame.event.pump()
+        except Exception:
+            pass
+
     def _poll_loop(self):
         while self._poll_running and self.joystick is not None:
             try:
+                # 优先尝试在子线程 pump；若平台不支持，请改为在主线程调用 pump_and_tick()
                 pygame.event.pump()
                 data = self._read_joystick()
                 if data and self._has_significant_change(data):
