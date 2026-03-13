@@ -401,13 +401,36 @@ interface AllRepetitionInfos {
   SA_THREAT_RESPONSE: RepetitionInfo | 'ALL_COMPLETED' | null;
 }
 
+// gazerelation: 全局唯一所有者，保证天线回合WS逻辑只执行一次，避免多实例重复发送
+let antennaRelationOwnerId: symbol | null = null;
+
 // 修改后的useRadarData hook使用全局WebSocket管理器
 const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   const [connected, setConnected] = useState<boolean>(false);
   const [radarData, setRadarData] = useState<any>({});
   const [error, setError] = useState<string | null>(null);
+  // gazerelation: 当前是否处于天线调整任务阶段（false->true 开启回合，true->false 结束回合）
   const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
+  // gazerelation: 服务端要求的目标天线高度
   const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
+  // gazerelation: 当前回合是否已经上报过开始消息，避免重复上报
+  const hasReportedAntennaPromptRef = useRef<boolean>(false);
+  // gazerelation: 上一帧 antennaAdjustmentRequired，用于边沿检测
+  const prevAntennaAdjustmentRequiredRef = useRef<boolean>(false);
+  // gazerelation: 供事件监听器读取的最新 antennaAdjustmentRequired（避免闭包值过期）
+  const antennaAdjustmentRequiredRef = useRef<boolean>(false);
+  // gazerelation: 最近一次提示框 bbox 坐标（来自 CommunicationLog 广播）
+  const lastAntennaPromptPositionRef = useRef<any>(null);
+  // gazerelation: 回合序号，每次 false->true 自增
+  const antennaRoundIdRef = useRef<number>(0);
+  // gazerelation: 当前回合是否激活，决定是否处理服务端消息
+  const antennaRoundActiveRef = useRef<boolean>(false);
+  // gazerelation: 当前回合独立 WebSocket 连接实例
+  const antennaRoundWsRef = useRef<WebSocket | null>(null);
+  // gazerelation: 当前hook实例的唯一ID，用于竞争/持有天线WS发送所有权
+  const antennaOwnerIdRef = useRef<symbol>(Symbol('antenna-owner'));
+  // gazerelation: 是否为当前拥有天线WS发送权限的实例
+  const [isAntennaOwner, setIsAntennaOwner] = useState<boolean>(false);
   const [saThreats, setSaThreats] = useState<any[]>([]); // 重新添加 saThreats 状态
   // 增强协议状态
   const [enhancedThreats, setEnhancedThreats] = useState<any[]>([]);
@@ -441,6 +464,215 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     isActive: boolean;
     parameters?: any;
   }>>([]);
+
+  // gazerelation: 抢占并维护“唯一发送实例”身份，防止多个useRadarData实例重复建连/重复发送
+  useEffect(() => {
+    if (antennaRelationOwnerId === null) {
+      antennaRelationOwnerId = antennaOwnerIdRef.current;
+      setIsAntennaOwner(true);
+    } else {
+      setIsAntennaOwner(antennaRelationOwnerId === antennaOwnerIdRef.current);
+    }
+
+    return () => {
+      if (antennaRelationOwnerId === antennaOwnerIdRef.current) {
+        antennaRelationOwnerId = null;
+      }
+    };
+  }, []);
+
+  // gazerelation: 统一构造回合消息体（start/update/end 复用）
+  const buildAntennaStatusPayload = useCallback((boxVisible: boolean, promptPosition?: any) => {
+    const left = promptPosition?.left ?? 0.0;
+    const top = promptPosition?.top ?? 0.0;
+    const right = promptPosition?.right ?? left;
+    const bottom = promptPosition?.bottom ?? top;
+    const screenWidth = typeof window !== 'undefined' ? window.screen?.width ?? 0 : 0;
+    const screenHeight = typeof window !== 'undefined' ? window.screen?.height ?? 0 : 0;
+
+    // bbox 预留为集合，当前先上报一个提示框
+    const bbox = [[left, top, right, bottom]];
+
+    return {
+      bbox,
+      scream_data: [screenWidth, screenHeight],
+      system_time: Date.now() * 1000, // 微秒
+      box_visible: boxVisible,
+      user_id: radarStore.userId || 1,
+      task_source: 'web',
+      task_name: 'demo_task',
+    };
+  }, []);
+
+  // gazerelation: 触发提示框高亮/闪烁事件
+  const triggerAntennaPromptAttention = useCallback((durationMs: number = 3000) => {
+    window.dispatchEvent(
+      new CustomEvent('antenna-prompt-attention', {
+        detail: {
+          mode: 'flash_mode',
+          durationMs,
+          timestamp: Date.now(),
+        },
+      })
+    );
+  }, []);
+
+  // gazerelation: 处理服务端消息，命中 should_flash 时触发闪烁
+  const handleAntennaStatusResponse = useCallback((responseBody: any) => {
+    // 当前回合只识别这个测试键
+    const shouldFlash = responseBody?.should_flash === true;
+    if (shouldFlash) {
+      const durationMs = Number(responseBody?.duration_ms) || 3000;
+      triggerAntennaPromptAttention(durationMs);
+    }
+  }, [triggerAntennaPromptAttention]);
+
+  // gazerelation: 关闭当前回合 WS；可选先发送 end_round
+  const closeAntennaRoundWs = useCallback((sendEndPayload: boolean) => {
+    if (!isAntennaOwner) return;
+    const ws = antennaRoundWsRef.current;
+    if (!ws) return;
+
+    if (sendEndPayload && ws.readyState === WebSocket.OPEN) {
+      const endPayload = buildAntennaStatusPayload(false, lastAntennaPromptPositionRef.current);
+      ws.send(JSON.stringify({ type: 'end_round', ...endPayload }));
+    }
+
+    try {
+      ws.close();
+    } catch (err) {
+      console.error('[useRadarData] 关闭天线回合WS失败:', err);
+    }
+    antennaRoundWsRef.current = null;
+  }, [buildAntennaStatusPayload, isAntennaOwner]);
+
+  // gazerelation: 打开当前回合 WS；连接成功后发送 start_round
+  const openAntennaRoundWs = useCallback((roundId: number, promptPosition?: any) => {
+    if (!isAntennaOwner) return;
+    const hasValidPromptPosition = (pos: any): boolean =>
+      !!pos &&
+      typeof pos.left === 'number' &&
+      typeof pos.top === 'number' &&
+      typeof pos.right === 'number' &&
+      typeof pos.bottom === 'number' &&
+      !(pos.left === 0 && pos.top === 0 && pos.right === 0 && pos.bottom === 0);
+
+    const sendStartRoundIfReady = () => {
+      if (!hasValidPromptPosition(lastAntennaPromptPositionRef.current)) return;
+      if (hasReportedAntennaPromptRef.current) return;
+      if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) return;
+      if (!antennaRoundWsRef.current || antennaRoundWsRef.current.readyState !== WebSocket.OPEN) return;
+
+      hasReportedAntennaPromptRef.current = true;
+      const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
+      antennaRoundWsRef.current.send(JSON.stringify({ type: 'start_round', ...startPayload }));
+      console.log('[useRadarData] 天线回合WS发送开始消息:', startPayload);
+    };
+
+    closeAntennaRoundWs(false);
+    if (promptPosition) {
+      lastAntennaPromptPositionRef.current = promptPosition;
+    }
+
+    const ws = new WebSocket('ws://localhost:8081/ws/antenna-adjustment');
+    antennaRoundWsRef.current = ws;
+
+    ws.onopen = () => {
+      if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) {
+        closeAntennaRoundWs(false);
+        return;
+      }
+      sendStartRoundIfReady();
+    };
+
+    ws.onmessage = (event) => {
+      if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) return;
+      try {
+        const responseBody = JSON.parse(event.data);
+        handleAntennaStatusResponse(responseBody);
+      } catch (err) {
+        console.error('[useRadarData] 天线回合WS消息解析失败:', err);
+      }
+    };
+
+    ws.onerror = (event) => {
+      console.error('[useRadarData] 天线回合WS错误:', event);
+    };
+
+    ws.onclose = () => {
+      if (antennaRoundWsRef.current === ws) {
+        antennaRoundWsRef.current = null;
+      }
+    };
+  }, [buildAntennaStatusPayload, closeAntennaRoundWs, handleAntennaStatusResponse, isAntennaOwner]);
+
+  // gazerelation: 回合状态机
+  // gazerelation: false -> true：开启回合，建立WS并发送开始消息
+  // gazerelation: true -> false：结束回合，发送结束消息并断开WS
+  useEffect(() => {
+    if (!isAntennaOwner) return;
+    const prev = prevAntennaAdjustmentRequiredRef.current;
+    const curr = antennaAdjustmentRequired;
+
+    if (!prev && curr) {
+      antennaRoundIdRef.current += 1;
+      antennaRoundActiveRef.current = true;
+      hasReportedAntennaPromptRef.current = false;
+      openAntennaRoundWs(antennaRoundIdRef.current);
+    }
+
+    if (prev && !curr) {
+      antennaRoundActiveRef.current = false;
+      closeAntennaRoundWs(true);
+      hasReportedAntennaPromptRef.current = false;
+    }
+
+    antennaAdjustmentRequiredRef.current = curr;
+    prevAntennaAdjustmentRequiredRef.current = curr;
+  }, [antennaAdjustmentRequired, closeAntennaRoundWs, openAntennaRoundWs, isAntennaOwner]);
+
+  // gazerelation: 接收 CommunicationLog 广播坐标，回合内通过 update_bbox 同步给服务端
+  useEffect(() => {
+    if (!isAntennaOwner) return;
+    const handlePromptPosition = async (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        x: number;
+        y: number;
+        left: number;
+        top: number;
+        right: number;
+        bottom: number;
+        width: number;
+        height: number;
+        timestamp: number;
+      }>;
+
+      if (!antennaAdjustmentRequiredRef.current) return;
+      if (!antennaRoundActiveRef.current) return;
+      if (!customEvent.detail) return;
+
+      lastAntennaPromptPositionRef.current = customEvent.detail;
+      const ws = antennaRoundWsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        if (!hasReportedAntennaPromptRef.current) {
+          hasReportedAntennaPromptRef.current = true;
+          const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
+          ws.send(JSON.stringify({ type: 'start_round', ...startPayload }));
+          console.log('[useRadarData] 收到首个bbox后发送开始消息:', startPayload);
+        } else {
+          const updatePayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
+          ws.send(JSON.stringify({ type: 'update_bbox', ...updatePayload }));
+        }
+      } else {
+        openAntennaRoundWs(antennaRoundIdRef.current, lastAntennaPromptPositionRef.current);
+      }
+    };
+
+    window.addEventListener('antenna-prompt-position', handlePromptPosition as EventListener);
+    return () => {
+      window.removeEventListener('antenna-prompt-position', handlePromptPosition as EventListener);
+    };
+  }, [buildAntennaStatusPayload, openAntennaRoundWs, isAntennaOwner]);
   
   const clearInitSettings = useCallback(() => {
     setInitSettings(null);

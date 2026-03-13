@@ -64,8 +64,6 @@ const App: React.FC = observer(() => {
   // 从 MobX 全局 store 读取天线状态，避免多 hook 实例间的状态隔离问题
   const {antennaAdjustmentRequired, targetAntennaElevation} = radarStore;
 
-
-  
   // 统一管理通信日志
   const [messages, setMessages] = useState<LogMessage[]>([]);
   const messageIdRef = React.useRef(0);

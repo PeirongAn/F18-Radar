@@ -51,11 +51,15 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   lastEmergencyTime
 }) => {
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const antennaPromptRef = useRef<HTMLDivElement>(null);
   const prevRangeRef = useRef<number | undefined>(undefined);
   const prevAngleRef = useRef<number | undefined>(undefined);
   const prevAntennaAdjustmentRef = useRef<boolean>(false);
+  const prevAntennaPromptVisibleRef = useRef<boolean>(false);
+  const attentionTimerRef = useRef<number | null>(null);
   const initSettingsProcessedRef = useRef<boolean>(false);
   const prevConnectedRef = useRef<boolean>(false);
+  const [antennaPromptAttentionActive, setAntennaPromptAttentionActive] = useState<boolean>(false);
   
   useEffect(() => {
     if (logContainerRef.current) {
@@ -104,6 +108,98 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       }
     }
   }, [antennaAdjustmentRequired, isStarted, targetAntennaElevation, onAddMessageProp]);
+
+  // 在天线提示框出现时，测量其相对整张页面(左上角为原点)的像素坐标并广播一次
+  useEffect(() => {
+    if (antennaAdjustmentRequired && !prevAntennaPromptVisibleRef.current) {
+      const rafId = requestAnimationFrame(() => {
+        if (!antennaPromptRef.current) return;
+        const rect = antennaPromptRef.current.getBoundingClientRect();
+        // gazerelation: F11 全屏时，视口原点视为显示器原点；否则使用窗口位置+外框补偿
+        const isFullscreenLike =
+          !!document.fullscreenElement ||
+          window.outerHeight === window.screen.height ||
+          window.innerHeight === window.screen.height;
+
+        let left: number;
+        let top: number;
+        let right: number;
+        let bottom: number;
+
+        
+        left = rect.left;
+        top = rect.top;
+        right = rect.right;
+        bottom = rect.bottom;
+        // console.log("gazerelation:1111")
+        // } else {
+        //   const winScreenX = typeof window.screenX === 'number' ? window.screenX : (window as any).screenLeft || 0;
+        //   const winScreenY = typeof window.screenY === 'number' ? window.screenY : (window as any).screenTop || 0;
+        //   const chromeLeft = Math.max(0, (window.outerWidth - window.innerWidth) / 2);
+        //   const chromeTop = Math.max(0, window.outerHeight - window.innerHeight - chromeLeft);
+        //   const viewportScreenLeft = winScreenX + chromeLeft;
+        //   const viewportScreenTop = winScreenY + chromeTop;
+        //   left = viewportScreenLeft + rect.left;
+        //   top = viewportScreenTop + rect.top;
+        //   right = viewportScreenLeft + rect.right;
+        //   bottom = viewportScreenTop + rect.bottom;
+        //   console.log("gazerelation:2222")
+        // }
+        // const left =  rect.left;
+        // const top =  rect.top;
+        // const right =  rect.right;
+        // const bottom =  rect.bottom;
+        console.log("gazerelation:rect"+"left:"+left+" top:"+top)
+        window.dispatchEvent(
+          new CustomEvent('antenna-prompt-position', {
+            detail: {
+              x: left,
+              y: top,
+              left,
+              top,
+              right,
+              bottom,
+              width: rect.width,
+              height: rect.height,
+              timestamp: Date.now(),
+            },
+          })
+        );
+      });
+
+      prevAntennaPromptVisibleRef.current = true;
+      return () => cancelAnimationFrame(rafId);
+    }
+
+    if (!antennaAdjustmentRequired) {
+      prevAntennaPromptVisibleRef.current = false;
+    }
+  }, [antennaAdjustmentRequired]);
+
+  // 监听外部触发的提醒事件（如 flash_mode），让提示框额外高亮3秒
+  useEffect(() => {
+    const handleAntennaPromptAttention = (event: Event) => {
+      const customEvent = event as CustomEvent<{ mode?: string; durationMs?: number }>;
+      const durationMs = customEvent.detail?.durationMs ?? 3000;
+
+      setAntennaPromptAttentionActive(true);
+      if (attentionTimerRef.current) {
+        window.clearTimeout(attentionTimerRef.current);
+      }
+      attentionTimerRef.current = window.setTimeout(() => {
+        setAntennaPromptAttentionActive(false);
+        attentionTimerRef.current = null;
+      }, durationMs);
+    };
+
+    window.addEventListener('antenna-prompt-attention', handleAntennaPromptAttention as EventListener);
+    return () => {
+      window.removeEventListener('antenna-prompt-attention', handleAntennaPromptAttention as EventListener);
+      if (attentionTimerRef.current) {
+        window.clearTimeout(attentionTimerRef.current);
+      }
+    };
+  }, []);
   
   useEffect(() => {
     if (!isStarted || !onAddMessageProp) return;
@@ -210,8 +306,15 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
             请调整雷达范围{initSettings !== undefined ? ` 至 范围 ${initSettings.range}海里，扫描角度 ${initSettings.scanAngle}°` : ''}!
           </div>
         )} */}
-        {antennaAdjustmentRequired && (
-          <div className="mt-1 text-xs text-yellow-300 font-bold">
+        {(antennaAdjustmentRequired || antennaPromptAttentionActive) && (
+          <div
+            ref={antennaPromptRef}
+            className={`mt-1 text-xs font-bold ${
+              antennaPromptAttentionActive
+                ? 'text-red-300 animate-pulse bg-red-900/40 border border-red-400 rounded px-2 py-1'
+                : 'text-yellow-300'
+            }`}
+          >
             请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
           </div>
         )}
