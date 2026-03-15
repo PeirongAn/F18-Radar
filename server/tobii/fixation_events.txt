@@ -1,0 +1,4 @@
+{"local_time_ms": 1773042105428, "task_id": "b773fe2a-e91a-497d-8710-4e436ea22d18", "event_type": "fixation_start"}
+{"local_time_ms": 1773042106648, "task_id": "b773fe2a-e91a-497d-8710-4e436ea22d18", "event_type": "fixation_end"}
+{"local_time_ms": 1773042107687, "task_id": "b773fe2a-e91a-497d-8710-4e436ea22d18", "event_type": "fixation_start"}
+{"local_time_ms": 1773042109905, "task_id": "b773fe2a-e91a-497d-8710-4e436ea22d18", "event_type": "fixation_end"}

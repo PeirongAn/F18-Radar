@@ -306,10 +306,22 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
             请调整雷达范围{initSettings !== undefined ? ` 至 范围 ${initSettings.range}海里，扫描角度 ${initSettings.scanAngle}°` : ''}!
           </div>
         )} */}
-        {(antennaAdjustmentRequired || antennaPromptAttentionActive) && (
+        {/* {(antennaAdjustmentRequired || antennaPromptAttentionActive) && (
           <div
             ref={antennaPromptRef}
             className={`mt-1 text-xs font-bold ${
+              antennaPromptAttentionActive
+                ? 'text-red-300 animate-pulse bg-red-900/40 border border-red-400 rounded px-2 py-1'
+                : 'text-yellow-300'
+            }`}
+          >
+            请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
+          </div>
+        )} */}
+          {(antennaAdjustmentRequired || antennaPromptAttentionActive || true) && (
+          <div
+            ref={antennaPromptRef}
+            className={`mt-1 text-3xl font-bold ${
               antennaPromptAttentionActive
                 ? 'text-red-300 animate-pulse bg-red-900/40 border border-red-400 rounded px-2 py-1'
                 : 'text-yellow-300'
@@ -451,4 +463,4 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   );
 };
 
-export default CommunicationLog; 
+export default CommunicationLog;
