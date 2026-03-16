@@ -63,7 +63,7 @@ const Radar: React.FC<RadarProps> = (({
     confirmAntennaAdjustmentHandled, // Destructure the new function
     connected,
     error,
-  } = useRadarData();
+  } = useRadarData(undefined, { enableAntennaRound: true });
   
   // 使用MobX Store
   const { radarStore } = useStore();

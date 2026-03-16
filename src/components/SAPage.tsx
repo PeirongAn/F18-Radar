@@ -166,7 +166,20 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     agentStore.toggleAudioEnabled();
   }, []);
 
-  const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, joystickEnabled } = useRadarData();
+  const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
+  const saCanvasRef = useRef<HTMLDivElement | null>(null);
+  const endSaTobiiRoundRef = useRef(endSaTobiiRound);
+  const getHighestThreatPromptPositionRef = useRef<(() => {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null) | null>(null);
+  const attentionIntervalRef = useRef<number | null>(null);
+  const attentionTimeoutRef = useRef<number | null>(null);
+  const [highestThreatAttentionVisible, setHighestThreatAttentionVisible] = useState(false);
+  const stopAutoStartSaTobiiRef = useRef<boolean>(false);
+  const lastHighestThreatIdRef = useRef<string | null>(null);
 
   // 计算当前难度和AI状态
   const currentDifficulty = useMemo(() => {
@@ -410,6 +423,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
+      stopAutoStartSaTobiiRef.current = true;
+      const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      endSaTobiiRound(promptPosition || undefined);
       
       // 启用威胁列表详细信息显示（分数和距离）
       if (onShowDetailedInfoChange) {
@@ -923,7 +939,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const bestThreatInfo = threatsWithScore[0];
 
     if (!bestThreatInfo) return null;
-
     if (bestThreatInfo.isMissile) {
       const missile = bestThreatInfo.threat as MissileData;
       return {
@@ -934,6 +949,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       };
     } else {
       const saThreat = bestThreatInfo.threat as {id: string, type: string, label: string};
+      console.log("gazerelation:2",bestThreatInfo.threat)
+      console.log("gazerelation:",enhancedThreats)
+      // console.log("gazerelation:",threatsWithScore)
       return {
         id: saThreat.id,
         type: saThreat.type,
@@ -946,6 +964,157 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 将对"选中"和"最高优先级"目标的引用移动到这里
   const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
   const selectedThreatId = useMemo(() => userSelection?.threat?.id, [userSelection]);
+
+  const triggerHighestThreatAttention = useCallback((durationMs: number = 3000) => {
+    setHighestThreatAttentionVisible(true);
+    if (attentionIntervalRef.current) {
+      window.clearInterval(attentionIntervalRef.current);
+    }
+    if (attentionTimeoutRef.current) {
+      window.clearTimeout(attentionTimeoutRef.current);
+    }
+
+    attentionIntervalRef.current = window.setInterval(() => {
+      setHighestThreatAttentionVisible(prev => !prev);
+    }, 260);
+
+    attentionTimeoutRef.current = window.setTimeout(() => {
+      if (attentionIntervalRef.current) {
+        window.clearInterval(attentionIntervalRef.current);
+        attentionIntervalRef.current = null;
+      }
+      setHighestThreatAttentionVisible(false);
+      attentionTimeoutRef.current = null;
+    }, durationMs);
+  }, []);
+
+  const getHighestThreatPromptPosition = useCallback((): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null => {
+    if (!highestPriorityThreat) return null;
+    const containerRect = saCanvasRef.current?.getBoundingClientRect();
+    if (!containerRect) return null;
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    console.log('gazerelation:containerRect:physical', {
+      dpr,
+      left: Math.round(containerRect.left * dpr),
+      top: Math.round(containerRect.top * dpr),
+      right: Math.round(containerRect.right * dpr),
+      bottom: Math.round(containerRect.bottom * dpr),
+      width: Math.round(containerRect.width * dpr),
+      height: Math.round(containerRect.height * dpr),
+      x: Math.round(containerRect.x * dpr),
+      y: Math.round(containerRect.y * dpr),
+    });
+    let centerX: number | null = null;
+    let centerY: number | null = null;
+    let boxSize = ICON_SIZE;
+
+    if (highestPriorityThreat.isMissile) {
+      const missile = missiles.find(m => m.id === highestPriorityThreat.id);
+      if (missile) {
+        centerX = missile.x;
+        centerY = missile.y;
+        boxSize = 34;
+      }
+    } else if (useEnhancedProtocol) {
+      const enhancedThreat = enhancedThreats.find(
+        t => !t.is_missile && t.id === highestPriorityThreat.id
+      );
+      if (enhancedThreat?.position) {
+        centerX = enhancedThreat.position.x;
+        centerY = enhancedThreat.position.y;
+      }
+    } else {
+      const threatIndex = saThreats.findIndex((t: any) => t.id === highestPriorityThreat.id);
+      if (threatIndex >= 0) {
+        const pos = threatPositions[threatIndex];
+        if (pos) {
+          centerX = pos.x;
+          centerY = pos.y;
+        }
+      }
+    }
+
+    if (centerX === null || centerY === null) return null;
+
+    const half = boxSize / 2;
+    const left = containerRect.left + centerX - half;
+    const top = containerRect.top + centerY - half;
+    const right = containerRect.left + centerX + half;
+    const bottom = containerRect.top + centerY + half;
+    const physicalLeft = Math.round(left * dpr);
+    const physicalTop = Math.round(top * dpr);
+    const physicalRight = Math.round(right * dpr);
+    const physicalBottom = Math.round(bottom * dpr);
+
+    console.log('gazerelation:thread:physical', {
+      left: physicalLeft,
+      top: physicalTop,
+      right: physicalRight,
+      bottom: physicalBottom,
+      dpr,
+    });
+    return {
+      left: physicalLeft,
+      top: physicalTop,
+      right: physicalRight,
+      bottom: physicalBottom,
+    };
+  }, [highestPriorityThreat, missiles, useEnhancedProtocol, enhancedThreats, saThreats, threatPositions]);
+
+  useEffect(() => {
+    const handleSaAttentionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent<{ durationMs?: number }>;
+      const durationMs = Number(customEvent?.detail?.durationMs) || 3000;
+      triggerHighestThreatAttention(durationMs);
+    };
+
+    window.addEventListener('sa-highest-threat-attention', handleSaAttentionEvent as EventListener);
+    return () => {
+      window.removeEventListener('sa-highest-threat-attention', handleSaAttentionEvent as EventListener);
+    };
+  }, [triggerHighestThreatAttention]);
+
+  useEffect(() => {
+    const currentHighestThreatId = highestPriorityThreat?.id || null;
+    if (currentHighestThreatId !== lastHighestThreatIdRef.current) {
+      // 进入新一轮威胁（或清空）时，允许重新自动开启Tobii回合
+      stopAutoStartSaTobiiRef.current = false;
+      lastHighestThreatIdRef.current = currentHighestThreatId;
+    }
+  }, [highestPriorityThreat?.id]);
+
+  useEffect(() => {
+    const promptPosition = getHighestThreatPromptPosition();
+    if (!promptPosition) return;
+    if (stopAutoStartSaTobiiRef.current) return;
+    startSaTobiiRound(promptPosition);
+  }, [getHighestThreatPromptPosition, startSaTobiiRound]);
+
+  useEffect(() => {
+    endSaTobiiRoundRef.current = endSaTobiiRound;
+  }, [endSaTobiiRound]);
+
+  useEffect(() => {
+    getHighestThreatPromptPositionRef.current = getHighestThreatPromptPosition;
+  }, [getHighestThreatPromptPosition]);
+
+  useEffect(() => {
+    return () => {
+      const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      endSaTobiiRoundRef.current(promptPosition || undefined);
+      if (attentionIntervalRef.current) {
+        window.clearInterval(attentionIntervalRef.current);
+      }
+      if (attentionTimeoutRef.current) {
+        window.clearTimeout(attentionTimeoutRef.current);
+      }
+    };
+  }, []);
 
 
   // 点击icon将其加入威胁列表首位但保持原优先级
@@ -1036,9 +1205,22 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const Icon = missile.type === 'MissileUp' ? MissileUpIcon : MissileDownIcon;
       const isSelected = missile.id === selectedThreatId;
       const isHighestPriority = missile.id === highestPriorityThreat?.id;
+      const shouldAttentionBlink = isHighestPriority && highestThreatAttentionVisible;
 
       return (
         <Group key={missile.id} onClick={() => handleThreatIconClick(missile, 'manual')}>
+          {shouldAttentionBlink && (
+            <Rect
+              x={missile.x - 26}
+              y={missile.y - 31}
+              width={52}
+              height={62}
+              stroke="#ff3333"
+              strokeWidth={3}
+              dash={[4, 4]}
+              cornerRadius={6}
+            />
+          )}
           {/* 用户选择的答案边框（黄色） */}
           {hasSelectionBeenMade && isSelected && (
             <Rect
@@ -1532,7 +1714,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           </div>
           
           {/* 雷达显示 - 仅包含雷达相关元素 */}
-          <div className="sa-page bg-black relative" style={{ width, height }}>
+          <div className="sa-page bg-black relative" style={{ width, height }} ref={saCanvasRef}>
         
             
             <Stage width={width} height={height}>
@@ -1686,6 +1868,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   
                   const isSelected = threat.id === selectedThreatId;
                   const isHighestPriority = threat.id === highestPriorityThreat?.id;
+                  const shouldAttentionBlink = isHighestPriority && highestThreatAttentionVisible;
                   
                   // 获取位置数据
                   const position = threat.position // 如果威胁对象有position字段，直接使用
@@ -1699,6 +1882,18 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   
                   return (
                     <Group key={threat.id} onClick={() => handleThreatIconClick(threat, 'manual')}>
+                      {shouldAttentionBlink && (
+                        <Rect
+                          x={position.x  - ICON_SIZE / 2 - 12}
+                          y={position.y  - ICON_SIZE / 2 - 12}
+                          width={ICON_SIZE + 24}
+                          height={ICON_SIZE + 24}
+                          stroke="#ff3333"
+                          strokeWidth={3}
+                          dash={[4, 4]}
+                          cornerRadius={8}
+                        />
+                      )}
                       {/* 用户选择的答案边框（黄色/绿色） */}
                       {hasSelectionBeenMade && isSelected && (
                         <Rect

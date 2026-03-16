@@ -28,6 +28,7 @@ interface TargetSelectParams {
 }
 
 const App: React.FC = observer(() => {
+  const debugLayoutBorders = true;
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation' | 'joystick'>('radar');
   const [userId, setUserId] = useState<string>('');
@@ -44,6 +45,7 @@ const App: React.FC = observer(() => {
   const { radarStore } = useStore();
   
   const previousScenarioIndexRef = React.useRef<number | undefined>();
+  const mainLayoutRef = useRef<HTMLDivElement | null>(null);
   
   // 使用useRadarData hook获取任务状态
   const { 
@@ -403,8 +405,39 @@ const App: React.FC = observer(() => {
     setShowDetailedInfo(showDetailed);
   }, []);
 
+  // useEffect(() => {
+  //   const logMainLayoutRect = () => {
+  //     const rect = mainLayoutRef.current?.getBoundingClientRect();
+  //     if (!rect) return;
+  //     console.log('gazerelation:app-main-layout-rect', {
+  //       left: rect.left,
+  //       top: rect.top,
+  //       right: rect.right,
+  //       bottom: rect.bottom,
+  //       width: rect.width,
+  //       height: rect.height,
+  //       x: rect.x,
+  //       y: rect.y,
+  //     });
+  //   };
+
+  //   const rafId = window.requestAnimationFrame(logMainLayoutRect);
+  //   window.addEventListener('resize', logMainLayoutRect);
+  //   return () => {
+  //     window.cancelAnimationFrame(rafId);
+  //     window.removeEventListener('resize', logMainLayoutRect);
+  //   };
+  // }, [activeDisplay, isStarted]);
+
   return (
-    <div className="min-h-screen bg-black text-gray-300">
+    <div className={`min-h-screen bg-black text-gray-300 ${debugLayoutBorders ? 'gazerelation-app-debug-borders' : ''}`}>
+      {debugLayoutBorders && (
+        <style>{`
+          .gazerelation-app-debug-borders * {
+            outline: 1px solid rgba(0, 255, 255, 0.45) !important;
+          }
+        `}</style>
+      )}
       {/* 启动 Modal */}
       {!isStarted && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90">
@@ -471,7 +504,7 @@ const App: React.FC = observer(() => {
         </button> */}
       </div>
       
-      <div className="flex flex-col lg:flex-row gap-8 px-4 max-w-8xl mx-auto">
+      <div ref={mainLayoutRef} className="flex flex-col lg:flex-row gap-8 px-4 max-w-8xl mx-auto">
         {/* 左侧显示区域 */}
         <div className={`w-full ${activeDisplay === 'joystick' ? 'lg:w-full' : 'lg:w-3/5'}`}>
           <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">

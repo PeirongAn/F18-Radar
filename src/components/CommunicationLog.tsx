@@ -115,22 +115,15 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       const rafId = requestAnimationFrame(() => {
         if (!antennaPromptRef.current) return;
         const rect = antennaPromptRef.current.getBoundingClientRect();
-        // gazerelation: F11 全屏时，视口原点视为显示器原点；否则使用窗口位置+外框补偿
-        const isFullscreenLike =
-          !!document.fullscreenElement ||
-          window.outerHeight === window.screen.height ||
-          window.innerHeight === window.screen.height;
+        const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
-        let left: number;
-        let top: number;
-        let right: number;
-        let bottom: number;
-
-        
-        left = rect.left;
-        top = rect.top;
-        right = rect.right;
-        bottom = rect.bottom;
+        // gazerelation: 坐标统一按物理像素上报（CSS像素 * DPR）
+        const left = Math.round(rect.left * dpr);
+        const top = Math.round(rect.top * dpr);
+        const right = Math.round(rect.right * dpr);
+        const bottom = Math.round(rect.bottom * dpr);
+        const width = Math.round(rect.width * dpr);
+        const height = Math.round(rect.height * dpr);
         // console.log("gazerelation:1111")
         // } else {
         //   const winScreenX = typeof window.screenX === 'number' ? window.screenX : (window as any).screenLeft || 0;
@@ -149,7 +142,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
         // const top =  rect.top;
         // const right =  rect.right;
         // const bottom =  rect.bottom;
-        console.log("gazerelation:rect"+"left:"+left+" top:"+top)
+        console.log('gazerelation:rect:physical', { left, top, right, bottom, width, height, dpr });
         window.dispatchEvent(
           new CustomEvent('antenna-prompt-position', {
             detail: {
@@ -159,8 +152,10 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
               top,
               right,
               bottom,
-              width: rect.width,
-              height: rect.height,
+              width,
+              height,
+              gazeCoordinateSpace: 'physical',
+              gazeDpr: dpr,
               timestamp: Date.now(),
             },
           })

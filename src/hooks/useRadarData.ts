@@ -401,11 +401,17 @@ interface AllRepetitionInfos {
   SA_THREAT_RESPONSE: RepetitionInfo | 'ALL_COMPLETED' | null;
 }
 
-// gazerelation: 全局唯一所有者，保证天线回合WS逻辑只执行一次，避免多实例重复发送
-let antennaRelationOwnerId: symbol | null = null;
+interface UseRadarDataOptions {
+  // gazerelation: 仅在 Radar 组件实例中启用天线回合 WS；其他调用方保持关闭，避免多实例重复发送
+  enableAntennaRound?: boolean;
+}
 
 // 修改后的useRadarData hook使用全局WebSocket管理器
-const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
+const useRadarData = (
+  wsUrl: string = 'ws://localhost:8080/ws',
+  options: UseRadarDataOptions = {}
+) => {
+  const { enableAntennaRound = false } = options;
   const [connected, setConnected] = useState<boolean>(false);
   const [radarData, setRadarData] = useState<any>({});
   const [error, setError] = useState<string | null>(null);
@@ -415,24 +421,28 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
   const [targetAntennaElevation, setTargetAntennaElevation] = useState<number | null>(null);
   // gazerelation: 当前回合是否已经上报过开始消息，避免重复上报
   const hasReportedAntennaPromptRef = useRef<boolean>(false);
-  // gazerelation: 上一帧 antennaAdjustmentRequired，用于边沿检测
-  const prevAntennaAdjustmentRequiredRef = useRef<boolean>(false);
-  // gazerelation: 供事件监听器读取的最新 antennaAdjustmentRequired（避免闭包值过期）
-  const antennaAdjustmentRequiredRef = useRef<boolean>(false);
   // gazerelation: 最近一次提示框 bbox 坐标（来自 CommunicationLog 广播）
   const lastAntennaPromptPositionRef = useRef<any>(null);
-  // gazerelation: 回合序号，每次 false->true 自增
+  // gazerelation: 回合序号，每次 Radar 激活后收到首个有效 bbox 时自增
   const antennaRoundIdRef = useRef<number>(0);
-  // gazerelation: 当前回合是否激活，决定是否处理服务端消息
+  // gazerelation: 当前回合是否激活；Radar 销毁时结束回合
   const antennaRoundActiveRef = useRef<boolean>(false);
   // gazerelation: 当前回合独立 WebSocket 连接实例
   const antennaRoundWsRef = useRef<WebSocket | null>(null);
   // gazerelation: 服务端返回的任务ID，结束消息时需要携带
   const antennaTaskIdRef = useRef<string | null>(null);
-  // gazerelation: 当前hook实例的唯一ID，用于竞争/持有天线WS发送所有权
-  const antennaOwnerIdRef = useRef<symbol>(Symbol('antenna-owner'));
-  // gazerelation: 是否为当前拥有天线WS发送权限的实例
-  const [isAntennaOwner, setIsAntennaOwner] = useState<boolean>(false);
+  // gazerelation: 当前回合是否已发送结束消息，避免“提前结束+卸载结束”重复发送
+  const hasEndedRoundRef = useRef<boolean>(false);
+  // gazerelation: SA最高威胁提示回合WS连接实例
+  const saTobiiWsRef = useRef<WebSocket | null>(null);
+  // gazerelation: SA回合任务ID（由Tobii服务返回）
+  const saTobiiTaskIdRef = useRef<string | null>(null);
+  // gazerelation: SA回合状态标记
+  const saTobiiRoundActiveRef = useRef<boolean>(false);
+  const saTobiiRoundStartedRef = useRef<boolean>(false);
+  const saTobiiRoundEndedRef = useRef<boolean>(false);
+  // gazerelation: SA回合最近一次bbox（用于结束请求复用）
+  const lastSaTobiiPromptPositionRef = useRef<any>(null);
   const [saThreats, setSaThreats] = useState<any[]>([]); // 重新添加 saThreats 状态
   // 增强协议状态
   const [enhancedThreats, setEnhancedThreats] = useState<any[]>([]);
@@ -467,24 +477,12 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     parameters?: any;
   }>>([]);
 
-  // gazerelation: 抢占并维护“唯一发送实例”身份，防止多个useRadarData实例重复建连/重复发送
-  useEffect(() => {
-    if (antennaRelationOwnerId === null) {
-      antennaRelationOwnerId = antennaOwnerIdRef.current;
-      setIsAntennaOwner(true);
-    } else {
-      setIsAntennaOwner(antennaRelationOwnerId === antennaOwnerIdRef.current);
-    }
-
-    return () => {
-      if (antennaRelationOwnerId === antennaOwnerIdRef.current) {
-        antennaRelationOwnerId = null;
-      }
-    };
-  }, []);
-
-  // gazerelation: 统一构造回合消息体（与 Tobii main.py 的 hand 协议一致）
-  const buildAntennaStatusPayload = useCallback((boxVisible: boolean, promptPosition?: any) => {
+  // gazerelation: 统一构造 Tobii 回合消息体（与 Tobii main.py 的 hand 协议一致）
+  const buildTobiiStatusPayload = useCallback((
+    boxVisible: boolean,
+    promptPosition: any,
+    taskName: string
+  ) => {
     const left = promptPosition?.left ?? 0.0;
     const top = promptPosition?.top ?? 0.0;
     const right = promptPosition?.right ?? left;
@@ -502,9 +500,43 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
       box_visible: boxVisible,
       user_id: radarStore.userId || 1,
       task_source: 'web',
-      task_name: 'demo_task',
+      task_name: taskName,
     };
   }, []);
+
+  // gazerelation: 将提示框坐标统一转换为物理像素坐标（CSS像素 * DPR）
+  const toPhysicalPromptPosition = useCallback((promptPosition: any) => {
+    if (!promptPosition) return promptPosition;
+    if (promptPosition?.gazeCoordinateSpace === 'physical') return promptPosition;
+
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const left = Number(promptPosition.left ?? 0);
+    const top = Number(promptPosition.top ?? 0);
+    const right = Number(promptPosition.right ?? left);
+    const bottom = Number(promptPosition.bottom ?? top);
+    const width = Number(promptPosition.width ?? Math.max(0, right - left));
+    const height = Number(promptPosition.height ?? Math.max(0, bottom - top));
+
+    return {
+      ...promptPosition,
+      x: Math.round(left * dpr),
+      y: Math.round(top * dpr),
+      left: Math.round(left * dpr),
+      top: Math.round(top * dpr),
+      right: Math.round(right * dpr),
+      bottom: Math.round(bottom * dpr),
+      width: Math.round(width * dpr),
+      height: Math.round(height * dpr),
+      gazeCoordinateSpace: 'physical',
+      gazeDpr: dpr,
+    };
+  }, []);
+
+  // gazerelation: 天线任务消息体
+  const buildAntennaStatusPayload = useCallback((boxVisible: boolean, promptPosition?: any) => {
+    const physicalPromptPosition = toPhysicalPromptPosition(promptPosition);
+    return buildTobiiStatusPayload(boxVisible, physicalPromptPosition, 'demo_task');
+  }, [buildTobiiStatusPayload, toPhysicalPromptPosition]);
 
   // gazerelation: 触发提示框高亮/闪烁事件
   const triggerAntennaPromptAttention = useCallback((durationMs: number = 3000) => {
@@ -528,9 +560,30 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     }
   }, [triggerAntennaPromptAttention]);
 
+  // gazerelation: 触发SA最高优先级目标闪烁事件
+  const triggerSaHighestThreatAttention = useCallback((durationMs: number = 3000) => {
+    window.dispatchEvent(
+      new CustomEvent('sa-highest-threat-attention', {
+        detail: {
+          mode: 'flash_mode',
+          durationMs,
+          timestamp: Date.now(),
+        },
+      })
+    );
+  }, []);
+
+  // gazerelation: 处理SA Tobii服务消息，命中 flash_mode 或 should_flash 时触发闪烁
+  const handleSaTobiiResponse = useCallback((responseBody: any) => {
+    const shouldFlash = responseBody?.should_flash === true || responseBody?.action === 'flash_mode';
+    if (shouldFlash) {
+      const durationMs = Number(responseBody?.duration_ms) || 3000;
+      triggerSaHighestThreatAttention(durationMs);
+    }
+  }, [triggerSaHighestThreatAttention]);
+
   // gazerelation: 关闭当前回合 WS；可选先发送 hand(box_visible=false) 结束消息
   const closeAntennaRoundWs = useCallback((sendEndPayload: boolean) => {
-    if (!isAntennaOwner) return;
     const ws = antennaRoundWsRef.current;
     if (!ws) return;
 
@@ -591,11 +644,10 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
       }
       antennaRoundWsRef.current = null;
     }
-  }, [buildAntennaStatusPayload, isAntennaOwner]);
+  }, [buildAntennaStatusPayload]);
 
   // gazerelation: 打开当前回合 WS；连接成功后发送 hand(box_visible=true) 开始消息
   const openAntennaRoundWs = useCallback((roundId: number, promptPosition?: any) => {
-    if (!isAntennaOwner) return;
     const hasValidPromptPosition = (pos: any): boolean =>
       !!pos &&
       typeof pos.left === 'number' &&
@@ -660,37 +712,135 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
         antennaRoundWsRef.current = null;
       }
     };
-  }, [buildAntennaStatusPayload, closeAntennaRoundWs, handleAntennaStatusResponse, isAntennaOwner]);
+  }, [buildAntennaStatusPayload, closeAntennaRoundWs, handleAntennaStatusResponse]);
 
-  // gazerelation: 回合状态机
-  // gazerelation: false -> true：开启回合，建立WS并发送开始消息
-  // gazerelation: true -> false：结束回合，发送结束消息并断开WS
-  useEffect(() => {
-    if (!isAntennaOwner) return;
-    const prev = prevAntennaAdjustmentRequiredRef.current;
-    const curr = antennaAdjustmentRequired;
+  // gazerelation: 开始SA最高优先级目标的Tobii回合
+  const startSaTobiiRound = useCallback((promptPosition: any) => {
+    const hasValidPromptPosition =
+      !!promptPosition &&
+      typeof promptPosition.left === 'number' &&
+      typeof promptPosition.top === 'number' &&
+      typeof promptPosition.right === 'number' &&
+      typeof promptPosition.bottom === 'number' &&
+      !(promptPosition.left === 0 && promptPosition.top === 0 && promptPosition.right === 0 && promptPosition.bottom === 0);
 
-    if (!prev && curr) {
-      antennaRoundIdRef.current += 1;
-      antennaRoundActiveRef.current = true;
-      hasReportedAntennaPromptRef.current = false;
-      antennaTaskIdRef.current = null;
-      openAntennaRoundWs(antennaRoundIdRef.current);
+    if (!hasValidPromptPosition) return;
+    if (saTobiiRoundStartedRef.current && !saTobiiRoundEndedRef.current) return;
+
+    lastSaTobiiPromptPositionRef.current = promptPosition;
+    saTobiiRoundActiveRef.current = true;
+    saTobiiRoundStartedRef.current = false;
+    saTobiiRoundEndedRef.current = false;
+    saTobiiTaskIdRef.current = null;
+
+    if (saTobiiWsRef.current) {
+      try {
+        saTobiiWsRef.current.close();
+      } catch {
+        // no-op
+      }
+      saTobiiWsRef.current = null;
     }
 
-    if (prev && !curr) {
-      antennaRoundActiveRef.current = false;
-      closeAntennaRoundWs(true);
-      hasReportedAntennaPromptRef.current = false;
+    const ws = new WebSocket('ws://localhost:8082');
+    saTobiiWsRef.current = ws;
+    ws.onopen = () => {
+      if (!saTobiiRoundActiveRef.current || saTobiiRoundEndedRef.current) return;
+      const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat');
+      ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+      saTobiiRoundStartedRef.current = true;
+      console.log('[useRadarData] SA Tobii回合发送开始消息:', startPayload);
+    };
+    ws.onmessage = (event: MessageEvent) => {
+      if (!saTobiiRoundActiveRef.current) return;
+      try {
+        const responseBody = JSON.parse(event.data);
+        if (responseBody?.task_id) {
+          saTobiiTaskIdRef.current = String(responseBody.task_id);
+        }
+        handleSaTobiiResponse(responseBody);
+      } catch (err) {
+        console.error('[useRadarData] SA Tobii回合消息解析失败:', err);
+      }
+    };
+    ws.onerror = (event) => {
+      console.error('[useRadarData] SA Tobii回合WS错误:', event);
+    };
+    ws.onclose = () => {
+      if (saTobiiWsRef.current === ws) {
+        saTobiiWsRef.current = null;
+      }
+    };
+  }, [buildTobiiStatusPayload, handleSaTobiiResponse]);
+
+  // gazerelation: 结束SA最高优先级目标的Tobii回合
+  const endSaTobiiRound = useCallback((promptPosition?: any) => {
+    if (saTobiiRoundEndedRef.current) return;
+    saTobiiRoundEndedRef.current = true;
+    saTobiiRoundActiveRef.current = false;
+
+    if (promptPosition) {
+      lastSaTobiiPromptPositionRef.current = promptPosition;
     }
 
-    antennaAdjustmentRequiredRef.current = curr;
-    prevAntennaAdjustmentRequiredRef.current = curr;
-  }, [antennaAdjustmentRequired, closeAntennaRoundWs, openAntennaRoundWs, isAntennaOwner]);
+    const ws = saTobiiWsRef.current;
+    if (!ws) return;
 
-  // gazerelation: 接收 CommunicationLog 广播坐标；回合内只在首次拿到有效 bbox 后发送开始消息
+    const endPayload = buildTobiiStatusPayload(
+      false,
+      lastSaTobiiPromptPositionRef.current,
+      'sa_highest_priority_threat'
+    );
+
+    if (ws.readyState === WebSocket.OPEN) {
+      const payload = saTobiiTaskIdRef.current
+        ? { type: 'hand', ...endPayload, task_id: saTobiiTaskIdRef.current }
+        : { type: 'hand', ...endPayload };
+      ws.send(JSON.stringify(payload));
+      console.log('[useRadarData] SA Tobii回合发送结束消息:', payload);
+
+      const originalOnMessage = ws.onmessage as ((event: MessageEvent) => void) | null;
+      ws.onmessage = (event: MessageEvent) => {
+        try {
+          const responseBody = JSON.parse(event.data);
+          if (responseBody?.ok === true && responseBody?.msg?.includes('窗口消失')) {
+            ws.close();
+            saTobiiWsRef.current = null;
+          }
+        } catch {
+          // no-op
+        }
+        if (originalOnMessage) {
+          originalOnMessage(event);
+        }
+      };
+
+      setTimeout(() => {
+        if (saTobiiWsRef.current === ws) {
+          try {
+            ws.close();
+          } catch {
+            // no-op
+          }
+          saTobiiWsRef.current = null;
+        }
+      }, 3000);
+      return;
+    }
+
+    try {
+      ws.close();
+    } catch {
+      // no-op
+    }
+    saTobiiWsRef.current = null;
+  }, [buildTobiiStatusPayload]);
+
+  // gazerelation: 新状态机
+  // gazerelation: 1) Radar组件激活（hook实例启用）后，收到首个有效 bbox 才开启回合并发送开始消息
+  // gazerelation: 2) Radar组件销毁（hook清理）时发送结束消息并断开连接
   useEffect(() => {
-    if (!isAntennaOwner) return;
+    if (!enableAntennaRound) return;
     const handlePromptPosition = async (event: Event) => {
       const customEvent = event as CustomEvent<{
         x: number;
@@ -704,29 +854,62 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
         timestamp: number;
       }>;
 
-      if (!antennaAdjustmentRequiredRef.current) return;
-      if (!antennaRoundActiveRef.current) return;
       if (!customEvent.detail) return;
+      const detail = customEvent.detail;
+      const hasValidPromptPosition =
+        typeof detail.left === 'number' &&
+        typeof detail.top === 'number' &&
+        typeof detail.right === 'number' &&
+        typeof detail.bottom === 'number' &&
+        !(detail.left === 0 && detail.top === 0 && detail.right === 0 && detail.bottom === 0);
+      if (!hasValidPromptPosition) return;
 
-      lastAntennaPromptPositionRef.current = customEvent.detail;
+      const physicalDetail = toPhysicalPromptPosition(detail);
+      lastAntennaPromptPositionRef.current = physicalDetail;
       const ws = antennaRoundWsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        if (!hasReportedAntennaPromptRef.current) {
-          hasReportedAntennaPromptRef.current = true;
-          const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
-          ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
-          console.log('[useRadarData] 收到首个bbox后发送开始消息:', startPayload);
-        }
-      } else {
+      if (!antennaRoundActiveRef.current) {
+        antennaRoundIdRef.current += 1;
+        antennaRoundActiveRef.current = true;
+        hasReportedAntennaPromptRef.current = false;
+        antennaTaskIdRef.current = null;
+        hasEndedRoundRef.current = false;
         openAntennaRoundWs(antennaRoundIdRef.current, lastAntennaPromptPositionRef.current);
+        return;
+      }
+
+      if (ws && ws.readyState === WebSocket.OPEN && !hasReportedAntennaPromptRef.current) {
+        hasReportedAntennaPromptRef.current = true;
+        const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
+        ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+        console.log('[useRadarData] 收到首个bbox后发送开始消息:', startPayload);
       }
     };
 
     window.addEventListener('antenna-prompt-position', handlePromptPosition as EventListener);
     return () => {
       window.removeEventListener('antenna-prompt-position', handlePromptPosition as EventListener);
+      // gazerelation: Radar 组件销毁时，结束当前回合并断开WS
+      if (antennaRoundActiveRef.current && !hasEndedRoundRef.current) {
+        hasEndedRoundRef.current = true;
+        antennaRoundActiveRef.current = false;
+        closeAntennaRoundWs(true);
+        hasReportedAntennaPromptRef.current = false;
+      }
     };
-  }, [buildAntennaStatusPayload, openAntennaRoundWs, isAntennaOwner]);
+  }, [enableAntennaRound, buildAntennaStatusPayload, closeAntennaRoundWs, openAntennaRoundWs]);
+
+  // gazerelation: 若回合进行中且 antennaAdjustmentRequired 变为 true，则提前结束并发送结束消息
+  useEffect(() => {
+    if (!enableAntennaRound) return;
+    if (!antennaAdjustmentRequired) return;
+    if (!antennaRoundActiveRef.current) return;
+    if (hasEndedRoundRef.current) return;
+
+    hasEndedRoundRef.current = true;
+    antennaRoundActiveRef.current = false;
+    closeAntennaRoundWs(true);
+    hasReportedAntennaPromptRef.current = false;
+  }, [enableAntennaRound, antennaAdjustmentRequired, closeAntennaRoundWs]);
   
   const clearInitSettings = useCallback(() => {
     setInitSettings(null);
@@ -1022,6 +1205,9 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
 
   const lastProcessedMessageIdForHook = useRef<string>('');
   const lastProcessedEmergencyId = useRef<string>('');
+  // gazerelation: 监听 externalTargets 变化所需的前次签名（跳过首次）
+  const prevExternalTargetsSignatureRef = useRef<string>('');
+  const externalTargetsFirstRunRef = useRef<boolean>(true);
 
   useEffect(() => {
     // 确保连接到指定URL
@@ -1086,6 +1272,46 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
       }
     }
   }, [radarData?.emergency]);
+
+  // gazerelation: 监听 radarData.externalTargets 是否变化（按 id + position 签名对比）
+  useEffect(() => {
+    const externalTargets = radarData?.externalTargets ?? [];
+    const signature = externalTargets
+      .map((target: any) => {
+        const x = target?.position?.x ?? 0;
+        const y = target?.position?.y ?? 0;
+        return `${target?.id ?? 'unknown'}:${x},${y}`;
+      })
+      .sort()
+      .join('|');
+
+    if (externalTargetsFirstRunRef.current) {
+      externalTargetsFirstRunRef.current = false;
+      prevExternalTargetsSignatureRef.current = signature;
+      return;
+    }
+
+    if (signature !== prevExternalTargetsSignatureRef.current) {
+      console.log('[gazerelation] radarData.externalTargets changed:', {
+        previousCount: prevExternalTargetsSignatureRef.current
+          ? prevExternalTargetsSignatureRef.current.split('|').filter(Boolean).length
+          : 0,
+        currentCount: externalTargets.length,
+        timestamp: Date.now(),
+      });
+        if (
+      enableAntennaRound &&
+      antennaRoundActiveRef.current &&
+      !hasEndedRoundRef.current
+    ) {
+      hasEndedRoundRef.current = true;
+      antennaRoundActiveRef.current = false;
+      hasReportedAntennaPromptRef.current = false;
+      closeAntennaRoundWs(true);
+    }
+      prevExternalTargetsSignatureRef.current = signature;
+    }
+  }, [radarData?.externalTargets]);
   
   const sendResetSA = useCallback(() => {
     sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice, is_ai_active: agentStore.isAIActive });
@@ -1154,6 +1380,8 @@ const useRadarData = (wsUrl: string = 'ws://localhost:8080/ws') => {
     button7,
     resetJoystickData,
     changeAntennaAdjustmentRequired,
+    startSaTobiiRound,
+    endSaTobiiRound,
   };
 };
 
