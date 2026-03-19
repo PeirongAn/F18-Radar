@@ -168,7 +168,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
   const saCanvasRef = useRef<HTMLDivElement | null>(null);
-  const endSaTobiiRoundRef = useRef(endSaTobiiRound);
+  const endSaTobiiRoundRef = useRef(endSaTobiiRound);// 存储 endSaTobiiRound 函数的引用
   const getHighestThreatPromptPositionRef = useRef<(() => {
     left: number;
     top: number;
@@ -425,6 +425,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     if (label === '查看结果') {
       stopAutoStartSaTobiiRef.current = true;
       const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      console.log('gazerelation:查看结果按钮点击了,发送结束Tobii请求', promptPosition);
+      beginSATobiiServe.current = false;
       endSaTobiiRound(promptPosition || undefined);
       
       // 启用威胁列表详细信息显示（分数和距离）
@@ -746,13 +748,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             console.log('Writing missile warning log...');
             onAddMessage('sa_missile', `警告！导弹来袭！类型：${data.missileType === 'MissileUp' ? '上升导弹' : '下降导弹'}`);
           }
-        } else if (data.event === 'upgrade') {
+        } 
+        else if (data.event === 'upgrade') {
           audioManager.play('threatUpgrade');
           
           // 检查是否是增强协议的升级事件
           if (data.type === 'SAEmergency' && data.updated_threats) {
             // 使用增强协议：增强威胁数据由useRadarData管理
             console.log('【SAPage】收到增强升级事件:', data.updated_threats);
+            console.log('gazerelation:4',data.updated_threats)
             // 注意：增强威胁数据的更新现在由useRadarData处理
           } else if (data.saThreats) {
             // 传统协议：更新saThreats
@@ -761,9 +765,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           
           if (onAddMessage) {
             console.log('Writing threat upgrade log...');
+            console.log('gazerelation:5',data.updated_threats)
             onAddMessage('sa_emergency', '收到临机事件：威胁升级，已有威胁提升为一级');
           }
         }
+        beginSATobiiServe.current = true;
         lastEmergencyRef.current = eventId;
       }
     }
@@ -950,7 +956,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     } else {
       const saThreat = bestThreatInfo.threat as {id: string, type: string, label: string};
       console.log("gazerelation:2",bestThreatInfo.threat)
-      console.log("gazerelation:",enhancedThreats)
       // console.log("gazerelation:",threatsWithScore)
       return {
         id: saThreat.id,
@@ -964,6 +969,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 将对"选中"和"最高优先级"目标的引用移动到这里
   const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
   const selectedThreatId = useMemo(() => userSelection?.threat?.id, [userSelection]);
+  //gazerelation: 判断是否在增强逻辑后发送
+  const beginSATobiiServe = useRef(false);
 
   const triggerHighestThreatAttention = useCallback((durationMs: number = 3000) => {
     setHighestThreatAttentionVisible(true);
@@ -998,17 +1005,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const containerRect = saCanvasRef.current?.getBoundingClientRect();
     if (!containerRect) return null;
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    console.log('gazerelation:containerRect:physical', {
-      dpr,
-      left: Math.round(containerRect.left * dpr),
-      top: Math.round(containerRect.top * dpr),
-      right: Math.round(containerRect.right * dpr),
-      bottom: Math.round(containerRect.bottom * dpr),
-      width: Math.round(containerRect.width * dpr),
-      height: Math.round(containerRect.height * dpr),
-      x: Math.round(containerRect.x * dpr),
-      y: Math.round(containerRect.y * dpr),
-    });
     let centerX: number | null = null;
     let centerY: number | null = null;
     let boxSize = ICON_SIZE;
@@ -1040,12 +1036,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
 
     if (centerX === null || centerY === null) return null;
-
+    const screenLeft = typeof window !== 'undefined' ? window.screenLeft || window.screenX : 0;
+    const screenTop = typeof window !== 'undefined' ? window.screenTop || window.screenY : 0;
+    // 计算浏览器UI元素的尺寸
+    const browserUIHeight = typeof window !== 'undefined' ? (window.outerHeight - window.innerHeight) : 0;
+    const browserUIWidth = typeof window !== 'undefined' ? (window.outerWidth - window.innerWidth) : 0;
     const half = boxSize / 2;
-    const left = containerRect.left + centerX - half;
-    const top = containerRect.top + centerY - half;
-    const right = containerRect.left + centerX + half;
-    const bottom = containerRect.top + centerY + half;
+    // 计算相对于屏幕的绝对坐标，包括浏览器UI元素的尺寸
+    const left = screenLeft + (browserUIWidth / 2) + containerRect.left + centerX - half;
+    const top = screenTop + browserUIHeight + containerRect.top + centerY - half;
+    const right = screenLeft + (browserUIWidth / 2) + containerRect.left + centerX + half;
+    const bottom = screenTop + browserUIHeight + containerRect.top + centerY + half;
     const physicalLeft = Math.round(left * dpr);
     const physicalTop = Math.round(top * dpr);
     const physicalRight = Math.round(right * dpr);
@@ -1090,10 +1091,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   useEffect(() => {
     const promptPosition = getHighestThreatPromptPosition();
+    console.log("gazerelation:highestPriorityThreat变换了");
     if (!promptPosition) return;
     if (stopAutoStartSaTobiiRef.current) return;
-    startSaTobiiRound(promptPosition);
-  }, [getHighestThreatPromptPosition, startSaTobiiRound]);
+    if(beginSATobiiServe.current) {
+        startSaTobiiRound(promptPosition);
+        console.log('gazerelation:startSaTobiiRound', promptPosition);
+        beginSATobiiServe.current = false;
+    }
+  }, [highestPriorityThreat, startSaTobiiRound]);
 
   useEffect(() => {
     endSaTobiiRoundRef.current = endSaTobiiRound;
@@ -1103,9 +1109,26 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     getHighestThreatPromptPositionRef.current = getHighestThreatPromptPosition;
   }, [getHighestThreatPromptPosition]);
 
+
+  // gazerelation: 监听页面卸载事件刷新，尝试结束 SA Tobii 回合
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // 尝试结束 SA Tobii 回合
+      const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      endSaTobiiRoundRef.current(promptPosition || undefined);
+    };
+
+    // 监听页面卸载事件
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
   useEffect(() => {
     return () => {
       const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      console.log('gazerelation:生命周期结束，发送结束Tobii请求', promptPosition);
       endSaTobiiRoundRef.current(promptPosition || undefined);
       if (attentionIntervalRef.current) {
         window.clearInterval(attentionIntervalRef.current);
@@ -2097,4 +2120,4 @@ const Arc: React.FC<ArcProps> = ({ x, y, radius, angle, rotation = 0, stroke, st
   );
 };
 
-export default SAPage; 
+export default SAPage;

@@ -1,7 +1,7 @@
 {
-  "userId": "test_pilot_101",
+  "userId": "test_pilot_102",
   "includeAI": false,
-  "taskType": "radar",
+  "taskType": "rasadar",
   "isPractice": true,
   "useJoystick": true
 }

@@ -646,7 +646,7 @@ const useRadarData = (
     }
   }, [buildAntennaStatusPayload]);
 
-  // gazerelation: 打开当前回合 WS；连接成功后发送 hand(box_visible=true) 开始消息
+  // gazerelation: 打开当前回合 Radar WS；连接成功后发送 hand(box_visible=true) 开始消息
   const openAntennaRoundWs = useCallback((roundId: number, promptPosition?: any) => {
     const hasValidPromptPosition = (pos: any): boolean =>
       !!pos &&
@@ -657,16 +657,10 @@ const useRadarData = (
       !(pos.left === 0 && pos.top === 0 && pos.right === 0 && pos.bottom === 0);
 
     const sendStartRoundIfReady = () => {
-      console.log("[gazerelation]0")
       if (!hasValidPromptPosition(lastAntennaPromptPositionRef.current)) return;
-       console.log("[gazerelation]1")
       if (hasReportedAntennaPromptRef.current) return;
-      console.log("[gazerelation]2")
       if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) return;
-       console.log("[gazerelation]3")
       if (!antennaRoundWsRef.current || antennaRoundWsRef.current.readyState !== WebSocket.OPEN) return;
-       console.log("[gazerelation]4")
-
       hasReportedAntennaPromptRef.current = true;
       const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
       antennaRoundWsRef.current.send(JSON.stringify({ type: 'hand', ...startPayload }));
@@ -749,7 +743,7 @@ const useRadarData = (
       const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat');
       ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
       saTobiiRoundStartedRef.current = true;
-      console.log('[useRadarData] SA Tobii回合发送开始消息:', startPayload);
+      console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
     };
     ws.onmessage = (event: MessageEvent) => {
       if (!saTobiiRoundActiveRef.current) return;
@@ -760,11 +754,11 @@ const useRadarData = (
         }
         handleSaTobiiResponse(responseBody);
       } catch (err) {
-        console.error('[useRadarData] SA Tobii回合消息解析失败:', err);
+        console.error('[gazerelation] SA Tobii回合消息解析失败:', err);
       }
     };
     ws.onerror = (event) => {
-      console.error('[useRadarData] SA Tobii回合WS错误:', event);
+      console.error('[gazerelation] SA Tobii回合WS错误:', event);
     };
     ws.onclose = () => {
       if (saTobiiWsRef.current === ws) {
@@ -797,7 +791,7 @@ const useRadarData = (
         ? { type: 'hand', ...endPayload, task_id: saTobiiTaskIdRef.current }
         : { type: 'hand', ...endPayload };
       ws.send(JSON.stringify(payload));
-      console.log('[useRadarData] SA Tobii回合发送结束消息:', payload);
+      console.log('[gazerelation] SA Tobii回合发送结束消息:', payload);
 
       const originalOnMessage = ws.onmessage as ((event: MessageEvent) => void) | null;
       ws.onmessage = (event: MessageEvent) => {
@@ -836,11 +830,31 @@ const useRadarData = (
     saTobiiWsRef.current = null;
   }, [buildTobiiStatusPayload]);
 
+  // gazerelation: 监听页面卸载事件刷新，尝试结束 天线 Tobii 回合
+  useEffect(() => {
+      const handleBeforeUnload = () => {
+        // 尝试结束 天线 Tobii 回合
+        if (antennaRoundActiveRef.current) {
+          hasEndedRoundRef.current = true;
+          antennaRoundActiveRef.current = false;
+          closeAntennaRoundWs(true);
+          hasReportedAntennaPromptRef.current = false;
+        }
+      };
+
+      // 监听页面卸载事件
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+      };
+  }, [closeAntennaRoundWs, endSaTobiiRound]);
+
   // gazerelation: 新状态机
   // gazerelation: 1) Radar组件激活（hook实例启用）后，收到首个有效 bbox 才开启回合并发送开始消息
   // gazerelation: 2) Radar组件销毁（hook清理）时发送结束消息并断开连接
   useEffect(() => {
-    if (!enableAntennaRound) return;
+    if (!enableAntennaRound) return;// 仅在启用天线回合时处理
     const handlePromptPosition = async (event: Event) => {
       const customEvent = event as CustomEvent<{
         x: number;
@@ -881,7 +895,7 @@ const useRadarData = (
         hasReportedAntennaPromptRef.current = true;
         const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
         ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
-        console.log('[useRadarData] 收到首个bbox后发送开始消息:', startPayload);
+        console.log('[gazerelation] 收到首个bbox后发送开始消息:', startPayload);
       }
     };
 

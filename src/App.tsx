@@ -28,7 +28,7 @@ interface TargetSelectParams {
 }
 
 const App: React.FC = observer(() => {
-  const debugLayoutBorders = true;
+  const debugLayoutBorders = false;
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation' | 'joystick'>('radar');
   const [userId, setUserId] = useState<string>('');

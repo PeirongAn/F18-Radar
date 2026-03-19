@@ -49,7 +49,7 @@ clients_lock = threading.Lock()
 ws_event_loop = None
 
 # 连续未看框阈值与状态
-OUT_OF_BOX_FALSE_THRESHOLD = 1000
+OUT_OF_BOX_FALSE_THRESHOLD = 2000
 consecutive_out_of_box_false = 0
 out_of_box_feedback_sent = False
 
@@ -59,6 +59,14 @@ def reset_out_of_box_state():
     global consecutive_out_of_box_false, out_of_box_feedback_sent
     consecutive_out_of_box_false = 0
     out_of_box_feedback_sent = False
+
+
+def get_active_task_id():
+    """获取当前活动任务ID（若存在）"""
+    global current_task
+    if current_task and isinstance(current_task, dict):
+        return current_task.get("task_id")
+    return None
 
 
 async def broadcast_ws_message(message_obj):
@@ -138,7 +146,7 @@ class HTTPServer:
         @self.app.route("/tobii/hand", methods=["POST"])
         def tobii_hand():
             global flag, task_active, current_task
-            init_database()
+            # init_database()
             data = request.get_json()
             if data is None:
                 return jsonify({
@@ -146,37 +154,28 @@ class HTTPServer:
                     "msg": "请求体必须是 JSON"
                 }), 400
 
-            required_fields = [
-                "bbox",
-                "scream_data",
-                "system_time",
-                "box_visible",
-                "user_id",
-                "task_source",
-                "task_name"
-            ]
-            for field in required_fields:
-                if field not in data:
-                    return jsonify({
-                        "ok": False,
-                        "msg": f"缺少字段: {field}"
-                    }), 400
+            if "box_visible" not in data:
+                return jsonify({
+                    "ok": False,
+                    "msg": "缺少字段: box_visible"
+                }), 400
 
-            bbox = data["bbox"]
-            scream_data = data["scream_data"]
-            system_time = data["system_time"]
-            box_visible = data["box_visible"]
-            user_id = data["user_id"]
-            task_source = data["task_source"]
-            task_name = data["task_name"]
-
-            screen_width, screen_height = scream_data
-            bbox = normalize_bboxes(bbox,screen_width,screen_height)
+            box_visible = bool(data.get("box_visible"))
+            system_time = data.get("system_time", int(time.time() * 1000 * 1000))
+            user_id = data.get("user_id")
+            task_source = data.get("task_source")
+            task_name = data.get("task_name")
 
             print("收到前端请求:", data)
 
             # 1. 窗口出现：开始任务
-            if box_visible is True:
+            if box_visible:
+                bbox = data.get("bbox") or []
+                scream_data = data.get("scream_data") or [1, 1]
+                if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
+                    scream_data = [1, 1]
+                screen_width, screen_height = scream_data[0] or 1, scream_data[1] or 1
+                bbox = normalize_bboxes(bbox, screen_width, screen_height)
                 task_id = str(uuid.uuid4())
 
                 with state_lock:
@@ -184,9 +183,9 @@ class HTTPServer:
                         "task_id": task_id,
                         "bbox": bbox,
                         "start_system_time": system_time,
-                        "user_id": user_id,
-                        "task_source": task_source,
-                        "task_name": task_name
+                        "user_id": user_id if user_id is not None else "",
+                        "task_source": task_source if task_source is not None else "",
+                        "task_name": task_name if task_name is not None else ""
                     }
                     task_active = True
                     flag = False
@@ -201,7 +200,7 @@ class HTTPServer:
 
             # 2. 窗口消失：结束任务
             else:
-                task_id = data.get("task_id")
+                task_id = data.get("task_id") or get_active_task_id()
                 if not task_id:
                     return jsonify({
                         "ok": False,
@@ -217,11 +216,14 @@ class HTTPServer:
                     task_active = False
                     reset_out_of_box_state()
                     task_info = current_task
-                    begin_time = current_task.get("start_system_time")
+                    begin_time = current_task.get("start_system_time") if current_task else system_time
                     end_time = system_time
+                    effective_user_id = user_id if user_id is not None else (current_task.get("user_id") if current_task else "")
+                    effective_task_source = task_source if task_source is not None else (current_task.get("task_source") if current_task else "")
+                    effective_task_name = task_name if task_name is not None else (current_task.get("task_name") if current_task else "")
                     current_task = None
 
-                log_task_record(task_id, user_id, task_source, task_name,begin_time,end_time)
+                log_task_record(task_id, effective_user_id, effective_task_source, effective_task_name, begin_time, end_time)
 
                 return jsonify({
                     "ok": True,
@@ -564,7 +566,7 @@ def gaze_data_callback(gaze_data):
         # 再次确认任务还存在
         if not task_active or current_task is None:
             return
-        print(consecutive_out_of_box_false)
+        # print(consecutive_out_of_box_false)
         # 连续未看框统计：达到阈值时发送提醒，然后重置状态重新计算
         if current_in_box is False:
             consecutive_out_of_box_false += 1
@@ -666,7 +668,7 @@ class WebSocketServer:
         
         try:
             # 初始化数据库
-            init_database()
+            # init_database()
             
             # 获取消息类型
             message_type = data.get("type")
@@ -680,39 +682,29 @@ class WebSocketServer:
                 }))
             
             elif message_type == "hand":
-                print("目标出现data:", data)
-                # 处理任务相关消息
-                required_fields = [
-                    "bbox",
-                    "scream_data",
-                    "system_time",
-                    "box_visible",
-                    "user_id",
-                    "task_source",
-                    "task_name"
-                ]
                 
-                for field in required_fields:
-                    if field not in data:
-                        await websocket.send(json.dumps({
-                            "ok": False,
-                            "msg": f"缺少字段: {field}"
-                        }))
-                        return
-                
-                bbox = data["bbox"]
-                scream_data = data["scream_data"]
-                system_time = data["system_time"]
-                box_visible = data["box_visible"]
-                user_id = data["user_id"]
-                task_source = data["task_source"]
-                task_name = data["task_name"]
-                
-                screen_width, screen_height = scream_data
-                bbox = normalize_bboxes(bbox, screen_width, screen_height)
+                if "box_visible" not in data:
+                    await websocket.send(json.dumps({
+                        "ok": False,
+                        "msg": "缺少字段: box_visible"
+                    }))
+                    return
+
+                box_visible = bool(data.get("box_visible"))
+                system_time = data.get("system_time", int(time.time() * 1000 * 1000))
+                user_id = data.get("user_id")
+                task_source = data.get("task_source")
+                task_name = data.get("task_name")
                 
                 # 1. 窗口出现：开始任务
-                if box_visible is True:
+                if box_visible:
+                    print("目标出现data:", data)
+                    bbox = data.get("bbox") or []
+                    scream_data = data.get("scream_data") or [1, 1]
+                    if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
+                        scream_data = [1, 1]
+                    screen_width, screen_height = scream_data[0] or 1, scream_data[1] or 1
+                    bbox = normalize_bboxes(bbox, screen_width, screen_height)
                     task_id = str(uuid.uuid4())
                     
                     with state_lock:
@@ -720,9 +712,9 @@ class WebSocketServer:
                             "task_id": task_id,
                             "bbox": bbox,
                             "start_system_time": system_time,
-                            "user_id": user_id,
-                            "task_source": task_source,
-                            "task_name": task_name
+                            "user_id": user_id if user_id is not None else "",
+                            "task_source": task_source if task_source is not None else "",
+                            "task_name": task_name if task_name is not None else ""
                         }
                         task_active = True
                         flag = False
@@ -738,7 +730,7 @@ class WebSocketServer:
                 # 2. 窗口消失：结束任务
                 else:
                     print("窗口消失 data:", data)
-                    task_id = data.get("task_id")
+                    task_id = data.get("task_id") or get_active_task_id()
                     if not task_id:
                         await websocket.send(json.dumps({
                             "ok": False,
@@ -755,11 +747,14 @@ class WebSocketServer:
                         task_active = False
                         reset_out_of_box_state()
                         task_info = current_task
-                        begin_time = current_task.get("start_system_time")
+                        begin_time = current_task.get("start_system_time") if current_task else system_time
                         end_time = system_time
+                        effective_user_id = user_id if user_id is not None else (current_task.get("user_id") if current_task else "")
+                        effective_task_source = task_source if task_source is not None else (current_task.get("task_source") if current_task else "")
+                        effective_task_name = task_name if task_name is not None else (current_task.get("task_name") if current_task else "")
                         current_task = None
                     
-                    log_task_record(task_id, user_id, task_source, task_name, begin_time, end_time)
+                    log_task_record(task_id, effective_user_id, effective_task_source, effective_task_name, begin_time, end_time)
                     
                     await websocket.send(json.dumps({
                         "ok": True,
@@ -857,7 +852,7 @@ class WebSocketServer:
         """启动WebSocket服务器"""
         print(f"WebSocket服务器启动在 {self.host}:{self.port}")
         # 初始化数据库
-        init_database()
+        # init_database()
         
         # 使用asyncio.run运行服务器
         asyncio.run(self._run_server())
@@ -881,13 +876,13 @@ if __name__ == "__main__":
     init_database()
     
     # # 启动HTTP服务（在后台线程）
-    # http_server = HTTPServer("0.0.0.0", 8081)
-    # def run_http_server():
-    #     http_server.start()
+    http_server = HTTPServer("0.0.0.0", 8081)
+    def run_http_server():
+        http_server.start()
     
-    # http_thread = threading.Thread(target=run_http_server)
-    # http_thread.daemon = True
-    # http_thread.start()
+    http_thread = threading.Thread(target=run_http_server)
+    http_thread.daemon = True
+    http_thread.start()
     
     # 启动WebSocket服务
     ws_server = WebSocketServer("0.0.0.0", 8082)
