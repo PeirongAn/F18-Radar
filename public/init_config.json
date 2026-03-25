@@ -1,7 +1,7 @@
 {
   "userId": "test_pilot_102",
-  "includeAI": false,
-  "taskType": "rasadar",
+  "includeAI": true,
+  "taskType": "sa",
   "isPractice": true,
   "useJoystick": true
 }

@@ -740,10 +740,18 @@ const useRadarData = (
     saTobiiWsRef.current = ws;
     ws.onopen = () => {
       if (!saTobiiRoundActiveRef.current || saTobiiRoundEndedRef.current) return;
-      const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat');
-      ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+      console.log(`[gazerelation] isAIActive111111: ${agentStore.isAIActive}`);
+      if (agentStore.isAIActive) {
+         const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat_withAI');
+         ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+         console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
+      }
+      else {
+        const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat_noAI');
+        ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+        console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
+      }
       saTobiiRoundStartedRef.current = true;
-      console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
     };
     ws.onmessage = (event: MessageEvent) => {
       if (!saTobiiRoundActiveRef.current) return;
@@ -780,11 +788,17 @@ const useRadarData = (
     const ws = saTobiiWsRef.current;
     if (!ws) return;
 
+    if (agentStore.isAIActive){
+      
+    }
     const endPayload = buildTobiiStatusPayload(
       false,
       lastSaTobiiPromptPositionRef.current,
-      'sa_highest_priority_threat'
+      agentStore.isAIActive
+    ? 'sa_highest_priority_threat_withAI'
+    : 'sa_highest_priority_threat_noAI'
     );
+    
 
     if (ws.readyState === WebSocket.OPEN) {
       const payload = saTobiiTaskIdRef.current

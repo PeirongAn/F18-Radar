@@ -837,7 +837,7 @@ class WebSocketServer:
         global ws_event_loop
         ws_event_loop = asyncio.get_running_loop()
         # 启动广播任务
-        asyncio.create_task(self.broadcast_gaze_data())
+        # asyncio.create_task(self.broadcast_gaze_data())
         
         # 启动WebSocket服务器
         async with websockets.serve(

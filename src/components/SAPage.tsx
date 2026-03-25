@@ -770,6 +770,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           }
         }
         beginSATobiiServe.current = true;
+        console.log(`[gazerelation] isAIActive: ${agentStore.isAIActive}`);
         lastEmergencyRef.current = eventId;
       }
     }
@@ -1355,9 +1356,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const bestThreatInfo = threatsWithScore[choiceIndex];
 
     if (!bestThreatInfo) return null;
-
+    
     console.log(`[AI Agent] Level: ${level}, Accuracy: ${accuracy}, Choice Index: ${choiceIndex}, Threat: ${bestThreatInfo.threat.label || bestThreatInfo.threat.type}`);
-
+    console.log(`[gazerelation] AI选择最有目标中`);
     // 返回被选中威胁的原始对象，因为 handleThreatIconClick 需要它
     return bestThreatInfo.threat;
   }, [threatsWithScore, agentStore.currentAILevel, agentStore.currentAILevelConfig]);
