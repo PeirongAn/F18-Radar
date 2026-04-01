@@ -272,7 +272,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         console.log(`[天线高度] 副轴 ${subY > 0 ? '+1' : '-1'} → 天线高度 ${radarStore.currentAntennaElevation} → ${newElevation}`);
         radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
       }
-      console.log('get values 000', newElevation)
       changeAntennaAdjustmentRequired(newElevation !== targetAntennaElevation && newElevation !== null)
     }
     

@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  radar-server:
+    image: radar-server:latest
+    container_name: radar-server
+    ports:
+      - "8080:8080"    # HTTP服务器端口
+      - "8766:8765"    # 外部设备WebSocket端口
+    volumes:
+      # 挂载数据目录以持久化数据库
+      - ./data:/app/data
+      # 挂载配置文件
+      - ../public:/app/public:ro
+      # 挂载前端文件 - 必需
+      - ../dist:/app/dist:ro
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/index.html', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - radar-network
+
+networks:
+  radar-network:
+    driver: bridge
+

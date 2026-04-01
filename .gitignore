@@ -26,3 +26,7 @@ radar_env/
 *.pyc
 .claude/
 server/venv/
+
+# Large binaries — do not commit (GitHub 100 MB limit)
+server/*.tar
+docker-files.zip
