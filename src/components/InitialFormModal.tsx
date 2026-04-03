@@ -107,7 +107,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
                   onChange={() => setTaskType('radar')}
                   className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
                 />
-                <span className="ml-2 text-green-400 font-mono">雷达任务</span>
+                <span className="ml-2 text-green-400 font-mono">传感器任务</span>
               </label>
               <label className="flex items-center cursor-pointer">
                 <input
@@ -118,7 +118,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
                   onChange={() => setTaskType('sa')}
                   className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
                 />
-                <span className="ml-2 text-green-400 font-mono">威胁排序任务</span>
+                <span className="ml-2 text-green-400 font-mono">威胁排序</span>
               </label>
             </div>
           </div>

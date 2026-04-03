@@ -16,7 +16,6 @@ import { observer } from 'mobx-react-lite';
 import radarStore from '../stores/RadarStore';
 import audioManager from '../managers/AudioManager';
 import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
-import ScenarioCompletionModal from './ScenarioCompletionModal';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -106,17 +105,44 @@ interface ButtonProps {
 }
 
   const Button: React.FC<ButtonProps> = ({ label, onClick, disabled }) => {
-    // 为"查看结果"按钮使用更宽的样式
     const isResultButton = label === '查看结果';
     return (
       <button
         disabled={disabled}
-        className={`${isResultButton ? 'w-20 h-10' : 'w-12 h-10'} ${
-          disabled 
-            ? 'bg-gray-700 text-gray-500 border-2 border-gray-600 cursor-not-allowed' 
-            : 'bg-gray-900 text-green-400 border-2 border-white hover:bg-gray-800'
-        } rounded font-mono focus:outline-none text-xs transition-colors duration-200`}
         onClick={disabled ? undefined : onClick}
+        style={{
+          width: isResultButton ? '80px' : '48px',
+          height: '40px',
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: '13px',
+          letterSpacing: '0.05em',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          outline: 'none',
+          transition: 'background 0.15s, box-shadow 0.15s',
+          borderRadius: '3px',
+          ...(disabled ? {
+            background: 'rgba(0,10,4,0.6)',
+            color: '#3a7a44',
+            border: '1px solid #0a2010',
+          } : {
+            background: 'rgba(0,20,8,0.7)',
+            color: '#00aa44',
+            border: '1px solid #0d4020',
+            boxShadow: 'inset 0 0 6px rgba(0,180,70,0.05)',
+          }),
+        }}
+        onMouseEnter={e => {
+          if (!disabled) {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,40,15,0.8)';
+            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 8px rgba(0,180,70,0.2), inset 0 0 6px rgba(0,180,70,0.08)';
+          }
+        }}
+        onMouseLeave={e => {
+          if (!disabled) {
+            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,20,8,0.7)';
+            (e.currentTarget as HTMLButtonElement).style.boxShadow = 'inset 0 0 6px rgba(0,180,70,0.05)';
+          }
+        }}
       >
         {label}
       </button>
@@ -144,7 +170,6 @@ const iconColors = [
 const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
-  const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
   const [userId, setUserId] = useState(originalUserId);
 
   useEffect(() => {
@@ -445,11 +470,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
       console.log('DEBUG saRepetitionInfo', saRepetitionInfo)
       if (saRepetitionInfo && typeof saRepetitionInfo !== 'string') {
-        if (isLastRepetition(saRepetitionInfo) && agentStore.isAIActive) {
-          setShowScenarioCompletionModal(true);
-        } else {
-          setShowTaskComplete(true);
-        }
+        setShowTaskComplete(true);
       }
 
       // // 生成威胁排序日志（简化版本，详细信息在威胁列表中查看）
@@ -1371,9 +1392,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     getBestThreat: getBestThreat
   });
 
-  // 摇杆 button1：选择光标附近最近的目标（等效点击目标）
+  // 摇杆 button1：选择光标附近最近的目标（弹窗期间屏蔽）
   React.useEffect(() => {
-    if (button1 && !prevButton1Ref.current && joystickEnabled && joystickCursorPos) {
+    if (button1 && !prevButton1Ref.current && joystickEnabled && joystickCursorPos && !showTaskComplete) {
       console.log('[SAPage] Button1按下，查找光标附近目标');
 
       // 构建带位置的威胁列表（与渲染逻辑一致）
@@ -1426,16 +1447,25 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     }
     prevButton1Ref.current = button1;
-  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick]);
+  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA]);
 
-  // 摇杆 button2：查看结果（等效点击"查看结果"按钮）
+  // 摇杆 button2：弹窗期间触发确认，否则触发"查看结果"
   React.useEffect(() => {
     if (button2 && !prevButton2Ref.current && joystickEnabled) {
-      console.log('[SAPage] Button2按下，触发查看结果');
-      handleButtonClick('查看结果');
+      if (showTaskComplete) {
+        console.log('[SAPage] Button2按下，确认任务评估弹窗');
+        if (isCorrect === true || isCorrect === false) {
+          setShowTaskComplete(false);
+        } else {
+          handleResetSA();
+        }
+      } else {
+        console.log('[SAPage] Button2按下，触发查看结果');
+        handleButtonClick('查看结果');
+      }
     }
     prevButton2Ref.current = button2;
-  }, [button2, joystickEnabled]);
+  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA]);
 
   // const [isStarted, setIsStarted] = useState(false);
   // const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
@@ -1706,13 +1736,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       useEnhancedProtocol, enhancedThreats, threatList]); // 保持threatList以确保显示顺序更新
 
   return (
-    <div className="w-full h-full p-4 bg-black text-green-400 font-mono flex flex-col items-center relative">
+    <div className="font-mono flex flex-col items-center relative" style={{ padding: '8px 4px 0' }}>
      
 
       <div className="flex flex-col items-center">
         {/* 顶部按钮 - 使用justify-between均匀分布 */}
         <div 
-          className="flex justify-between mb-4" 
+          className="flex justify-between mb-2" 
           style={{ width: topContainerWidth, padding: '0 20px' }}
         >
           {topButtons.map(label => (
@@ -1832,8 +1862,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                 {/* 底部横线 */}
                 <Line
                   points={[0, bottomLineY, width, bottomLineY]}
-                  stroke="#ffffff"
-                  strokeWidth={2}
+                  stroke="#00aa44"
+                  strokeWidth={1}
                 />
                 
                 {/* 添加边框线，使边界可见 */}
@@ -2019,67 +2049,66 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             left: '50%',
             transform: 'translate(-50%, -50%)',
             zIndex: 100,
-            pointerEvents: 'auto'
+            pointerEvents: 'auto',
         }}>
           <div style={{
-              backgroundColor: 'black',
-              padding: '24px',
-              border: '2px solid #00ff00',
-              borderRadius: '8px',
+              background: 'rgba(1,12,4,0.97)',
+              padding: '28px 36px',
+              border: '1px solid #0d4020',
+              borderLeft: `3px solid ${isCorrect === true ? '#00cc55' : isCorrect === false ? '#cc3333' : '#556655'}`,
+              borderRadius: '4px',
               textAlign: 'center',
-              boxShadow: '0 0 15px rgba(0, 255, 0, 0.5)',
-              color: '#00ff00',
-              fontFamily: '"Courier New", Courier, monospace',
+              boxShadow: '0 0 30px rgba(0,0,0,0.8), 0 0 20px rgba(0,180,70,0.08)',
+              fontFamily: "'Share Tech Mono', monospace",
+              minWidth: '280px',
           }}>
+            <div style={{
+              fontSize: '12px',
+              letterSpacing: '0.25em',
+              color: '#4aaa60',
+              textTransform: 'uppercase',
+              marginBottom: '14px',
+            }}>
+              ── 任务评估 ──
+            </div>
             <p style={{
               margin: '0 0 10px 0',
-              fontSize: '1.2em',
-              fontWeight: 'bold',
-              color: isCorrect === true ? '#00cc00' : isCorrect === false ? '#ff4444' : '#ffffff'
+              fontSize: '18px',
+              letterSpacing: '0.12em',
+              color: isCorrect === true ? '#00cc55' : isCorrect === false ? '#cc4444' : '#667766',
             }}>
-              {isCorrect === true ? '结果: 正确' : isCorrect === false ? '结果: 错误' : '结果: 未选择'}
+              {isCorrect === true ? '✓ 判断正确' : isCorrect === false ? '✗ 判断错误' : '— 未作选择'}
             </p>
-            <h3 style={{ margin: 0, fontSize: '1.2em' }}>{isCorrect === true || isCorrect === false ? '当前任务已结束， 可以关闭当前窗口' : '重新完成当前任务'}</h3>
-            <div style={{ marginTop: '20px' }}>
-              {isCorrect === true || isCorrect === false ? (
-                <button 
-                  onClick={() => setShowTaskComplete(false)}
-                  style={{
-                    backgroundColor: '#003300',
-                    border: '1px solid #00ff00',
-                    color: '#00ff00',
-                    padding: '8px 16px',
-                    margin: '0 10px',
-                    cursor: 'pointer',
-                    borderRadius: '4px'
-                  }}
-                >
-                  确定
-                </button>
-              ) : (
-                <button 
-                  onClick={handleResetSA}
-                  style={{
-                    backgroundColor: '#003300',
-                    border: '1px solid #00ff00',
-                    color: '#00ff00',
-                    padding: '8px 16px',
-                    margin: '0 10px',
-                    cursor: 'pointer',
-                    borderRadius: '4px'
-                  }}
-                >
-                  确定
-                </button>
-              )}
-            </div>
+            <p style={{
+              margin: '0 0 20px 0',
+              fontSize: '13px',
+              color: '#55aa66',
+              letterSpacing: '0.06em',
+            }}>
+              {isCorrect === true || isCorrect === false ? '当前任务已结束，可关闭窗口' : '请重新完成当前任务'}
+            </p>
+            <button
+              onClick={isCorrect === true || isCorrect === false ? () => setShowTaskComplete(false) : handleResetSA}
+              style={{
+                fontFamily: "'Share Tech Mono', monospace",
+                fontSize: '13px',
+                letterSpacing: '0.15em',
+                background: 'rgba(0,30,12,0.6)',
+                border: '1px solid #0d4020',
+                color: '#00aa44',
+                padding: '8px 28px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,50,20,0.8)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,30,12,0.6)'; }}
+            >
+              确认
+            </button>
           </div>
         </div>
       )}
-        <ScenarioCompletionModal 
-        isOpen={showScenarioCompletionModal}
-        onClose={() => {setShowScenarioCompletionModal(false); setShowTaskComplete(true);}}
-      />
     </div>
   );
 });

@@ -3,22 +3,13 @@ import Radar from './components/Radar';
 import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
-import TaskInfoDisplay from './components/TaskInfoDisplay';
+import ThreatList from './components/ThreatList';
 import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
-import radarStore from './stores/RadarStore';
-import { Toaster, toast } from 'react-hot-toast';
-import CompletionModal from './components/CompletionModal';
-// import ScenarioCompletionModal from './components/ScenarioCompletionModal';
-import ThreatList from './components/ThreatList';
-// import ConnectionStatus from './components/ConnectionStatus';
-// import audioManager from './managers/AudioManager';
-import JoystickInitializationPage from './pages/JoystickInitializationPage';
-
-// 日志类型声明，需与CommunicationLog保持一致
-
+import { Toaster } from 'react-hot-toast';
+import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal';
 interface TargetSelectParams {
   targetId: string | undefined;
   lockX?: number;
@@ -27,210 +18,218 @@ interface TargetSelectParams {
   event_owner?: 'AI' | 'manual';
 }
 
+function translateDifficulty(d: string): string {
+  switch (d) {
+    case 'low':    return '低';
+    case 'medium': return '中等';
+    case 'high':   return '困难';
+    default:       return d;
+  }
+}
+
+/* ── Corner decoration ────────────────────────────── */
+const MilCorners: React.FC<{ color?: string }> = ({ color = '#00aa44' }) => (
+  <>
+    {([
+      'top-0 left-0 border-t-2 border-l-2',
+      'top-0 right-0 border-t-2 border-r-2',
+      'bottom-0 left-0 border-b-2 border-l-2',
+      'bottom-0 right-0 border-b-2 border-r-2',
+    ] as const).map((cls, i) => (
+      <span key={i} className={`absolute ${cls} w-3 h-3`} style={{ borderColor: color }} />
+    ))}
+  </>
+);
+
+const Sep: React.FC = () => <div className="status-divider" />;
+
+const StatusItem: React.FC<{
+  label: string;
+  value: React.ReactNode;
+  valueStyle?: React.CSSProperties;
+}> = ({ label, value, valueStyle }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px' }}>
+    <span style={{ color: '#4a9a62', fontSize: '13px', letterSpacing: '0.1em' }}>{label}</span>
+    <span style={{ color: '#00ee77', fontSize: '16px', letterSpacing: '0.06em', ...valueStyle }}>{value}</span>
+  </div>
+);
+
+const ProgressBadge: React.FC<{ current: number; total: number }> = ({ current, total }) => (
+  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px' }}>
+    <span style={{ color: '#4a9a62', fontSize: '13px', letterSpacing: '0.1em' }}>进度</span>
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '2px',
+      background: 'rgba(0, 200, 80, 0.10)',
+      border: '1px solid #1e6e3a',
+      borderRadius: '3px',
+      padding: '2px 10px',
+    }}>
+      <span style={{ color: '#00ff88', fontSize: '16px', fontWeight: 700, letterSpacing: '0.05em', fontFamily: "'Share Tech Mono', monospace" }}>{current}</span>
+      <span style={{ color: '#2a6a40', fontSize: '14px', margin: '0 3px' }}>/</span>
+      <span style={{ color: '#00bb55', fontSize: '16px', letterSpacing: '0.05em', fontFamily: "'Share Tech Mono', monospace" }}>{total}</span>
+    </div>
+  </div>
+);
+
+/* ══════════════════════════════════════════════════════
+   App
+══════════════════════════════════════════════════════ */
 const App: React.FC = observer(() => {
-  const debugLayoutBorders = false;
-  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
-  const [activeDisplay, setActiveDisplay] = useState<'radar' | 'navigation' | 'joystick'>('radar');
+  const [selectedTarget] = useState<string | null>(null);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
-  const [isPractice, setIsPractice] = useState<boolean>(true);
   const [isStarted, setIsStarted] = useState<boolean>(false);
-  // const [showScenarioCompletionModal, setShowScenarioCompletionModal] = useState(false);
-  
-  // 添加雷达参数状态
-  const [radarRange, setRadarRange] = useState<number>(20); // 默认20海里
-  const [scanAngle, setScanAngle] = useState<number>(60);   // 默认60度
-  
-  // 使用MobX Store
+  const [useJoystick, setUseJoystick] = useState<boolean>(false);
+  const joystickInitedRef = useRef<boolean>(false);
+  const [radarRange, setRadarRange] = useState<number>(20);
+  const [scanAngle, setScanAngle] = useState<number>(60);
+
+  // 显示模式由后台指令驱动，不提供手动切换入口
+  const [activeDisplay, setActiveDisplay] = useState<'radar' | 'sa'>('radar');
+
+  // SA 临机事件状态
+  const [emergencyReceived, setEmergencyReceived] = useState<boolean>(false);
+  const [lastEmergencyType, setLastEmergencyType] = useState<string>('');
+  const [lastEmergencyTime, setLastEmergencyTime] = useState<Date | undefined>(undefined);
+  const lastEmergencyIdRef = useRef<string>('');
+
+  // 威胁列表
+  const [threatListData, setThreatListData] = useState<any[]>([]);
+  const [showDetailedInfo, setShowDetailedInfo] = useState(false);
+
+  // 问卷弹出控制：外部可通过 WebSocket 消息 { type:'set_questionnaire_popup', enabled:bool } 修改
+  const [enableQuestionnairePopup, setEnableQuestionnairePopup] = useState<boolean>(true);
+  const questionnaireRef = useRef<QuestionnaireModalHandle>(null);
+
   const { radarStore } = useStore();
-  
-  const previousScenarioIndexRef = React.useRef<number | undefined>();
-  const mainLayoutRef = useRef<HTMLDivElement | null>(null);
-  
-  // 使用useRadarData hook获取任务状态
-  const { 
+  const { antennaAdjustmentRequired, targetAntennaElevation } = radarStore;
+
+  const {
     connected,
     error,
-    taskId, 
+    taskId,
     initSettings,
     operations,
     sendMessage,
     initializeSystem,
     sendResetSA,
     repetitionInfos,
-    resetTargets,
-    radarData,
+    platformTaskConfig,
+    platformAutoStart,
     lastMessage,
   } = useRadarData();
 
-  // 从 MobX 全局 store 读取天线状态，避免多 hook 实例间的状态隔离问题
-  const {antennaAdjustmentRequired, targetAntennaElevation} = radarStore;
-
-  // 统一管理通信日志
   const [messages, setMessages] = useState<LogMessage[]>([]);
-  const messageIdRef = React.useRef(0);
-  
-  // SA任务临机事件状态
-  const [emergencyReceived, setEmergencyReceived] = useState<boolean>(false);
-  const [lastEmergencyType, setLastEmergencyType] = useState<string>('');
-  const [lastEmergencyTime, setLastEmergencyTime] = useState<Date | undefined>(undefined);
-  const lastEmergencyIdRef = React.useRef<string>('');
-  
-  // 新增：威胁列表状态
-  const [threatListData, setThreatListData] = useState<any[]>([]);
-  const [showDetailedInfo, setShowDetailedInfo] = useState(false);
+  const messageIdRef = useRef(0);
 
-
-  
-  // 使用useCallback包装addMessage函数
   const addMessage = useCallback((type: MessageType, content: string) => {
     setMessages(prev => [
       ...prev,
-      {
-        id: `msg_${Date.now()}_${++messageIdRef.current}`,
-        type,
-        content,
-        timestamp: new Date()
-      }
+      { id: `msg_${Date.now()}_${++messageIdRef.current}`, type, content, timestamp: new Date() },
     ]);
   }, []);
-  
-  // 添加清空消息的功能
+
   const clearMessages = useCallback(() => {
     setMessages([]);
     messageIdRef.current = 0;
   }, []);
-  
-  // 同步 userId 到 radarStore
+
   useEffect(() => {
     radarStore.setUserId(userId);
   }, [userId, radarStore]);
-  
-  // 监听WebSocket连接状态，在连接成功时初始化系统
-  useEffect(() => {
-    if (isStarted && connected && !error) {
-      // 当系统已启动且WebSocket已连接，且没有错误时，记录日志
-      console.log('[雷达系统] 连接成功');
-    } else if (isStarted && !connected && error) {
-      // 连接失败，显示错误信息
-      console.error('WebSocket连接失败，无法初始化系统:', error);
-    }
-  }, [isStarted, connected, error]);
 
-
-  
-  // 监听SA任务相关消息
+  /* ── 监听后台指令切换显示模式 ─────────────────────
+     后台可发送以下消息驱动切换：
+       { type: 'SwitchSA', ... }      → 切换到威胁排序
+       { type: 'SwitchRadar', ... }   → 切换到传感器任务
+  ───────────────────────────────────────────────── */
   useEffect(() => {
     if (!lastMessage) return;
-    
-    // 生成消息ID来防止重复处理
+    if (lastMessage.type === 'SwitchSA') {
+      setActiveDisplay('sa');
+      addMessage('system', '后台指令：切换至威胁排序任务');
+    } else if (lastMessage.type === 'SwitchRadar') {
+      setActiveDisplay('radar');
+      addMessage('system', '后台指令：切换至传感器任务');
+    }
+  }, [lastMessage, addMessage]);
+
+  /* ── 监听问卷弹窗外部控制指令 ────────────────────
+     服务端可发送：
+       { type: 'set_questionnaire_popup', enabled: bool }  → 开关自动弹出
+       { type: 'show_questionnaire', task_type?: string }  → 手动弹出
+  ───────────────────────────────────────────────── */
+  useEffect(() => {
+    if (!lastMessage) return;
+    if (lastMessage.type === 'set_questionnaire_popup') {
+      setEnableQuestionnairePopup(!!lastMessage.enabled);
+    } else if (lastMessage.type === 'show_questionnaire') {
+      const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | undefined;
+      questionnaireRef.current?.show(taskType);
+    }
+  }, [lastMessage]);
+
+  /* ── 监听 SA 临机事件 ─────────────────────────── */
+  useEffect(() => {
+    if (!lastMessage) return;
     const messageId = JSON.stringify({
       type: lastMessage.type,
       timestamp: lastMessage.timestamp || Date.now(),
       event: lastMessage.event,
-      saThreats: lastMessage.saThreats?.length || 0
     });
-
-    if (messageId !== lastEmergencyIdRef.current) {
-      console.log('[App.tsx] 检测到新的SA消息:', lastMessage);
-      
-      // 只有特定消息类型才认为是临机事件
-      if (lastMessage.type === 'SAEmergency') {
-        // SAEmergency 是具体的临机事件（导弹来袭等）
-        setEmergencyReceived(true);
-        setLastEmergencyType(lastMessage.event || 'unknown');
-        setLastEmergencyTime(new Date());
-        lastEmergencyIdRef.current = messageId;
-        
-        const eventText = lastMessage.event === 'missile' ? '导弹来袭' : 
-                         lastMessage.event === 'upgrade' ? '威胁升级' : '未知事件';
-        addMessage('sa_emergency', `收到临机事件：${eventText}`);
-      }
+    if (messageId !== lastEmergencyIdRef.current && lastMessage.type === 'SAEmergency') {
+      setEmergencyReceived(true);
+      setLastEmergencyType(lastMessage.event || 'unknown');
+      setLastEmergencyTime(new Date());
+      lastEmergencyIdRef.current = messageId;
+      const eventText = lastMessage.event === 'missile' ? '导弹来袭'
+        : lastMessage.event === 'upgrade' ? '威胁升级' : '未知事件';
+      addMessage('sa_emergency', `收到临机事件：${eventText}`);
     }
   }, [lastMessage, addMessage]);
-  
-  // 处理目标选择
+
+  /* ── 目标选择 ─────────────────────────────────── */
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
-    // 检查是否已经锁定了同一个目标
-    if (params.targetId && params.targetId === radarStore.lockedTargetId) {
-      console.log(`目标 ${params.targetId} 已被锁定，无需重复操作`);
-      return; // 如果是同一个目标，则不执行任何操作
-    }
-    
-    // 更新锁定的目标ID
+    if (params.targetId && params.targetId === radarStore.lockedTargetId) return;
     radarStore.setLockedTargetId(params.targetId);
-    
-    // 更新锁定时的屏幕X坐标
     if (params.targetId && params.lockX !== undefined) {
       radarStore.setLockScreenX(params.lockX);
     } else {
-      // 如果没有目标ID，则清除锁定线
       radarStore.setLockScreenX(undefined);
     }
-
-    console.log(`App.tsx - 目标选择已处理: id=${params.targetId}, lockX=${params.lockX}`);
-    
-    // 如果有目标被锁定，则自动触发IFF
-    if (params.targetId && params.iffMode) {
-      // 触发一个全局的自动激活IFF事件
-      // window.dispatchEvent(new CustomEvent('autoActivateIFF'));
-    }
-
     if (params.targetId) {
-      const messagePayload: any = {
+      const payload: Record<string, unknown> = {
         type: 'target_selected',
         timestamp: Date.now(),
         target_id: params.targetId,
         action: 'select',
         event_owner: params.event_owner,
       };
-      // 只有当这些值有效时才添加到消息中
-      if (params.iffMode !== undefined) {
-        messagePayload.iff_mode = params.iffMode;
-      }
-      if (params.externalTargetsTimestamp !== undefined && params.externalTargetsTimestamp !== null) {
-        messagePayload.receive_timestamp = params.externalTargetsTimestamp;
-      }
-      
-      console.log('[App.tsx] Sending target_selected:', messagePayload, 'with owner:', messagePayload.event_owner);
-      if (sendMessage) {
-        sendMessage(messagePayload);
-      } else {
-        console.error('[App.tsx] sendMessage function is not available from useRadarData');
-      }
-    } else {
-      // 如果是取消选择，可能也需要发送一个消息，或者由后端逻辑处理
-      console.log('[App.tsx] Target deselected / no target selected.');
+      if (params.iffMode !== undefined) payload.iff_mode = params.iffMode;
+      if (params.externalTargetsTimestamp != null) payload.receive_timestamp = params.externalTargetsTimestamp;
+      sendMessage?.(payload);
     }
-    // AI 的操作所有者恢复应该由 AI 的控制逻辑自行处理
-  }, [sendMessage]);
-  
-  // 处理启动（从JSON配置自动调用，或手动调用）
-  const handleStartApp = useCallback((id: string, withAI: boolean, taskType: 'radar' | 'sa', practice: boolean, useJoystick: boolean) => {
+  }, [sendMessage, radarStore]);
+
+  /* ── 启动应用 ─────────────────────────────────── */
+  const handleStartApp = useCallback((
+    id: string,
+    withAI: boolean,
+    taskType: 'radar' | 'sa',
+    practice: boolean,
+    _useJoystick: boolean,
+  ) => {
     setUserId(id);
     setIncludeAI(withAI);
-    setIsPractice(practice);
-    
-    // 摇杆连接
-    if (useJoystick) {
-      const connectJoystick = () => {
-        globalWS.sendMessage({ type: 'joystick_connect', timestamp: Date.now(), user_id: id });
-        globalWS.sendMessage({ type: 'joystick_subscribe', timestamp: Date.now(), user_id: id });
-      };
-      if (globalWS.getState().connected) {
-        connectJoystick();
-      } else {
-        setTimeout(connectJoystick, 1000);
-      }
-    }
-    
+    setUseJoystick(_useJoystick);
+    joystickInitedRef.current = false;
     radarStore.startSystem(id, withAI, practice);
     agentStore.setAIActive(withAI);
     setIsStarted(true);
-    
+
     if (taskType === 'sa') {
-      setActiveDisplay('navigation');
-      sendMessage({
+      setActiveDisplay('sa');
+      sendMessage?.({
         type: 'SwitchSA',
         timestamp: Date.now(),
         user_id: id,
@@ -239,368 +238,427 @@ const App: React.FC = observer(() => {
       });
     } else {
       setActiveDisplay('radar');
-    }
-    
-    console.log(`应用已启动 - 用户ID: ${id}, 启用AI: ${withAI}, 任务: ${taskType}, 练习: ${practice}, 摇杆: ${useJoystick}`);
-    if (taskType === 'radar') {
       initializeSystem(id, withAI, practice);
     }
   }, [sendMessage, initializeSystem, radarStore]);
 
-  // 点击"开始传感器任务"后加载配置并启动
+  /* ── 任务启动后自动连接操纵杆 ────────────────────── */
+  useEffect(() => {
+    if (joystickInitedRef.current) return;
+    joystickInitedRef.current = true;
+    globalWS.sendMessage({ type: 'joystick_connect', timestamp: Date.now(), user_id: userId });
+    globalWS.sendMessage({ type: 'joystick_subscribe', timestamp: Date.now(), user_id: userId });
+  }, [isStarted, connected, useJoystick, userId]);
+
+  useEffect(() => {
+    if (!platformAutoStart) return;
+    handleStartApp(
+      platformAutoStart.userId,
+      platformAutoStart.includeAI,
+      platformAutoStart.taskType,
+      platformAutoStart.isPractice,
+      false,
+    );
+  }, [platformAutoStart, handleStartApp]);
+
   const handleStartTask = useCallback(() => {
     fetch('/init_config.json')
-      .then(res => res.json())
+      .then(r => r.json())
       .then((cfg: { userId: string; includeAI: boolean; taskType: 'radar' | 'sa'; isPractice: boolean; useJoystick: boolean }) => {
-        console.log('加载启动配置:', cfg);
-        handleStartApp(cfg.userId, cfg.includeAI, cfg.taskType, cfg.isPractice, cfg.useJoystick);
+        const fromPlatform = platformTaskConfig?.normalized?.web_task_kind;
+        const taskType: 'radar' | 'sa' =
+          fromPlatform === 'sa' || fromPlatform === 'radar' ? fromPlatform : cfg.taskType;
+        handleStartApp(cfg.userId, cfg.includeAI, taskType, cfg.isPractice, cfg.useJoystick);
       })
-      .catch(err => {
-        console.error('加载 init_config.json 失败:', err);
-      });
-  }, [handleStartApp]);
-  
-  // 处理雷达参数更新
-  const handleRadarParamsUpdate = (range: number, angle: number) => {
+      .catch(err => console.error('[App] 加载 init_config.json 失败:', err));
+  }, [handleStartApp, platformTaskConfig]);
+
+  /* ── 雷达参数更新 ─────────────────────────────── */
+  const handleRadarParamsUpdate = useCallback((range: number, angle: number) => {
     setRadarRange(range);
     setScanAngle(angle);
-    console.log(`雷达参数已更新 123- 范围: ${range}海里, 角度: ${angle}°`);
     radarStore.updateRadarParams(range, angle);
-  };
+  }, [radarStore]);
 
-  // 处理SA任务重置（包含临机事件状态重置）
+  /* ── SA 重置 ──────────────────────────────────── */
   const handleSATaskReset = useCallback(() => {
-    console.log('App.tsx - 执行SA任务完整重置');
-    
-    // 1. 重置临机事件状态
     setEmergencyReceived(false);
     setLastEmergencyType('');
     setLastEmergencyTime(undefined);
     lastEmergencyIdRef.current = '';
-    
-    // 2. 清空消息历史
     clearMessages();
-    
-    // 3. 调用服务器重置
     sendResetSA();
-    
-    console.log('✅ App.tsx - SA任务重置完成，包括临机事件状态');
   }, [sendResetSA, clearMessages]);
 
-  // 处理显示切换
-  const handleDisplayChange = (display: 'radar' | 'navigation' | 'joystick') => {
-    setActiveDisplay(display);
-    // 切换视图时清空消息历史
-    clearMessages();
-    
-    // 如果切换到SA页面，重置临机事件状态
-    if (display === 'navigation') {
-      setEmergencyReceived(false);
-      setLastEmergencyType('');
-      setLastEmergencyTime(undefined);
-      lastEmergencyIdRef.current = '';
-      
-      // 发送SwitchSA消息以加载SA任务数据
-      if (sendMessage) {
-        sendMessage({
-          type: 'SwitchSA',
-          timestamp: Date.now(),
-          user_id: userId,
-          is_practice: isPractice,
-          is_ai_active: includeAI,
-        });
-      }
-    } else if (display === 'radar') {
-      // 当切换回雷达时，重新初始化雷达任务
-      console.log(`切换到雷达视图。为用户重新初始化雷达任务: ${userId}, AI: ${includeAI}`);
-      if (initializeSystem) {
-        initializeSystem(userId, includeAI, isPractice);
-      }
-    } else if (display === 'joystick') {
-      // 切换到操纵杆初始化页面
-      console.log('切换到操纵杆初始化页面');
-    }
-  };
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Check if F12 is pressed
-      if (event.key === 'F12') {
-        // event.preventDefault(); // Prevent default browser action
-        console.log("F12 pressed, resetting SA threats.");
-        // handleSATaskReset(); // Call the complete reset function
-      }
-    };
-
-    // Add event listener
-    window.addEventListener('keydown', handleKeyDown);
-
-    // Cleanup event listener
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleSATaskReset]); // Add handleSATaskReset to dependency array
-
-  // 根据当前视图决定要显示哪个任务的进度
-  const infoToShow = useMemo(() => {
-    let info = null;
-    let task_type: 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | null = null;
-    if (activeDisplay === 'radar') {
-      info = repetitionInfos['RADAR_TARGETING'];
-      task_type = 'RADAR_TARGETING';
-    } else if (activeDisplay === 'navigation') {
-      info = repetitionInfos['SA_THREAT_RESPONSE'];
-      task_type = 'SA_THREAT_RESPONSE';
-    } else if (activeDisplay === 'joystick') {
-      // 操纵杆初始化页面不显示任务信息
-      return null;
-    }
-
-    if (!info || typeof info === 'string' || !task_type) return null;
-
-    return { 
-      ...info,
-      task_type,
-      difficulty: (info as any).difficulty,
-      is_ai_active: (info as any).is_ai_active
-    };
-  }, [activeDisplay, repetitionInfos]);
-
-  // 使用难度变化检测hook
-  // const { showDifficultyChangeModal, closeDifficultyChangeModal } = useDifficultyChangeDetection(
-  //   infoToShow?.difficulty,
-  //   !!infoToShow?.is_ai_active
-  // );
-
-  // 监听场景索引变化（仅AI模式）
-  // useEffect(() => {
-  //   const currentScenarioIndex = infoToShow?.scenario_index;
-
-  //   if (
-  //     agentStore.isAIActive &&
-  //     previousScenarioIndexRef.current &&
-  //     currentScenarioIndex &&
-  //     currentScenarioIndex !== previousScenarioIndexRef.current
-  //   ) {
-  //     setShowScenarioCompletionModal(true);
-  //   }
-    
-  //   previousScenarioIndexRef.current = currentScenarioIndex;
-  // }, [infoToShow?.scenario_index, agentStore.isAIActive]);
-
-  const allTasksCompleted = useMemo(() => {
-    const radarCompleted = repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED';
-    const saCompleted = repetitionInfos['SA_THREAT_RESPONSE'] === 'ALL_COMPLETED';
-    return radarCompleted && saCompleted;
-  }, [repetitionInfos]);
-
-  // 处理威胁列表数据更新
+  /* ── 威胁列表 ─────────────────────────────────── */
   const handleThreatListUpdate = useCallback((threatData: any[]) => {
-    console.log('App 威胁列表', threatData);
     setThreatListData(threatData);
   }, []);
-  
-  // 处理详细信息显示状态变化
+
   const handleShowDetailedInfoChange = useCallback((showDetailed: boolean) => {
     setShowDetailedInfo(showDetailed);
   }, []);
 
-  // useEffect(() => {
-  //   const logMainLayoutRect = () => {
-  //     const rect = mainLayoutRef.current?.getBoundingClientRect();
-  //     if (!rect) return;
-  //     console.log('gazerelation:app-main-layout-rect', {
-  //       left: rect.left,
-  //       top: rect.top,
-  //       right: rect.right,
-  //       bottom: rect.bottom,
-  //       width: rect.width,
-  //       height: rect.height,
-  //       x: rect.x,
-  //       y: rect.y,
-  //     });
-  //   };
+  /* ── 当前任务信息 ──────────────────────────────── */
+  const infoToShow = useMemo(() => {
+    const key = activeDisplay === 'sa' ? 'SA_THREAT_RESPONSE' : 'RADAR_TARGETING';
+    const taskType = activeDisplay === 'sa' ? 'SA_THREAT_RESPONSE' as const : 'RADAR_TARGETING' as const;
+    const info = repetitionInfos[key];
+    if (!info || typeof info === 'string') return null;
+    return {
+      ...info,
+      task_type: taskType,
+      difficulty: (info as any).difficulty as string | undefined,
+      is_practice: (info as any).is_practice as boolean | undefined,
+      is_ai_active: (info as any).is_ai_active as boolean | undefined,
+    };
+  }, [activeDisplay, repetitionInfos]);
 
-  //   const rafId = window.requestAnimationFrame(logMainLayoutRect);
-  //   window.addEventListener('resize', logMainLayoutRect);
-  //   return () => {
-  //     window.cancelAnimationFrame(rafId);
-  //     window.removeEventListener('resize', logMainLayoutRect);
-  //   };
-  // }, [activeDisplay, isStarted]);
+  /* ── 右侧标签文字 ─────────────────────────────── */
+  const displayLabel = activeDisplay === 'sa' ? '威胁排序 · 态势感知' : '传感器任务 · 目标识别';
 
+  /* ── 策略说明链接 ─────────────────────────────── */
+  const rulesHref = activeDisplay === 'sa'
+    ? '/threat_calculation_rules.html'
+    : '/radar_target_identification.html';
+
+  /* ════════════════════════════════════════════════════
+     Render
+  ════════════════════════════════════════════════════ */
   return (
-    <div className={`min-h-screen bg-black text-gray-300 ${debugLayoutBorders ? 'gazerelation-app-debug-borders' : ''}`}>
-      {debugLayoutBorders && (
-        <style>{`
-          .gazerelation-app-debug-borders * {
-            outline: 1px solid rgba(0, 255, 255, 0.45) !important;
-          }
-        `}</style>
-      )}
-      {/* 启动 Modal */}
-      {!isStarted && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90">
-          <div className="bg-gray-900 border border-green-700 rounded-lg p-10 text-center shadow-2xl">
-            <h2 className="text-green-400 font-mono text-2xl mb-3">JF-17 航电系统</h2>
-            <p className="text-gray-400 font-mono text-sm mb-8">传感器任务训练平台</p>
-            <button
-              className={`px-8 py-3 font-mono text-lg rounded transition-colors ${
-                connected
-                  ? 'bg-green-700 hover:bg-green-600 text-white cursor-pointer'
-                  : 'bg-gray-700 text-gray-500 cursor-not-allowed'
-              }`}
-              disabled={!connected}
-              onClick={handleStartTask}
-            >
-              {connected ? '开始传感器任务' : '正在连接服务器...'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      <Toaster 
+    <div
+      className="scanlines"
+      style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        background: '#030a05',
+        fontFamily: "'SimHei', 'Microsoft YaHei', 'Noto Sans SC', 'PingFang SC', 'FangSong', sans-serif",
+      }}
+    >
+      <Toaster
         position="bottom-right"
         toastOptions={{
           style: {
-            background: '#333',
-            color: '#fff',
+            background: '#071209',
+            color: '#00ff88',
+            border: '1px solid #0d3018',
+            fontFamily: "'SimHei', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+            fontSize: '12px',
           },
         }}
       />
-      <CompletionModal />
-      {/* <DifficultyChangeModal 
-        isOpen={showDifficultyChangeModal} 
-        onClose={closeDifficultyChangeModal} 
-      /> */}
-      {/* <ScenarioCompletionModal 
-        isOpen={showScenarioCompletionModal}
-        onClose={() => setShowScenarioCompletionModal(false)}
-      /> */}
-      
-      <h1 className="text-center text-2xl text-green-500 font-mono pt-6 pb-4">
-        JF-17 航电系统 {userId ? `- 飞行员: ${userId}` : ''}
-      </h1>
-      
-      {/* 显示切换按钮 */}
-      <div className="flex justify-center mb-4">
-        <button 
-          className={`px-4 py-2 mx-2 font-mono rounded ${activeDisplay === 'radar' ? 'bg-green-700 text-white' : 'bg-gray-800 text-green-500'}`}
-          onClick={() => handleDisplayChange('radar')}
-        >
-          雷达显示器
-        </button>
-        <button 
-          className={`px-4 py-2 mx-2 font-mono rounded ${activeDisplay === 'navigation' ? 'bg-green-700 text-white' : 'bg-gray-800 text-green-500'}`}
-          onClick={() => handleDisplayChange('navigation')}
-        >
-          SA页面
-        </button>
-        {/* <button 
-          className={`px-4 py-2 mx-2 font-mono rounded ${activeDisplay === 'joystick' ? 'bg-green-700 text-white' : 'bg-gray-800 text-green-500'}`}
-          onClick={() => handleDisplayChange('joystick')}
-        >
-          操纵杆初始化
-        </button> */}
-      </div>
-      
-      <div ref={mainLayoutRef} className="flex flex-col lg:flex-row gap-8 px-4 max-w-8xl mx-auto">
-        {/* 左侧显示区域 */}
-        <div className={`w-full ${activeDisplay === 'joystick' ? 'lg:w-full' : 'lg:w-3/5'}`}>
-          <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
-            <h2 className="text-green-500 font-mono text-lg mb-4">
-              {activeDisplay === 'radar' ? '雷达显示器' : 
-               activeDisplay === 'navigation' ? 'SA页面' : '操纵杆初始化'}
-            </h2>
-            
-            {activeDisplay === 'radar' ? (
-              <Radar 
-                width={700} 
-                height={700} 
-                onTargetSelect={handleTargetSelect}
-                isStarted={isStarted}
-                onRadarParamsUpdate={handleRadarParamsUpdate}
-                onAddMessage={addMessage}
-                onClearMessages={clearMessages}
-                onNavigateToSA={() => handleDisplayChange('navigation')}
+      {/* ── Startup Modal ──────────────────────────────── */}
+      {!isStarted && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 50,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(2, 8, 4, 0.97)',
+        }}>
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(0,80,30,0.12) 0%, transparent 70%)',
+            pointerEvents: 'none',
+          }} />
+          <div
+            className="mil-frame"
+            style={{
+              position: 'relative', padding: '52px 72px',
+              background: 'rgba(4, 14, 7, 0.97)',
+              border: '1px solid #1a5c2a',
+              boxShadow: '0 0 60px rgba(0,255,80,0.06), 0 0 120px rgba(0,255,80,0.03)',
+              textAlign: 'center', minWidth: '380px',
+            }}
+          >
+            <MilCorners color="#00cc55" />
+            <div style={{ color: '#1a6a2a', fontSize: '12px', letterSpacing: '0.35em', marginBottom: '10px' }}>
+              航空电子任务环境系统
+            </div>
+            <h1
+              className="glow-green"
+              style={{
+                fontFamily: "'Share Tech Mono', 'Microsoft YaHei', monospace",
+                color: '#00ff66', fontSize: '32px', fontWeight: 700,
+                letterSpacing: '0.2em', margin: '0 0 6px',
+              }}
+            >
+              JF-17
+            </h1>
+            <div style={{ color: '#00aa44', fontSize: '13px', letterSpacing: '0.3em', marginBottom: '36px' }}>
+              AEMS · 传感器任务系统
+            </div>
+            <div style={{ width: '80px', height: '1px', background: 'linear-gradient(to right, transparent, #1a6a2a, transparent)', margin: '0 auto 36px' }} />
+            <button
+              className="start-btn"
+              disabled={!connected}
+              onClick={handleStartTask}
+              style={{
+                padding: '14px 52px',
+                background: connected ? 'rgba(0, 170, 60, 0.12)' : 'rgba(20, 20, 20, 0.6)',
+                border: `1px solid ${connected ? '#00aa44' : '#1a1a1a'}`,
+                color: connected ? '#00ff77' : '#2a2a2a',
+                fontFamily: "'SimHei', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+                fontSize: '13px', letterSpacing: '0.25em',
+                cursor: connected ? 'pointer' : 'not-allowed',
+                transition: 'all 0.25s', outline: 'none', width: '100%',
+              }}
+            >
+              {connected ? '▶  开始训练' : '正在连接服务器...'}
+            </button>
+            <div style={{ marginTop: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <span
+                className={connected ? 'pulse-dot' : 'blink'}
+                style={{
+                  display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
+                  background: connected ? '#00ff55' : '#ff4444',
+                  color: connected ? '#00ff55' : '#ff4444',
+                }}
               />
-            ) : activeDisplay === 'navigation' ? (
-              <div className='flex justify-center'>
-                <SAPage 
-                  width={800} 
-                  height={600} 
-                  onAddMessage={addMessage}
-                  onClearMessages={clearMessages}
-                  userId={userId}
-                  onResetSA={handleSATaskReset}
-                  onThreatListUpdate={handleThreatListUpdate}
-                  onShowDetailedInfoChange={handleShowDetailedInfoChange}
-                />
-              </div>
-            ) : (
-              <div className='flex justify-center'>
-                <JoystickInitializationPage />
-              </div>
-            )}
+              <span style={{ fontSize: '12px', letterSpacing: '0.2em', color: connected ? '#1a6a2a' : '#6a1a1a' }}>
+                {connected ? '服务器连接正常' : '正在连接服务器...'}
+              </span>
+            </div>
           </div>
         </div>
-        
-        {/* 右侧内容 - 调整顺序：通信日志在最上面 */}
-        {activeDisplay !== 'joystick' && (
-          <div className="w-full lg:w-2/5 flex flex-col gap-4">
-            {/* AI助手 - 放在最上面*/}
-            {includeAI && (
-                <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800">
-                  <AIAssistant selectedTarget={selectedTarget} />
+      )}
+
+      {/* ── Top Status Bar ─────────────────────────────── */}
+      <header style={{
+        height: '58px', flexShrink: 0,
+        display: 'flex', alignItems: 'center',
+        background: 'rgba(6, 20, 11, 0.98)',
+        borderBottom: '1px solid #0e3018',
+        boxShadow: '0 1px 0 rgba(0,255,80,0.08)',
+      }}>
+        {/* 系统名 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px' }}>
+          <span
+            className="glow-green"
+            style={{
+              fontFamily: "'Share Tech Mono', 'Microsoft YaHei', monospace",
+              color: '#00ff55', fontSize: '19px', fontWeight: 700, letterSpacing: '0.18em',
+            }}
+          >
+            ◈ JF-17 AEMS
+          </span>
+        </div>
+
+        <Sep />
+
+        {/* 连接状态 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '0 14px' }}>
+          <span
+            className={connected ? 'pulse-dot' : 'blink'}
+            style={{
+              display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
+              background: connected ? '#00ff55' : '#ff4444',
+              color: connected ? '#00ff55' : '#ff4444',
+            }}
+          />
+          <span style={{ fontSize: '14px', letterSpacing: '0.12em', color: connected ? '#00cc55' : '#dd3333' }}>
+            {connected ? '链路正常' : '未连接'}
+          </span>
+        </div>
+
+        {userId && (
+          <>
+            <Sep />
+            <StatusItem label="飞行员" value={userId} valueStyle={{ color: '#00ff88', fontWeight: 'bold' }} />
+          </>
+        )}
+
+        {/* 当前任务模式标签 */}
+        {isStarted && (
+          <>
+            <Sep />
+            <div style={{ padding: '0 14px' }}>
+              <span style={{
+                fontSize: '14px', letterSpacing: '0.08em', padding: '4px 12px',
+                border: `1px solid ${activeDisplay === 'sa' ? '#6a3a00' : '#006a28'}`,
+                background: activeDisplay === 'sa' ? 'rgba(180,100,0,0.10)' : 'rgba(0,180,70,0.08)',
+                color: activeDisplay === 'sa' ? '#ffbb22' : '#00ee66',
+                transition: 'all 0.4s',
+              }}>
+                {activeDisplay === 'sa' ? '威胁排序' : '传感器任务'}
+              </span>
+            </div>
+          </>
+        )}
+
+        {infoToShow && isStarted && (
+          <>
+            <Sep />
+            <ProgressBadge current={infoToShow.current} total={infoToShow.total} />
+
+            {infoToShow.difficulty && (
+              <>
+                <Sep />
+                <StatusItem
+                  label="难度"
+                  value={translateDifficulty(infoToShow.difficulty)}
+                  valueStyle={{ color: '#ffcc33', fontWeight: 'bold', textShadow: '0 0 10px rgba(255,200,0,0.5)' }}
+                />
+              </>
+            )}
+
+            <Sep />
+            <div style={{ padding: '0 14px' }}>
+              <span style={{
+                fontSize: '14px', letterSpacing: '0.12em', padding: '4px 12px',
+                border: `1px solid ${infoToShow.is_practice ? '#1a5a7a' : '#7a4a0a'}`,
+                background: infoToShow.is_practice ? 'rgba(0,150,200,0.10)' : 'rgba(200,120,0,0.10)',
+                color: infoToShow.is_practice ? '#22bbdd' : '#ddaa00',
+              }}>
+                {infoToShow.is_practice ? '练习模式' : '正式模式'}
+              </span>
+            </div>
+
+            <Sep />
+            <div style={{ padding: '0 14px' }}>
+              <a
+                href={rulesHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: '14px', letterSpacing: '0.12em', color: '#2aaa55',
+                  textDecoration: 'none', padding: '4px 12px',
+                  border: '1px solid #1a5530', transition: 'all 0.2s',
+                }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLAnchorElement).style.color = '#00ff77';
+                  (e.currentTarget as HTMLAnchorElement).style.borderColor = '#1a8a3a';
+                  (e.currentTarget as HTMLAnchorElement).style.background = 'rgba(0,220,100,0.08)';
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLAnchorElement).style.color = '#2aaa55';
+                  (e.currentTarget as HTMLAnchorElement).style.borderColor = '#1a5530';
+                  (e.currentTarget as HTMLAnchorElement).style.background = 'transparent';
+                }}
+              >
+                策略说明 ↗
+              </a>
+            </div>
+          </>
+        )}
+
+        {/* 右侧任务标签 */}
+        <div style={{ marginLeft: 'auto', padding: '0 20px', fontSize: '13px', letterSpacing: '0.1em', color: '#3a7a48' }}>
+          {displayLabel}
+        </div>
+      </header>
+
+      {/* ── Main Layout ────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+        {/* Left — 主显示区 ───────────────────────────── */}
+        <div
+          className="radar-panel-bg"
+          style={{
+            flex: '0 0 60%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRight: '1px solid #0a2010',
+            background: 'radial-gradient(ellipse 70% 60% at 50% 50%, rgba(0,28,10,0.35) 0%, #030a05 70%)',
+            padding: '16px',
+            overflowY: 'auto',
+          }}
+        >
+          {activeDisplay === 'radar' ? (
+            <Radar
+              width={700}
+              height={700}
+              onTargetSelect={handleTargetSelect}
+              isStarted={isStarted}
+              onRadarParamsUpdate={handleRadarParamsUpdate}
+              onAddMessage={addMessage}
+              onClearMessages={clearMessages}
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
+              <SAPage
+                width={800}
+                height={600}
+                onAddMessage={addMessage}
+                onClearMessages={clearMessages}
+                userId={userId}
+                onResetSA={handleSATaskReset}
+                onThreatListUpdate={handleThreatListUpdate}
+                onShowDetailedInfoChange={handleShowDetailedInfoChange}
+              />
+              {activeDisplay === 'sa' && (
+                <div style={{ width: '800px', borderTop: '1px solid #0a2010' }}>
+                  <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
                 </div>
               )}
-            {/* 通信日志 - 固定高度 */}
-            <div className="bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-800" style={{ height: '500px' }}>
-              <h2 className="text-green-500 font-mono text-lg mb-4">通信日志</h2>
-                <CommunicationLog 
-                  userId={userId} 
-                  isStarted={isStarted} 
-                  taskId={taskId}
-                  currentTask={activeDisplay === 'navigation' ? 'sa' : 'radar'}
-                  radarRange={radarRange}
-                  scanAngle={scanAngle}
-                  antennaAdjustmentRequired={antennaAdjustmentRequired}
-                  targetAntennaElevation={targetAntennaElevation || undefined}
-                  initSettings={initSettings}
-                  connected={connected}
-                  error={error}
-                  operations={operations}
-                  onAddMessage={addMessage}
-                  messages={messages}
-                  emergencyReceived={emergencyReceived}
-                  lastEmergencyType={lastEmergencyType}
-                  lastEmergencyTime={lastEmergencyTime}
-                />
             </div>
-            
-         
-            {/* 威胁列表 - 最下面，只在SA页面时显示 */}
-            {activeDisplay === 'navigation' && (
-              <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
-            )}
+          )}
+        </div>
+
+        {/* Right — 侧边栏 ────────────────────────────── */}
+        <div style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#030c05' }}>
+
+          {/* AI Assistant */}
+          {includeAI && (
+            <div style={{
+              flexShrink: 0, padding: '14px 18px',
+              borderBottom: '1px solid #0a2010',
+              background: 'rgba(0,20,8,0.5)',
+            }}>
+              <div className="panel-label">AI 辅助系统</div>
+              <AIAssistant selectedTarget={selectedTarget} />
+            </div>
+          )}
+
+          {/* Communication Log */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '14px 18px' }}>
+            <div className="panel-label">通信日志</div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <CommunicationLog
+                userId={userId}
+                isStarted={isStarted}
+                taskId={taskId}
+                currentTask={activeDisplay === 'sa' ? 'sa' : 'radar'}
+                radarRange={radarRange}
+                scanAngle={scanAngle}
+                antennaAdjustmentRequired={antennaAdjustmentRequired}
+                targetAntennaElevation={targetAntennaElevation || undefined}
+                initSettings={initSettings}
+                connected={connected}
+                error={error}
+                operations={operations}
+                onAddMessage={addMessage}
+                messages={messages}
+                emergencyReceived={emergencyReceived}
+                lastEmergencyType={lastEmergencyType}
+                lastEmergencyTime={lastEmergencyTime}
+              />
+            </div>
           </div>
-        )}
+
+
+        </div>
       </div>
 
-      {infoToShow && isStarted && (
-        <TaskInfoDisplay
-          current={infoToShow.current}
-          total={infoToShow.total}
-          scenario_index={infoToShow.scenario_index}
-          scenario_total={infoToShow.scenario_total}
-          is_practice={infoToShow.is_practice}
-          task_type={infoToShow.task_type}
-          difficulty={infoToShow.difficulty}
-          audio_enabled={infoToShow.audio_enabled}
+      {/* ── Questionnaire Modal ─────────────────────────────── */}
+      {isStarted && (
+        <QuestionnaireModal
+          ref={questionnaireRef}
+          repetitionInfos={repetitionInfos}
+          activeDisplay={activeDisplay}
+          userId={userId}
+          enableAutoPopup={enableQuestionnairePopup}
+          questionnaireApiUrl="/questionnaire_config.json"
+          sendMessage={sendMessage ?? undefined}
+          onSubmit={(data: QuestionnaireSubmitData) => {
+            addMessage('system', `问卷已提交 · ${data.taskType === 'RADAR_TARGETING' ? '传感器任务' : '威胁排序'} · 第 ${data.repetitionCurrent} 次`);
+          }}
         />
       )}
     </div>
   );
 });
 
-export default App; 
+export default App;

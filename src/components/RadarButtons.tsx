@@ -38,10 +38,13 @@ const RadarButtons: React.FC<RadarButtonsProps> = ({ position, framePositions, r
   const buttonStyle: React.CSSProperties = {
     width: '36px',
     height: '36px',
-    backgroundColor: '#333333',
-    border: '1px solid #444444',
+    backgroundColor: 'rgba(0,14,6,0.9)',
+    border: '1px solid #0d3018',
     borderRadius: '2px',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    boxShadow: 'inset 0 0 5px rgba(0,80,30,0.12)',
+    transition: 'background 0.15s, box-shadow 0.15s',
+    outline: 'none',
   };
 
   // 处理按钮点击事件
@@ -63,11 +66,23 @@ const RadarButtons: React.FC<RadarButtonsProps> = ({ position, framePositions, r
   return (
     <div style={containerStyle}>
       {[1, 2, 3, 4, 5].map((i) => (
-        <button 
+        <button
           key={`${position}-${i}`}
           style={buttonStyle}
           onClick={() => handleClick(i)}
           onKeyDown={handleKeyDown}
+          onMouseEnter={e => {
+            const btn = e.currentTarget as HTMLButtonElement;
+            btn.style.backgroundColor = 'rgba(0,30,12,0.95)';
+            btn.style.boxShadow = '0 0 6px rgba(0,160,60,0.18), inset 0 0 5px rgba(0,100,40,0.2)';
+            btn.style.borderColor = '#3a9a50';
+          }}
+          onMouseLeave={e => {
+            const btn = e.currentTarget as HTMLButtonElement;
+            btn.style.backgroundColor = 'rgba(0,14,6,0.9)';
+            btn.style.boxShadow = 'inset 0 0 5px rgba(0,80,30,0.12)';
+            btn.style.borderColor = '#0d3018';
+          }}
         />
       ))}
     </div>

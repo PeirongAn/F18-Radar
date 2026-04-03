@@ -160,7 +160,7 @@ const ExternalTDCController: React.FC<ExternalTDCControllerProps> = ({
           padding: 16px;
           margin: 16px 0;
           background: #f9f9f9;
-          font-family: monospace;
+          font-family: 'Share Tech Mono', 'SimHei', 'Microsoft YaHei', monospace;
         }
 
         .external-tdc-controller.disabled {

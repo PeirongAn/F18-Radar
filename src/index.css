@@ -2,15 +2,166 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 添加全局背景色 */
-body {
-  background-color: #f0f0f0;
+/* ── Global Reset ──────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background-color: #030a05;
+  font-family: 'SimHei', 'Microsoft YaHei', 'Noto Sans SC', 'PingFang SC', 'FangSong', 'STFangSong', sans-serif;
+  color: #00cc55;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Scanline Overlay ──────────────────────────────── */
+.scanlines::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.045) 3px,
+    rgba(0, 0, 0, 0.045) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Phosphor Glow Text ────────────────────────────── */
+.glow-green {
+  text-shadow: 0 0 8px rgba(0, 255, 80, 0.6), 0 0 20px rgba(0, 255, 80, 0.2);
+}
+
+.glow-amber {
+  text-shadow: 0 0 8px rgba(255, 170, 0, 0.6), 0 0 20px rgba(255, 170, 0, 0.2);
+}
+
+/* ── Military Corner Decoration ────────────────────── */
+.mil-frame {
+  position: relative;
+}
+
+.mil-frame::before,
+.mil-frame::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-color: #00aa44;
+  border-style: solid;
+}
+
+.mil-frame::before {
+  top: 0;
+  left: 0;
+  border-width: 2px 0 0 2px;
+}
+
+.mil-frame::after {
+  bottom: 0;
+  right: 0;
+  border-width: 0 2px 2px 0;
+}
+
+/* ── Status Bar Divider ────────────────────────────── */
+.status-divider {
+  width: 1px;
+  height: 22px;
+  background: linear-gradient(to bottom, transparent, #0d3018, transparent);
+  flex-shrink: 0;
+}
+
+/* ── Pulse Animation ───────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px currentColor; }
+  50%       { opacity: 0.4; box-shadow: none; }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+@keyframes radar-sweep-glow {
+  0%   { box-shadow: inset 0 0 30px rgba(0, 255, 80, 0.03); }
+  50%  { box-shadow: inset 0 0 60px rgba(0, 255, 80, 0.06); }
+  100% { box-shadow: inset 0 0 30px rgba(0, 255, 80, 0.03); }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+.blink {
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+.radar-panel-bg {
+  animation: radar-sweep-glow 4s ease-in-out infinite;
+}
+
+/* ── Scrollbar ─────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #050e07;
+}
+::-webkit-scrollbar-thumb {
+  background: #0d3018;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #1a5a2a;
+}
+
+/* ── Startup Button Hover ──────────────────────────── */
+.start-btn:hover:not(:disabled) {
+  background: rgba(0, 200, 80, 0.2) !important;
+  box-shadow: 0 0 30px rgba(0, 255, 100, 0.15), inset 0 0 15px rgba(0, 255, 100, 0.05) !important;
+}
+
+/* ── Panel Labels ──────────────────────────────────── */
+.panel-label {
+  font-size: 12px;
+  letter-spacing: 0.25em;
+  color: #4aaa60;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-label::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 1px;
+  background: #3a8a48;
+}
+
+.panel-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, #1a4a22, transparent);
+}
+
+/* ── Legacy ────────────────────────────────────────── */
 .radar-container {
   background-color: #000000;
-  width: 600px; /* 增加宽度 */
-  height: 600px; /* 增加高度 */
+  width: 600px;
+  height: 600px;
 }
 
 .radar-container canvas {
@@ -29,10 +180,10 @@ body {
   border: 1px solid #00ff00;
   padding: 8px 16px;
   cursor: pointer;
-  font-family: monospace;
+  font-family: 'Share Tech Mono', monospace;
   transition: all 0.3s ease;
 }
 
 .btn:hover {
   background-color: #006600;
-} 
+}

@@ -1057,12 +1057,35 @@ const Radar: React.FC<RadarProps> = (({
       />
       
       {/* 添加右下角的重置按钮 */}
-      <button 
-        className="absolute bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+      <button
         style={{
+          position: 'absolute',
           bottom: '10px',
           right: '10px',
-          zIndex: 100
+          zIndex: 1,
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: '13px',
+          letterSpacing: '0.12em',
+          padding: '6px 16px',
+          background: 'rgba(25,4,4,0.7)',
+          border: '1px solid #3a1212',
+          color: '#7a3333',
+          cursor: 'pointer',
+          borderRadius: '2px',
+          outline: 'none',
+          transition: 'background 0.15s, color 0.15s',
+        }}
+        onMouseEnter={e => {
+          const btn = e.currentTarget as HTMLButtonElement;
+          btn.style.background = 'rgba(50,8,8,0.85)';
+          btn.style.color = '#cc4444';
+          btn.style.borderColor = '#6a2222';
+        }}
+        onMouseLeave={e => {
+          const btn = e.currentTarget as HTMLButtonElement;
+          btn.style.background = 'rgba(25,4,4,0.7)';
+          btn.style.color = '#7a3333';
+          btn.style.borderColor = '#3a1212';
         }}
         onClick={handleReset}
       >

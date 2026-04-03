@@ -245,20 +245,20 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
     }
   }, [onAddMessageProp]);
   
-  const getMessageStyles = (type: MessageType): string => {
+  const getMessageStyle = (type: MessageType): React.CSSProperties => {
     switch (type) {
-      case 'info': return 'text-blue-300';
-      case 'warning': return 'text-yellow-300 font-bold';
-      case 'error': return 'text-red-500 font-bold text-lg';
-      case 'success': return 'text-green-400 font-bold';
-      case 'client': return 'text-purple-300';
-      case 'server': return 'text-orange-300';
-      case 'system': return 'text-cyan-300 font-bold';
-      case 'sa_init': return 'text-pink-400 font-bold';
-      case 'sa_emergency': return 'text-red-400 font-bold';
-      case 'sa_threat': return 'text-yellow-400 font-bold';
-      case 'sa_missile': return 'text-red-600 font-extrabold text-lg animate-pulse';
-      default: return 'text-gray-300';
+      case 'info':        return { color: '#4db87a' };
+      case 'warning':     return { color: '#c8a800', fontWeight: 'bold' };
+      case 'error':       return { color: '#cc4444', fontWeight: 'bold' };
+      case 'success':     return { color: '#00cc55', fontWeight: 'bold' };
+      case 'client':      return { color: '#3a9a5a' };
+      case 'server':      return { color: '#2a8a4a' };
+      case 'system':      return { color: '#00aa44', fontWeight: 'bold' };
+      case 'sa_init':     return { color: '#00cc55', fontWeight: 'bold' };
+      case 'sa_emergency':return { color: '#cc6633', fontWeight: 'bold' };
+      case 'sa_threat':   return { color: '#c8a800', fontWeight: 'bold' };
+      case 'sa_missile':  return { color: '#dd2222', fontWeight: 'bold', fontSize: '17px' };
+      default:            return { color: '#3a6a44' };
     }
   };
   
@@ -283,63 +283,65 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
     if (!isStarted || currentTask !== 'radar') return null;
     
     return (
-      <div className="p-2 mb-2 bg-gray-800 rounded border border-gray-700">
-        <h4 className="text-green-400 font-mono text-sm mb-1">雷达参数</h4>
-        {/* <div className="flex justify-between text-xs">
-          <div>
-            <span className="text-gray-400">范围: </span>
-            <span className="text-green-300">{radarRange || '未设置'} 海里</span>
-          </div>
-          <div>
-            <span className="text-gray-400">扫描角度: </span>
-            <span className="text-green-300">{scanAngle || '未设置'}°</span>
-          </div>
-        </div> */}
-        {/* 当前不需要设置 */}
-        {/* {initSettings && (
-          <div className="mt-1 text-xs text-white font-bold">
-            请调整雷达范围{initSettings !== undefined ? ` 至 范围 ${initSettings.range}海里，扫描角度 ${initSettings.scanAngle}°` : ''}!
-          </div>
-        )} */}
-        {/* {(antennaAdjustmentRequired || antennaPromptAttentionActive) && (
+      <div style={{
+        padding: '8px 12px',
+        marginBottom: '4px',
+        background: 'rgba(0,12,5,0.6)',
+        borderBottom: '1px solid #0a2010',
+      }}>
+        <div style={{
+          fontSize: '12px',
+          letterSpacing: '0.2em',
+          color: '#4aaa60',
+          textTransform: 'uppercase' as const,
+          marginBottom: '8px',
+          fontFamily: "'Share Tech Mono', monospace",
+        }}>
+          ── 雷达参数 ──
+        </div>
+
+        {(antennaAdjustmentRequired || antennaPromptAttentionActive || true) && (
           <div
             ref={antennaPromptRef}
-            className={`mt-1 text-xs font-bold ${
-              antennaPromptAttentionActive
-                ? 'text-red-300 animate-pulse bg-red-900/40 border border-red-400 rounded px-2 py-1'
-                : 'text-yellow-300'
-            }`}
-          >
-            请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
-          </div>
-        )} */}
-          {(antennaAdjustmentRequired || antennaPromptAttentionActive || true) && (
-          <div
-            ref={antennaPromptRef}
-            className={`mt-1 text-3xl font-bold ${
-              antennaPromptAttentionActive
-                ? 'text-red-300 animate-pulse bg-red-900/40 border border-red-400 rounded px-2 py-1'
-                : 'text-yellow-300'
-            }`}
+            className={antennaPromptAttentionActive ? 'animate-pulse' : ''}
+            style={{
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: '22px',
+              fontWeight: 'bold',
+              letterSpacing: '0.05em',
+              color: antennaPromptAttentionActive ? '#ff4444' : '#c8a800',
+              background: antennaPromptAttentionActive ? 'rgba(80,0,0,0.3)' : 'transparent',
+              border: antennaPromptAttentionActive ? '1px solid #882222' : '1px solid transparent',
+              borderRadius: '3px',
+              padding: antennaPromptAttentionActive ? '4px 8px' : '0',
+            }}
           >
             请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
           </div>
         )}
-        
+
         {initSettings && initSettings.settings && (
-          <div className="mt-2 pt-1 border-t border-gray-700">
-            <h5 className="text-blue-400 font-mono text-xs mb-1">服务器建议参数</h5>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+          <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid #0a2010' }}>
+            <div style={{
+              fontSize: '12px',
+              letterSpacing: '0.15em',
+              color: '#4aaa60',
+              marginBottom: '6px',
+              fontFamily: "'Share Tech Mono', monospace",
+            }}>
+              服务器建议参数
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
               {initSettings.settings.range && (
-                <div>
-                  <span className="text-gray-400">建议范围: </span>
-                  <span className="text-blue-300">{initSettings.settings.range} 海里</span>
+                <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: '14px' }}>
+                  <span style={{ color: '#55aa66' }}>范围 </span>
+                  <span style={{ color: '#00aa44' }}>{initSettings.settings.range} 海里</span>
                 </div>
               )}
               {initSettings.settings.scanAngle && (
-                <div>
-                  <span className="text-gray-400">建议角度: </span>
-                  <span className="text-blue-300">{initSettings.settings.scanAngle}°</span>
+                <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: '14px' }}>
+                  <span style={{ color: '#55aa66' }}>角度 </span>
+                  <span style={{ color: '#00aa44' }}>{initSettings.settings.scanAngle}°</span>
                 </div>
               )}
             </div>
@@ -352,49 +354,82 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   const renderSAStatus = () => {
     if (!isStarted || currentTask !== 'sa') return null;
     
+    const rowStyle: React.CSSProperties = {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'baseline',
+      fontFamily: "'Share Tech Mono', monospace",
+      fontSize: '14px',
+      marginBottom: '3px',
+    };
+    const labelStyle: React.CSSProperties = { color: '#55aa66' };
+
     return (
-      <div className="p-2 mb-2 bg-gray-800 rounded border border-gray-700">
-        <h4 className="text-green-400 font-mono text-sm mb-1">SA任务状态</h4>
-        
-        <div className="grid grid-cols-1 gap-1 text-xs">
-          <div className="flex justify-between">
-            <span className="text-gray-400">任务状态: </span>
-            <span className="text-green-300">威胁评估中</span>
+      <div style={{
+        padding: '8px 12px',
+        marginBottom: '4px',
+        background: 'rgba(0,12,5,0.6)',
+        borderBottom: '1px solid #0a2010',
+      }}>
+        <div style={{
+          fontSize: '12px',
+          letterSpacing: '0.2em',
+          color: '#4aaa60',
+          textTransform: 'uppercase' as const,
+          marginBottom: '8px',
+          fontFamily: "'Share Tech Mono', monospace",
+        }}>
+          ── SA 任务状态 ──
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div style={rowStyle}>
+            <span style={labelStyle}>任务状态</span>
+            <span style={{ color: '#00aa44', fontWeight: 'bold' }}>威胁评估中</span>
           </div>
-          
-          <div className="flex justify-between">
-            <span className="text-gray-400">临机事件: </span>
-            <span className={emergencyReceived ? "text-red-400 font-bold animate-pulse" : "text-gray-500"}>
-              {emergencyReceived ? "已收到" : "等待中"}
+
+          <div style={rowStyle}>
+            <span style={labelStyle}>临机事件</span>
+            <span
+              className={emergencyReceived ? 'animate-pulse' : ''}
+              style={{ color: emergencyReceived ? '#cc4444' : '#55aa66', fontWeight: emergencyReceived ? 'bold' : 'normal' }}
+            >
+              {emergencyReceived ? '已收到' : '等待中'}
             </span>
           </div>
-          
+
           {emergencyReceived && lastEmergencyType && (
-            <div className="flex justify-between">
-              <span className="text-gray-400">事件类型: </span>
-              <span className="text-yellow-300 font-bold">
-                {lastEmergencyType === 'missile' ? '导弹来袭' : 
-                 lastEmergencyType === 'upgrade' ? '威胁升级' : 
+            <div style={rowStyle}>
+              <span style={labelStyle}>事件类型</span>
+              <span style={{ color: '#c8a800', fontWeight: 'bold' }}>
+                {lastEmergencyType === 'missile' ? '导弹来袭' :
+                 lastEmergencyType === 'upgrade' ? '威胁升级' :
                  lastEmergencyType === 'task_updated' ? '威胁任务更新' : lastEmergencyType}
               </span>
             </div>
           )}
-          
+
           {emergencyReceived && lastEmergencyTime && (
-            <div className="flex justify-between">
-              <span className="text-gray-400">事件时间: </span>
-              <span className="text-cyan-300 text-xs">
+            <div style={rowStyle}>
+              <span style={labelStyle}>事件时间</span>
+              <span style={{ color: '#4db87a', fontSize: '13px' }}>
                 {lastEmergencyTime.toLocaleTimeString()}
               </span>
             </div>
           )}
         </div>
-        
+
         {emergencyReceived && (
-          <div className="mt-2 pt-1 border-t border-gray-700">
-            <div className="text-red-400 font-bold text-xs animate-pulse">
-              ⚠️ 请立即处理临机事件！
-            </div>
+          <div className="animate-pulse" style={{
+            marginTop: '8px',
+            paddingTop: '6px',
+            borderTop: '1px solid #2a1a00',
+            fontFamily: "'Share Tech Mono', monospace",
+            fontSize: '15px',
+            fontWeight: 'bold',
+            color: '#cc4444',
+          }}>
+            ！ 请立即处理临机事件
           </div>
         )}
       </div>
@@ -403,57 +438,112 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   
   return (
     <div className="flex flex-col h-full">
-      <div className="bg-gray-800 p-2 rounded-t-lg border-b border-gray-700 mb-2 flex justify-between">
-       <span className="text-gray-400 text-xs">通信状态: </span>
-        <span className={isStarted ? "text-green-400 text-xs" : "text-yellow-400 text-xs"}>
-          {isStarted ? '已连接' : '等待启动'}
+      {/* ── Status bar ── */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '6px 12px',
+        background: 'rgba(0,10,4,0.85)',
+        borderBottom: '1px solid #0a2010',
+        flexShrink: 0,
+      }}>
+        <span style={{
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: '12px',
+          letterSpacing: '0.22em',
+          color: '#4aaa60',
+          textTransform: 'uppercase',
+        }}>
+          系统通信日志
         </span>
-        </div>
-      <div className="bg-gray-800 p-2 rounded-t-lg border-b border-gray-700">
-        <h3 className="text-green-400 font-mono text-lg">系统通信日志</h3>
-       
-        <div className="flex justify-between text-xs">
-          {
-            userId && (
-              <div className="text-xs text-green-200">飞行员: {userId}</div>
-            )
-          }
+        <span style={{
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: '13px',
+          color: isStarted ? '#00cc55' : '#c8a800',
+          fontWeight: 'bold',
+        }}>
+          {isStarted ? '● 已连接' : '○ 等待启动'}
+        </span>
+      </div>
+
+      {/* ── User / Task info ── */}
+      {(userId || taskId !== null) && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          padding: '4px 12px',
+          background: 'rgba(0,6,2,0.5)',
+          borderBottom: '1px solid #051008',
+          flexShrink: 0,
+        }}>
+          {userId && (
+            <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: '14px', color: '#55bb70' }}>
+              飞行员 {userId}
+            </span>
+          )}
           {taskId !== null && (
-            <div className="text-xs text-green-200">任务ID: {taskId}</div>
+            <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: '14px', color: '#55bb70' }}>
+              任务 {taskId}
+            </span>
           )}
         </div>
-      </div>
-      
+      )}
+
       {renderRadarParams()}
-      
+
       {renderSAStatus()}
-      
-      <div 
+
+      {/* ── Log feed ── */}
+      <div
         ref={logContainerRef}
-        className="flex-1 overflow-y-auto bg-gray-900 p-4 font-mono text-sm mb-10"
+        className="flex-1 overflow-y-auto mb-10"
+        style={{ padding: '8px 12px', background: 'rgba(0,4,2,0.9)' }}
       >
         {!isStarted ? (
-          <div className="text-center py-10 text-gray-500 italic">
-            等待系统启动...
+          <div style={{
+            textAlign: 'center',
+            paddingTop: '40px',
+            fontFamily: "'Share Tech Mono', monospace",
+            fontSize: '15px',
+            color: '#4a9a55',
+            letterSpacing: '0.1em',
+        }}>
+          等待系统启动...
           </div>
         ) : (
-          incomingMessages.map(msg => (
-            <div key={msg.id} className="mb-2">
-              <span className="text-gray-500 mr-2">
-                {msg.timestamp.toLocaleTimeString()}
-              </span>
-              <span className={`font-bold mr-2 ${getMessageStyles(msg.type)}`}>
-                [{getMessagePrefix(msg.type)}]
-              </span>
-              <span className={getMessageStyles(msg.type)}>
-                {msg.content}
-              </span>
-            </div>
-          ))
+          incomingMessages.map(msg => {
+            const style = getMessageStyle(msg.type);
+            const isMissile = msg.type === 'sa_missile';
+            return (
+              <div
+                key={msg.id}
+                className={isMissile ? 'animate-pulse' : ''}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'max-content max-content 1fr',
+                  gap: '6px',
+                  alignItems: 'baseline',
+                  marginBottom: '5px',
+                  fontFamily: "'Share Tech Mono', monospace",
+                  fontSize: style.fontSize ?? '15px',
+                  lineHeight: '1.55',
+                }}
+              >
+                <span style={{ color: '#55aa66', fontSize: '13px' }}>
+                  {msg.timestamp.toLocaleTimeString('zh-CN', { hour12: false })}
+                </span>
+                <span style={{ ...style, opacity: 0.8 }}>
+                  [{getMessagePrefix(msg.type)}]
+                </span>
+                <span style={style}>
+                  {msg.content}
+                </span>
+              </div>
+            );
+          })
         )}
       </div>
-      
-    
     </div>
   );
 };

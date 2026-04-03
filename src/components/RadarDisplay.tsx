@@ -12,7 +12,6 @@ import radarStore from '../stores/RadarStore';
 import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';
 import useRadarData from '../hooks/useRadarData';
 import agentStore from '../stores/AgentStore';
-import ScenarioCompletionModal from './ScenarioCompletionModal';
 import audioManager from '../managers/AudioManager';
 
 // 扫描控制参数类型
@@ -137,7 +136,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
-  const [showScenarioCompletionModal, setShowScenarioCompletionModal] = React.useState(false);
   
   // 摇杆控制TDC相关状态
   const [calibrationOffset, setCalibrationOffset] = React.useState({x: 0, y: 0});
@@ -544,13 +542,13 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
-    if (button1 && !previousButton1Ref.current && joystickEnabled) {
+    if (button1 && !previousButton1Ref.current && joystickEnabled && !showMissionConfirm) {
       console.log('[RadarDisplay] Button1按下，直接触发目标锁定（Enter）');
       const syntheticEvent = new KeyboardEvent('keydown', { key: 'Enter' });
       handleKeyDown(syntheticEvent);
     }
     previousButton1Ref.current = button1;
-  }, [button1, joystickEnabled, handleKeyDown]);
+  }, [button1, joystickEnabled, handleKeyDown, showMissionConfirm]);
 
   // 处理button7的位置锁定/解锁逻辑（长按按钮 - 下降沿检测）
   React.useEffect(() => {
@@ -566,14 +564,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       
       lastButton7TriggerTime.current = currentTime;
-      
-      // 优先检查是否有弹窗显示，如果有则触发确认
-      if (showMissionConfirm) {
-        console.log('[Button7] 任务弹窗显示中，触发确认');
-        handleConfirmYes();
-        previousButton7Ref.current = button7;
-        return;
-      }
       
       if (lockedTdcPosition || lockedAntennaElevation !== null) {
         // TDC位置或天线高度已锁定，触发解锁功能
@@ -638,7 +628,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
     }
     previousButton7Ref.current = button7;
-  }, [button7, joystickEnabled, handleKeyDown, lockedTdcPosition, lockedAntennaElevation, tdcPosition, getCalibratedJoystickPos, joystickToTdc, mainPos, tdcToJoystick, radarStore.lockedTargetId, calculatedAntennaElevation, showMissionConfirm, handleConfirmYes]);
+  }, [button7, joystickEnabled, handleKeyDown, lockedTdcPosition, lockedAntennaElevation, tdcPosition, getCalibratedJoystickPos, joystickToTdc, mainPos, tdcToJoystick, radarStore.lockedTargetId, calculatedAntennaElevation]);
   
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {
@@ -667,16 +657,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     
       // 添加重复次数信息
       const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
-      if (radarRepetitionInfo && typeof radarRepetitionInfo !== 'string') {
-        // onAddMessage('info', `重复进度: ${formatRepetitionText(radarRepetitionInfo)}`);
-        
-        if (isLastRepetition(radarRepetitionInfo) && agentStore.isAIActive) {
-          setShowScenarioCompletionModal(true);
-          // onAddMessage('info', '⚠️ 这是人机模式下当前场景的最后一次任务，请联系主试');
-        } else {
-          setShowMissionConfirm(true);
-        }
-      }
+      setShowMissionConfirm(true);
       
       // 'army' is considered the correct type for this task (enemy)
       if (lockedTargetObject.type === 'army') {
@@ -708,13 +689,19 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   }, []);
 
   // 处理button2(IFF)（上升沿检测，直接调用handleIffButtonClick）
+  // 弹窗显示时优先触发确认，否则触发IFF
   React.useEffect(() => {
     if (button2 && !previousButton2Ref.current && joystickEnabled) {
-      console.log('[RadarDisplay] Button2(IFF)按下，直接触发IFF');
-      handleIffButtonClick();
+      if (showMissionConfirm) {
+        console.log('[RadarDisplay] Button2按下，弹窗显示中，触发确认');
+        handleConfirmYes();
+      } else {
+        console.log('[RadarDisplay] Button2(IFF)按下，直接触发IFF');
+        handleIffButtonClick();
+      }
     }
     previousButton2Ref.current = button2;
-  }, [button2, joystickEnabled]);
+  }, [button2, joystickEnabled, showMissionConfirm, handleConfirmYes]);
   
   // 自定义渲染函数，添加IFF按钮的点击事件
   const renderCustomText = (props: any) => {
@@ -933,63 +920,72 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
       {/* 任务确认弹窗 */}
       {showMissionConfirm && (
         <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            // backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            alignItems: 'center',
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
             zIndex: 100,
-            paddingRight: '60px',
-            marginLeft: '200px'
+            pointerEvents: 'auto',
         }}>
           <div style={{
-              backgroundColor: 'black',
-              padding: '24px',
-              border: '2px solid #00ff00',
-              borderRadius: '8px',
+              background: 'rgba(1,12,4,0.97)',
+              padding: '28px 36px',
+              border: '1px solid #0d4020',
+              borderLeft: `3px solid ${missionResultMessage === '结果: 正确' ? '#00cc55' : missionResultMessage === '结果: 错误' ? '#cc3333' : '#556655'}`,
+              borderRadius: '4px',
               textAlign: 'center',
-              boxShadow: '0 0 15px rgba(0, 255, 0, 0.5)',
-              color: '#00ff00',
-              fontFamily: '"Courier New", Courier, monospace',
+              boxShadow: '0 0 30px rgba(0,0,0,0.8), 0 0 20px rgba(0,180,70,0.08)',
+              fontFamily: "'Share Tech Mono', monospace",
+              minWidth: '280px',
           }}>
+            <div style={{
+              fontSize: '12px',
+              letterSpacing: '0.25em',
+              color: '#4aaa60',
+              textTransform: 'uppercase',
+              marginBottom: '14px',
+            }}>
+              ── 任务评估 ──
+            </div>
             <p style={{
               margin: '0 0 10px 0',
-              fontSize: '1.2em',
-              fontWeight: 'bold',
-              color: missionResultMessage === '结果: 正确' ? '#00cc00' : missionResultMessage === '结果: 错误' ? '#ff4444' : '#ffffff'
+              fontSize: '18px',
+              letterSpacing: '0.12em',
+              color: missionResultMessage === '结果: 正确' ? '#00cc55' : missionResultMessage === '结果: 错误' ? '#cc4444' : '#667766',
             }}>
-              {missionResultMessage}
+              {missionResultMessage === '结果: 正确' ? '✓ 判断正确' : missionResultMessage === '结果: 错误' ? '✗ 判断错误' : missionResultMessage}
             </p>
-            <h3 style={{ margin: 0, fontSize: '1.2em' }}>{lockedTargetObject?.type ? '进行下一次任务' : '重新进行本次任务'}</h3>
-            <div style={{ marginTop: '20px' }}>
-           
-              <button 
-                onClick={handleConfirmYes}
-                style={{
-                  backgroundColor: '#003300',
-                  border: '1px solid #00ff00',
-                  color: '#00ff00',
-                  padding: '8px 16px',
-                  margin: '0 10px',
-                  cursor: 'pointer',
-                  borderRadius: '4px'
-                }}
-              >
-                确定
-              </button>
-          
-            </div>
+            <p style={{
+              margin: '0 0 20px 0',
+              fontSize: '13px',
+              color: '#55aa66',
+              letterSpacing: '0.06em',
+            }}>
+              {lockedTargetObject?.type ? '当前任务已结束，可关闭窗口' : '请重新完成当前任务'}
+            </p>
+            <button
+              onClick={handleConfirmYes}
+              style={{
+                fontFamily: "'Share Tech Mono', monospace",
+                fontSize: '13px',
+                letterSpacing: '0.15em',
+                background: 'rgba(0,30,12,0.6)',
+                border: '1px solid #0d4020',
+                color: '#00aa44',
+                padding: '8px 28px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,50,20,0.8)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,30,12,0.6)'; }}
+            >
+              确认
+            </button>
           </div>
         </div>
       )}
-       <ScenarioCompletionModal 
-        isOpen={showScenarioCompletionModal}
-        onClose={() => {setShowScenarioCompletionModal(false); setShowMissionConfirm(true);}}
-      />
+
 
       {/* Non-Konva components are here, positioned over the canvas */}
       {!connected && (

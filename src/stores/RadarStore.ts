@@ -1,4 +1,4 @@
-import { makeAutoObservable, observable, action, ObservableSet } from 'mobx';
+import { makeAutoObservable, observable, action } from 'mobx';
 import agentStore from './AgentStore'; // Restore the import for agentStore
 
 
@@ -58,14 +58,6 @@ export class RadarStore {
   // 存储目标在屏幕上的动态显示位置
   targetDisplayPositions: Map<string, TargetDisplayPosition> = new Map();
   
-  // 新增：任务完成弹窗状态
-  completionModalInfo: {
-    isOpen: boolean;
-    message: string;
-  } = { isOpen: false, message: '' };
-
-  // 新增：记录已经弹窗过的完成任务类型
-  completedTaskTypes: ObservableSet<TaskType> = observable.set();
 
   constructor() {
     makeAutoObservable(this, {
@@ -75,16 +67,11 @@ export class RadarStore {
       lockedTargetId: observable,
       lockScreenX: observable,
       targetDisplayPositions: observable,
-      completionModalInfo: observable,
-      completedTaskTypes: observable,
       setUserId: action,
       startSystem: action,
       setLockedTargetId: action,
       setLockScreenX: action,
       setTargetDisplayPositions: action,
-      showCompletionModal: action,
-      hideCompletionModal: action,
-      addCompletedTaskType: action,
       setRadarDataHook: action,
     });
     console.log('RadarStore initialized with User ID:', this.userId);
@@ -254,26 +241,6 @@ export class RadarStore {
     if (this.lockScreenX !== x) {
       this.lockScreenX = x;
       console.log(`[RadarStore] Lock screen X set to: ${x}`);
-    }
-  }
-
-  // 新增：显示任务完成弹窗
-  showCompletionModal = (message: string) => {
-    this.completionModalInfo = { isOpen: true, message };
-    console.log(`[RadarStore] Showing completion modal: ${message}`);
-  }
-
-  // 新增：隐藏任务完成弹窗
-  hideCompletionModal = () => {
-    this.completionModalInfo = { isOpen: false, message: '' };
-    console.log('[RadarStore] Hiding completion modal.');
-  }
-
-  // 新增：添加一个已完成的任务类型
-  addCompletedTaskType = (taskType: TaskType) => {
-    if (!this.completedTaskTypes.has(taskType)) {
-      this.completedTaskTypes.add(taskType);
-      console.log(`[RadarStore] Task type ${taskType} marked as completed.`);
     }
   }
 

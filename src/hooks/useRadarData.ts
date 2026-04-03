@@ -192,6 +192,9 @@ class GlobalWebSocketManager {
         messageId += '_' + rawData.targetElevation;
       } else if (rawData.type === 'radar_data' && rawData.timestamp) {
         messageId += '_' + rawData.timestamp;
+      } else if (rawData.type === 'platform_task_config') {
+        const pid = rawData.normalized?.platform_task_id ?? rawData.raw?.ID;
+        messageId += '_' + String(pid ?? Date.now());
       }
       
       // 如果这个消息已经处理过，则跳过
@@ -476,6 +479,20 @@ const useRadarData = (
     isActive: boolean;
     parameters?: any;
   }>>([]);
+
+  /** 平台下发、服务端透传的 platform_task_config（含 raw / normalized） */
+  const [platformTaskConfig, setPlatformTaskConfig] = useState<{
+    raw: Record<string, unknown>;
+    normalized: Record<string, unknown>;
+  } | null>(null);
+
+  /** 平台包触发的自动启动请求 */
+  const [platformAutoStart, setPlatformAutoStart] = useState<{
+    userId: string;
+    taskType: 'radar' | 'sa';
+    includeAI: boolean;
+    isPractice: boolean;
+  } | null>(null);
 
   // gazerelation: 统一构造 Tobii 回合消息体（与 Tobii main.py 的 hand 协议一致）
   const buildTobiiStatusPayload = useCallback((
@@ -1053,6 +1070,7 @@ const useRadarData = (
     setRadarData(null); 
     // 重置所有任务次数信息
     setRepetitionInfos({ RADAR_TARGETING: null, SA_THREAT_RESPONSE: null });
+    setPlatformTaskConfig(null);
     sendMessage({ type: 'reset_view' });
     console.log("View reset command sent, data stream paused, and local state cleared.");
   }, [sendMessage]);
@@ -1098,6 +1116,24 @@ const useRadarData = (
     }
 
     // Handle other message types
+    if (message.type === 'platform_task_config' && message.raw && message.normalized) {
+      console.log('[useRadarData] platform_task_config from server:', message);
+      setPlatformTaskConfig({ raw: message.raw, normalized: message.normalized });
+      if (message.autostart) {
+        const kind = message.normalized.web_task_kind;
+        const taskType: 'radar' | 'sa' = kind === 'sa' ? 'sa' : 'radar';
+        const userId = String(message.userId || message.normalized.platform_task_id || '');
+        console.log('[useRadarData] platform autostart triggered:', { userId, taskType, includeAI: message.normalized.include_ai });
+        setPlatformAutoStart({
+          userId,
+          taskType,
+          includeAI: Boolean(message.normalized.include_ai),
+          isPractice: Boolean(message.normalized.is_practice),
+        });
+      }
+      return;
+    }
+
     if (message.type === 'init_settings') {
       // Play sound only if it's a new task and the correct type
       // if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING' && message.audio_enabled && !message.is_ai_active) {
@@ -1105,6 +1141,12 @@ const useRadarData = (
       // }
 
       console.log('[useRadarData] Processing full init_settings from server:', message);
+      if (message.platform_task?.raw && message.platform_task?.normalized) {
+        setPlatformTaskConfig({
+          raw: message.platform_task.raw,
+          normalized: message.platform_task.normalized,
+        });
+      }
       
       // 1. 初始化AI和任务状态
       agentStore.initializeFromServer(message);
@@ -1200,19 +1242,6 @@ const useRadarData = (
       }
     } else if (message.type === 'all_tasks_completed') {
       console.log('[useRadarData] Received all_tasks_completed:', message);
-      // 只有在正式模式下才显示任务完成弹窗
-      if (!radarStore.isPractice) {
-        // 检查此任务类型是否已弹窗过
-        if (message.task_type && !radarStore.completedTaskTypes.has(message.task_type)) {
-          radarStore.showCompletionModal(message.message);
-          // 标记为已完成，防止重复弹窗
-          radarStore.addCompletedTaskType(message.task_type);
-        } else {
-          console.log(`[useRadarData] Completion modal for ${message.task_type} has already been shown. Suppressing.`);
-        }
-      } else {
-        console.log('[useRadarData] Practice mode: Suppressing completion modal.');
-      }
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 
@@ -1410,6 +1439,8 @@ const useRadarData = (
     changeAntennaAdjustmentRequired,
     startSaTobiiRound,
     endSaTobiiRound,
+    platformTaskConfig,
+    platformAutoStart,
   };
 };
 

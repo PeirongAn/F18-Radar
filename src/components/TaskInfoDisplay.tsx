@@ -41,17 +41,20 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
   return (
     <div 
       className="absolute top-4 left-4 bg-black bg-opacity-75 border border-green-700 rounded-md p-3 shadow-lg z-50 flex flex-col space-y-2"
-      style={{ fontFamily: '"Courier New", Courier, monospace' }}
+      style={{ fontFamily: "'Share Tech Mono', 'SimHei', 'Microsoft YaHei', monospace" }}
     >
       <div className="text-green-400 text-sm">
+        {task_type && (
+          <p>任务: <span className="font-bold text-white">
+            {task_type === 'RADAR_TARGETING' ? '传感器任务' : '威胁排序'}
+          </span></p>
+        )}
         <p>模式: <span className="font-bold text-white">{is_practice ? '练习模式' : '正式模式'}</span></p>
         {/* {scenario_index !== undefined && scenario_total !== undefined && (
           <p>场景类型: <span className="font-bold text-white">{scenario_index} / {scenario_total}</span></p>
         )} */}
         {difficulty && <p>难度: <span className="font-bold text-white">{translateDifficulty(difficulty)}</span></p>}
-        {/* <p>本轮剩余: <span className="font-bold text-white">{remaining}</span></p> */}
-        <p>交互工效: <span className="font-bold text-white">{audio_enabled ? '高' : '低'}</span></p>
-        {/* <p>重复进度: <span className="font-bold text-white">{current} / {total}</span></p> */}
+        <p>任务进度: <span className="font-bold text-white">{current} / {total}</span></p>
       </div>
       
       {/* 新增：策略说明按钮 */}
