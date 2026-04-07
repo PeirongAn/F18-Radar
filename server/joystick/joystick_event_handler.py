@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Dict, Any, Optional, Set, Callable
 from threading import Lock
 from .joystick_websocket_controller import JoystickWebSocketController
@@ -35,6 +36,7 @@ class JoystickEventHandler:
         
         # 事件处理状态
         self.is_active = False
+        self.last_broadcast_time: Optional[float] = None
         
         # 异步事件循环相关
         self.loop = None
@@ -110,8 +112,14 @@ class JoystickEventHandler:
     def _enqueue_data(self, data: Dict[str, Any]):
         """将数据放入队列中等待异步处理"""
         try:
+            if self.loop is None:
+                try:
+                    self.loop = asyncio.get_running_loop()
+                    if not self.data_processing_task:
+                        self.data_processing_task = self.loop.create_task(self._process_data_queue())
+                except RuntimeError:
+                    pass
             if self.loop and self.data_queue:
-                # 线程安全地放入数据队列
                 self.loop.call_soon_threadsafe(self.data_queue.put_nowait, data)
         except Exception as e:
             logger.warning(f"数据入队失败: {e}")
@@ -148,6 +156,7 @@ class JoystickEventHandler:
                 try:
                     # 异步发送消息
                     await self.websocket_server.send_to_client(client_id, data)
+                    self.last_broadcast_time = time.time()
                 except Exception as e:
                     logger.warning(f"向客户端 {client_id} 发送操纵杆数据失败: {e}")
                     clients_to_remove.append(client_id)
@@ -328,5 +337,6 @@ class JoystickEventHandler:
             'active': self.is_active,
             'connected': self.joystick_controller.is_connected(),
             'subscribed_clients': len(self.joystick_clients),
-            'device_status': self.joystick_controller.get_device_status()
+            'device_status': self.joystick_controller.get_device_status(),
+            'last_broadcast_time': self.last_broadcast_time
         }

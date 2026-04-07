@@ -20,10 +20,14 @@ from network.http_server import http_server
 
 _initialized = False
 _joystick_handler = None
+_gaze_svc = None  # 全局 GazeService 实例，供 main() finally 块清理
+
+# 眼动数据存储目录（相对本文件）
+_GAZE_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "gaze")
 
 async def initialize_system():
     """初始化系统组件（延迟调用，首次客户端连接时触发）"""
-    global _initialized, _joystick_handler
+    global _initialized, _joystick_handler, _gaze_svc
     if _initialized:
         return _joystick_handler
     _initialized = True
@@ -55,7 +59,33 @@ async def initialize_system():
     info("5. 启动操纵杆事件处理器...", "main")
     await asyncio.sleep(0.1)
     _joystick_handler.start()
-    
+
+    # 6. 初始化眼动追踪服务
+    info("6. 初始化眼动追踪服务...", "main")
+    try:
+        from tobii.gaze_service import GazeService
+        from core import message_handler as _mh
+        _gaze_svc = GazeService(data_dir=_GAZE_DATA_DIR)
+        # 注入到消息处理器和 HTTP 服务器（即使没有 Tobii 设备，任务元数据和 DB 仍然可用）
+        _mh.set_gaze_service(_gaze_svc)
+        http_server.set_gaze_service(_gaze_svc)
+        websocket_server.set_gaze_service(_gaze_svc)
+        # 尝试连接 Tobii 设备（可选：失败也不影响任务记录功能）
+        try:
+            _gaze_svc.connect()
+            info("✅ 眼动追踪服务已启动（设备已连接）", "main")
+        except Exception as e:
+            info(f"⚠️ Tobii 设备未连接，眼动追踪仅记录任务元数据: {e}", "main")
+    except Exception as e:
+        error(f"眼动追踪服务初始化失败（已跳过）: {e}", "main")
+        # 清理孤儿实例
+        if _gaze_svc is not None:
+            try:
+                _gaze_svc.shutdown()
+            except Exception:
+                pass
+            _gaze_svc = None
+
     info("=== 系统初始化完成 ===", "main")
     
     return _joystick_handler
@@ -117,6 +147,19 @@ async def main():
                 _joystick_handler.stop()
             except Exception as e:
                 error(f"清理操纵杆资源时出错: {e}", "main")
+
+        if _gaze_svc is not None:
+            info("正在关闭眼动追踪服务...", "main")
+            try:
+                # 若仍有活动任务，先正常结束它（写 summary.json）
+                active_id = _gaze_svc.get_active_task_id()
+                if active_id:
+                    _gaze_svc.stop_task(task_id=active_id)
+                # 关闭后台文件写入线程，确保数据落盘
+                _gaze_svc.shutdown()
+                info("✅ 眼动追踪服务已关闭", "main")
+            except Exception as e:
+                error(f"关闭眼动追踪服务时出错: {e}", "main")
 
 if __name__ == "__main__":
     info("雷达系统服务器 v2.0 - 模块化架构", "main")

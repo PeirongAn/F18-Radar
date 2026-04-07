@@ -1,0 +1,11 @@
+{
+  "task_id": "10",
+  "user_id": "123",
+  "task_source": "",
+  "task_name": "SA_THREAT_RESPONSE",
+  "start_us": 1775286453011477,
+  "end_us": 1775286455475890,
+  "duration_ms": 2464.413,
+  "total_frames": 296,
+  "fixation_count": 0
+}

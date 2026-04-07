@@ -9,6 +9,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, db_manager, TaskScenarioManager, generate_task_id, target_manager, threat_manager
+from network.platform_task_bridge import peek_pending_include_ai, consume_pending_for_task_start
 from models.threat_models import RadarConfig
 from network.message_protocol import message_protocol
 
@@ -24,6 +25,40 @@ class MessageHandler:
         }
         # 协议配置
         self.use_enhanced_protocol = True  # 默认使用增强协议
+        # 眼动追踪服务（由 main.py 的 initialize_system 注入，可为 None）
+        self._gaze_svc = None
+
+    def set_gaze_service(self, gaze_svc) -> None:
+        """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
+        self._gaze_svc = gaze_svc
+
+    def _gaze_start(self, task_id, user_id: str = "", task_name: str = "") -> None:
+        """任务开始时启动 gaze 追踪（无 Tobii 设备时静默跳过）。"""
+        if self._gaze_svc is None:
+            return
+        try:
+            # bbox 为空列表：主服务器阶段不知道目标框像素坐标，
+            # 前端后续通过 /tobii/hand 调用 set_task_bbox() 更新。
+            self._gaze_svc.start_task(
+                bbox=[],
+                screen_size=(1, 1),
+                task_id=task_id,
+                user_id=user_id,
+                task_name=task_name,
+            )
+        except Exception as e:
+            print(f"[MessageHandler] gaze start_task 失败（已跳过）: {e}")
+
+    def _gaze_stop(self, task_id=None) -> None:
+        """任务结束时停止 gaze 追踪（无 Tobii 设备时静默跳过）。"""
+        if self._gaze_svc is None:
+            return
+        try:
+            resolved = task_id or self._gaze_svc.get_active_task_id()
+            if resolved:
+                self._gaze_svc.stop_task(task_id=str(resolved))
+        except Exception as e:
+            print(f"[MessageHandler] gaze stop_task 失败（已跳过）: {e}")
     
     async def handle_client_message(self, message_str: str, session_state: Dict[str, Any], 
                                   websocket=None) -> Union[List[Dict[str, Any]], Tuple[Dict[str, Any], bool], bool]:
@@ -75,6 +110,9 @@ class MessageHandler:
         """处理任务开始消息"""
         print("消息类型: task_start", message.get('user_id', ''))
         is_ai_active_request = message.get('include_ai', False)
+        pending_ai = peek_pending_include_ai()
+        if pending_ai is not None:
+            is_ai_active_request = bool(pending_ai)
         user_id = message.get('user_id', '')
         event_owner = 'AI' if is_ai_active_request else 'manual'
         is_practice = message.get('is_practice', False)
@@ -94,6 +132,22 @@ class MessageHandler:
         
         # 从管理器获取下一个任务场景
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+
+        overlay, platform_meta = consume_pending_for_task_start()
+        if overlay:
+            current_scenario['difficulty_name'] = overlay['difficulty_name']
+            current_scenario['difficulty_config'] = overlay['difficulty_config']
+            current_scenario['is_ai_active'] = overlay['is_ai_active']
+            current_scenario['ai_level_name'] = overlay['ai_level_name']
+            current_scenario['ai_level_config'] = overlay['ai_level_config']
+            current_scenario['audio_enabled'] = overlay['audio_enabled']
+            rep_info = current_scenario.get('repetition_info') or {}
+            if overlay.get('repetition_total_override') is not None:
+                rep_info['total'] = overlay['repetition_total_override']
+            rep_info['difficulty'] = current_scenario['difficulty_name']
+            rep_info['is_ai_active'] = current_scenario['is_ai_active']
+            current_scenario['repetition_info'] = rep_info
+            event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
         
         self.current_session[f'{task_type}_scenario'] = current_scenario
         task_id = generate_task_id()
@@ -106,7 +160,7 @@ class MessageHandler:
                 'operationType': 'task_start',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True,
-                'parameters': {'include_ai': is_ai_active_request},
+                'parameters': {'include_ai': current_scenario['is_ai_active']},
                 'user_id': user_id,
                 'event_owner': event_owner
             }
@@ -116,6 +170,9 @@ class MessageHandler:
 
         db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
         target_manager.initialize_targets(current_scenario['difficulty_config'])
+
+        # 启动眼动追踪（有 Tobii 时生效，否则静默跳过）
+        self._gaze_start(task_id, user_id=user_id, task_name=task_type)
 
         init_response = {
             "type": "init_settings",
@@ -129,6 +186,8 @@ class MessageHandler:
             "repetition_info": current_scenario['repetition_info'],
             "task_type": task_type
         }
+        if platform_meta:
+            init_response["platform_task"] = platform_meta
         return [init_response]
     
     async def _handle_settings_update(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -231,8 +290,19 @@ class MessageHandler:
         task_manager = session_state.get('task_manager')
         if task_manager:
             task_manager.mark_task_completed()
-        
-        return []
+
+        # 停止眼动追踪
+        self._gaze_stop(self.current_session.get('task_id'))
+
+        responses = []
+        # 正式模式下，任务完成后主动推送问卷
+        if not session_state.get('is_practice', False):
+            responses.append({
+                "type": "show_questionnaire",
+                "task_type": "RADAR_TARGETING",
+                "task_id": self.current_session.get('task_id'),
+            })
+        return responses
     
     async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                    client_event_owner: str) -> List[Dict[str, Any]]:
@@ -266,8 +336,19 @@ class MessageHandler:
         task_manager = session_state.get('sa_task_manager')
         if task_manager:
             task_manager.mark_task_completed()
-        
-        return []
+
+        # 停止眼动追踪
+        self._gaze_stop(self.current_session.get('task_id'))
+
+        responses = []
+        # 正式模式下，任务完成后主动推送问卷
+        if not session_state.get('is_practice', False):
+            responses.append({
+                "type": "show_questionnaire",
+                "task_type": "SA_THREAT_RESPONSE",
+                "task_id": self.current_session.get('task_id'),
+            })
+        return responses
     
     async def _handle_record_operation(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                      client_event_owner: str) -> List[Dict[str, Any]]:
@@ -312,7 +393,10 @@ class MessageHandler:
         task_id = generate_task_id()
         self.current_session['task_id'] = task_id
         self.current_session[f'{task_type}_scenario'] = current_scenario
-        
+
+        # 启动眼动追踪
+        self._gaze_start(task_id, user_id=user_id, task_name=task_type)
+
         # 记录操作
         if not session_state.get('is_practice', False):
             operation = {

@@ -606,7 +606,7 @@ const useRadarData = (
 
     if (sendEndPayload && ws.readyState === WebSocket.OPEN && antennaTaskIdRef.current) {
       const endPayload = buildAntennaStatusPayload(false, lastAntennaPromptPositionRef.current);
-      ws.send(JSON.stringify({ type: 'hand', ...endPayload, task_id: antennaTaskIdRef.current }));
+      ws.send(JSON.stringify({ type: 'tobii_hand', ...endPayload, task_id: antennaTaskIdRef.current }));
       console.log('[gazerelation] 天线回合WS发送结束消息:', endPayload);
       
       // 等待后端响应后再关闭连接
@@ -680,7 +680,7 @@ const useRadarData = (
       if (!antennaRoundWsRef.current || antennaRoundWsRef.current.readyState !== WebSocket.OPEN) return;
       hasReportedAntennaPromptRef.current = true;
       const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
-      antennaRoundWsRef.current.send(JSON.stringify({ type: 'hand', ...startPayload }));
+      antennaRoundWsRef.current.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
       console.log('[gazerelation] 天线回合WS发送开始消息:', startPayload);
     };
 
@@ -760,12 +760,12 @@ const useRadarData = (
       console.log(`[gazerelation] isAIActive111111: ${agentStore.isAIActive}`);
       if (agentStore.isAIActive) {
          const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat_withAI');
-         ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+         ws.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
          console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
       }
       else {
         const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat_noAI');
-        ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+        ws.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
         console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
       }
       saTobiiRoundStartedRef.current = true;
@@ -819,8 +819,8 @@ const useRadarData = (
 
     if (ws.readyState === WebSocket.OPEN) {
       const payload = saTobiiTaskIdRef.current
-        ? { type: 'hand', ...endPayload, task_id: saTobiiTaskIdRef.current }
-        : { type: 'hand', ...endPayload };
+        ? { type: 'tobii_hand', ...endPayload, task_id: saTobiiTaskIdRef.current }
+        : { type: 'tobii_hand', ...endPayload };
       ws.send(JSON.stringify(payload));
       console.log('[gazerelation] SA Tobii回合发送结束消息:', payload);
 
@@ -925,7 +925,7 @@ const useRadarData = (
       if (ws && ws.readyState === WebSocket.OPEN && !hasReportedAntennaPromptRef.current) {
         hasReportedAntennaPromptRef.current = true;
         const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
-        ws.send(JSON.stringify({ type: 'hand', ...startPayload }));
+        ws.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
         console.log('[gazerelation] 收到首个bbox后发送开始消息:', startPayload);
       }
     };
@@ -1157,12 +1157,12 @@ const useRadarData = (
       // 3. 设置雷达参数供UI自动配置
       setInitSettings(message.settings);
 
-      // 4. 设置任务重复信息
+      // 4. 设置任务重复信息（附带 task_id 供问卷触发使用）
       if (message.task_type && message.repetition_info) {
         console.log('[useRadarData] Received repetition_info:', message.repetition_info);
         setRepetitionInfos(prev => ({
           ...prev,
-          [message.task_type]: message.repetition_info,
+          [message.task_type]: { ...message.repetition_info, task_id: message.task_id },
         }));
       }
 
@@ -1226,7 +1226,7 @@ const useRadarData = (
       if (message.task_type && message.repetition_info) {
         setRepetitionInfos(prev => ({
           ...prev,
-          [message.task_type]: message.repetition_info,
+          [message.task_type]: { ...message.repetition_info, task_id: message.task_id },
         }));
       }
       //  初始化AI和任务状态

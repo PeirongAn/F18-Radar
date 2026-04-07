@@ -2,7 +2,7 @@ import asyncio
 import websockets
 import json
 import time
-from typing import Dict, Any, Set
+from typing import Dict, Any, Optional, List
 import uuid
 
 import sys
@@ -26,11 +26,18 @@ class WebSocketServer:
         
         # 操纵杆事件处理器（延迟初始化）
         self.joystick_handler = None
+
+        # 眼动追踪服务（延迟注入）
+        self._gaze_svc = None
     
     def set_joystick_handler(self, handler):
         """设置操纵杆事件处理器"""
         self.joystick_handler = handler
         handler.set_websocket_server(self)
+
+    def set_gaze_service(self, gaze_svc) -> None:
+        """注入 GazeService 实例，用于处理 tobii_hand 消息。"""
+        self._gaze_svc = gaze_svc
     
     def generate_client_id(self) -> str:
         """生成唯一的客户端ID"""
@@ -80,6 +87,27 @@ class WebSocketServer:
         # 移除断开的客户端
         for client_id in disconnected_clients:
             self.remove_client(client_id)
+
+    async def broadcast_to_clients_except(
+        self, message: Dict[str, Any], exclude_client_id: Optional[str]
+    ) -> int:
+        """向所有已连接客户端广播消息，可选排除某一 client_id。返回成功送达的连接数。"""
+        if not self.clients:
+            return 0
+        ok_count = 0
+        disconnected: List[str] = []
+        for cid, websocket in list(self.clients.items()):
+            if exclude_client_id is not None and cid == exclude_client_id:
+                continue
+            try:
+                if await self.send_message(websocket, message):
+                    ok_count += 1
+            except Exception as e:
+                self.logger.warning(f"向客户端 {cid} 广播失败: {e}")
+                disconnected.append(cid)
+        for cid in disconnected:
+            self.remove_client(cid)
+        return ok_count
     
     def get_client_count(self) -> int:
         """获取当前连接的客户端数量"""
@@ -112,7 +140,7 @@ class WebSocketServer:
             json_str = json.dumps(message)
             success = await self._send_raw_message(websocket, json_str)
             if success:
-                self.logger.debug(f"发送消息: {message['type']}")
+                self.logger.debug(f"发送消息: {message.get('type', '')}")
             return success
         except Exception as e:
             self.logger.error(f"发送消息失败: {e}", exc_info=True)
@@ -122,7 +150,15 @@ class WebSocketServer:
         """处理单个客户端连接"""
         client_id = self.generate_client_id()
         self.add_client(client_id, websocket)
-        
+
+        # 首个客户端连接时自动触发系统初始化（包括眼动服务）
+        from main import initialize_system, _initialized
+        if not _initialized:
+            try:
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"首次连接延迟初始化失败: {e}")
+
         try:
             # 初始连接时发送不包含目标数据的基础数据
             initial_data = target_manager.get_radar_data(include_targets=False)
@@ -146,6 +182,24 @@ class WebSocketServer:
                     
                     # 检查是否为操纵杆相关消息
                     message_type = message_data.get('type', '')
+
+                    is_platform_packet = (
+                        message_type == 'platform_task' or
+                        (not message_type and
+                         message_data.get('TaskName') and
+                         str(message_data.get('ID', '')).strip())
+                    )
+                    if is_platform_packet:
+                        from network.platform_task_bridge import handle_platform_task_ws
+                        for reply in await handle_platform_task_ws(self, client_id, message_data):
+                            await self.send_message(websocket, reply)
+                        continue
+
+                    # tobii_hand：更新眼动注意力区域（等价于 POST /tobii/hand）
+                    if message_type == 'tobii_hand':
+                        reply = await self._handle_tobii_hand(message_data)
+                        await self.send_message(websocket, reply)
+                        continue
 
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'joystick_connect' and not self.joystick_handler:
@@ -234,6 +288,60 @@ class WebSocketServer:
             # 清理客户端连接
             self.remove_client(client_id)
     
+    async def _handle_tobii_hand(self, data: dict) -> dict:
+        """
+        处理 tobii_hand 消息，逻辑与 POST /tobii/hand 一致。
+
+        消息格式（目标出现）:
+            {"type": "tobii_hand", "box_visible": true, "task_id": 123,
+             "bbox": [[x1,y1,x2,y2]], "scream_data": [1920, 1080]}
+        消息格式（目标消失）:
+            {"type": "tobii_hand", "box_visible": false, "task_id": 123}
+
+        Returns:
+            响应 dict，含 ok / msg / task_id 字段。
+        """
+        if self._gaze_svc is None:
+            return {"type": "tobii_hand_result", "ok": False, "msg": "眼动追踪服务未启动"}
+
+        if "box_visible" not in data:
+            return {"type": "tobii_hand_result", "ok": False, "msg": "缺少字段: box_visible"}
+
+        box_visible = bool(data.get("box_visible"))
+        task_id = data.get("task_id")
+
+        if box_visible:
+            bbox = data.get("bbox") or []
+            scream_data = data.get("scream_data") or [1, 1]
+            if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
+                scream_data = [1, 1]
+            screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+
+            updated = self._gaze_svc.set_task_bbox(
+                bbox=bbox,
+                screen_size=screen_size,
+                task_id=str(task_id) if task_id is not None else None,
+            )
+            active_id = self._gaze_svc.get_active_task_id()
+            return {
+                "type": "tobii_hand_result",
+                "ok": updated,
+                "msg": "bbox 已更新" if updated else "无活动任务，bbox 未更新",
+                "task_id": active_id,
+            }
+        else:
+            updated = self._gaze_svc.set_task_bbox(
+                bbox=[],
+                screen_size=(1, 1),
+                task_id=str(task_id) if task_id is not None else None,
+            )
+            return {
+                "type": "tobii_hand_result",
+                "ok": True,
+                "msg": "目标框消失，bbox 已清空",
+                "task_id": self._gaze_svc.get_active_task_id(),
+            }
+
     async def start_server(self) -> None:
         """启动WebSocket服务器"""
         self.logger.info(f"雷达服务器启动中... ws://{self.host}:{self.port}")

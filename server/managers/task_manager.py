@@ -325,7 +325,7 @@ class TaskScenarioManager:
                 current_level_conf = lv
                 break
 
-        audio = game_settings.get('audio_enabled', True)
+        audio = True  # 永远启用高功效
 
         # AI 模式：1 个场景
         ai_scenario = {
@@ -389,8 +389,8 @@ class TaskScenarioManager:
         all_levels = self.config.get('levels', [])
         all_difficulties = game_settings.get('difficulty_levels', {})
 
-        # 刷新 audio_enabled
-        scenario['audio_enabled'] = game_settings.get('audio_enabled', True)
+        # 永远启用高功效
+        scenario['audio_enabled'] = True
 
         # 用 current_difficulty 覆盖场景的难度
         current_diff = game_settings.get('current_difficulty')

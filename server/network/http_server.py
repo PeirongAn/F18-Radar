@@ -26,6 +26,7 @@ class HTTPServer:
         self.app = web.Application()
         self._routes_setup = False
         self.joystick_handler = None
+        self._gaze_svc = None
         self._setup_routes()
         self.seen_users = set()
         # 新增
@@ -43,6 +44,10 @@ class HTTPServer:
     def set_joystick_handler(self, handler):
         """设置操纵杆事件处理器"""
         self.joystick_handler = handler
+
+    def set_gaze_service(self, gaze_svc) -> None:
+        """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
+        self._gaze_svc = gaze_svc
     
     def _setup_routes(self):
         """设置路由"""
@@ -52,7 +57,11 @@ class HTTPServer:
             
         # WebSocket路由
         self.app.router.add_get('/ws', self.websocket_handler)
-        
+
+        # 眼动追踪路由
+        self.app.router.add_post('/tobii/hand', self.tobii_hand_handler)
+        self.app.router.add_get('/tobii/gaze_point', self.tobii_gaze_point_handler)
+
         # 静态文件路由
         self._setup_static_routes()
         
@@ -162,7 +171,14 @@ class HTTPServer:
         # 将连接注册到 websocket_server，使操纵杆数据广播能找到此客户端
         from network import websocket_server
         websocket_server.add_client(client_id, ws)
-        
+
+        # 首个客户端连接时自动触发系统初始化（包括眼动服务）
+        from main import initialize_system, _initialized
+        if not _initialized:
+            try:
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"首次连接延迟初始化失败: {e}")
 
         try:
             # 发送初始数据
@@ -209,6 +225,19 @@ class HTTPServer:
                             }, ensure_ascii=False))
                         
                         continue  # 处理完毕，进入下一条
+
+                    is_platform_packet = (
+                        message_type == 'platform_task' or
+                        (not message_type and
+                         message_data and
+                         message_data.get('TaskName') and
+                         str(message_data.get('ID', '')).strip())
+                    )
+                    if is_platform_packet:
+                        from network.platform_task_bridge import handle_platform_task_ws
+                        for reply in await handle_platform_task_ws(websocket_server, client_id, message_data):
+                            await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                        continue
 
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'joystick_connect' and not self.joystick_handler:
@@ -271,6 +300,77 @@ class HTTPServer:
             
         return ws
     
+    async def tobii_hand_handler(self, request: web.Request) -> web.Response:
+        """
+        POST /tobii/hand
+
+        前端在目标框出现（box_visible=true）或消失（box_visible=false）时调用。
+
+        box_visible=true 时更新当前活动任务的注意力区域（bbox），
+        不重新创建任务——任务已由主服务器在 task_start 时创建。
+
+        请求体示例（出现）:
+            {"box_visible": true, "task_id": 123, "bbox": [[x1,y1,x2,y2]],
+             "scream_data": [1920, 1080]}
+        请求体示例（消失）:
+            {"box_visible": false, "task_id": 123}
+        """
+        if self._gaze_svc is None:
+            return web.json_response({"ok": False, "msg": "眼动追踪服务未启动"}, status=503)
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "msg": "请求体必须是 JSON"}, status=400)
+
+        if "box_visible" not in data:
+            return web.json_response({"ok": False, "msg": "缺少字段: box_visible"}, status=400)
+
+        box_visible = bool(data.get("box_visible"))
+        task_id = data.get("task_id")
+
+        if box_visible:
+            bbox = data.get("bbox") or []
+            scream_data = data.get("scream_data") or [1, 1]
+            if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
+                scream_data = [1, 1]
+            screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+
+            updated = self._gaze_svc.set_task_bbox(
+                bbox=bbox,
+                screen_size=screen_size,
+                task_id=str(task_id) if task_id is not None else None,
+            )
+            active_id = self._gaze_svc.get_active_task_id()
+            return web.json_response({
+                "ok": updated,
+                "msg": "bbox 已更新" if updated else "无活动任务，bbox 未更新",
+                "task_id": active_id,
+            })
+
+        else:
+            # box_visible=False：清空 bbox（目标框消失，gaze 任务本身由主服务器驱动结束）
+            updated = self._gaze_svc.set_task_bbox(
+                bbox=[],
+                screen_size=(1, 1),
+                task_id=str(task_id) if task_id is not None else None,
+            )
+            return web.json_response({
+                "ok": True,
+                "msg": "目标框消失，bbox 已清空",
+                "task_id": self._gaze_svc.get_active_task_id(),
+            })
+
+    async def tobii_gaze_point_handler(self, request: web.Request) -> web.Response:
+        """GET /tobii/gaze_point — 返回最新注视点坐标（供 visible_gaze.py 轮询）。"""
+        if self._gaze_svc is None:
+            return web.json_response({"ok": False, "msg": "眼动追踪服务未启动"}, status=503)
+
+        point, ts = self._gaze_svc.get_latest_gaze_point()
+        if point is None:
+            return web.json_response({"ok": False, "msg": "注视点数据不可用或已过期"}, status=404)
+        return web.json_response({"ok": True, "gaze_point": point, "timestamp": ts})
+
     async def start_server(self):
         """启动HTTP服务器"""
         self.logger.info(f"HTTP服务器启动中... http://{self.host}:{self.port}")

@@ -1,889 +1,272 @@
-from flask import Flask
-import tobii_research as tr
-from flask import request, jsonify
-import math
-from collections import deque
-import uuid
+"""
+Tobii 眼动服务器入口
+
+架构:
+  GazeService  ——  核心业务（设备、数据、任务、文件写入）
+       │
+  ┌────┴─────┐
+  HTTPServer  WebSocketServer
+  (Flask)    (websockets)
+
+文件存储：每个任务的眼动数据存放在
+  server/data/gaze/{task_id}/
+    raw_gaze.jsonl   fixation.jsonl   summary.json
+
+任务 ID 联动：前端收到主服务器的 task_id（整数）后，
+在调用 /tobii/hand（box_visible=true）或 WS hand 消息时
+一起传入 task_id 字段，tobii 服务器将用该 ID 命名文件目录。
+
+其他服务只需 import GazeService 即可复用眼动能力。
+"""
+
+import os
 import threading
+import asyncio
 import time
 import json
 
-import pymysql
-from pymysql import Error
+from flask import Flask, request, jsonify
 import websockets
-import asyncio
-# 数据库配置
-DB_CONFIG = {
-    'host': 'localhost',      # MySQL服务器地址
-    'port': 3306,             # MySQL端口（默认3306）
-    'user': 'root',           # 用户名（改成你自己的）
-    'password': '123456',  # 密码（改成你安装时设置的root密码）
-    'database': 'task_logs',  # 数据库名
-    'charset': 'utf8mb4'
-}
 
-eyetrackers = None # 全局变量
-eyetracker = None
+from gaze_service import GazeService
 
-flag = False # 全局变量，判断是否在注释
-gaze_window = deque(maxlen=600)
-# 当前任务
-current_task = None
-task_active = False
-# 线程锁，防止 gaze 回调和 Flask 请求同时改数据
-window_lock = threading.Lock()
-state_lock = threading.Lock()
-
-# 日志文件
-FIXATION_LOG_FILE = "fixation_events.txt"
-TASK_LOG_FILE = "task_records.txt"
-
-# 存储最新的注视点（用于可视化）
-latest_gaze_point = None
-latest_gaze_time = None
-gaze_point_lock = threading.Lock()
-
-# WebSocket连接管理
-connected_clients = set()
-clients_lock = threading.Lock()
-ws_event_loop = None
-
-# 连续未看框阈值与状态
-OUT_OF_BOX_FALSE_THRESHOLD = 2000
-consecutive_out_of_box_false = 0
-out_of_box_feedback_sent = False
+# 眼动数据默认存储目录（相对于本文件向上两级到 server/data/gaze）
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(_HERE, "..", "..", "server", "data", "gaze")
 
 
-def reset_out_of_box_state():
-    """重置单回合内的连续未注视计数与反馈标记"""
-    global consecutive_out_of_box_false, out_of_box_feedback_sent
-    consecutive_out_of_box_false = 0
-    out_of_box_feedback_sent = False
-
-
-def get_active_task_id():
-    """获取当前活动任务ID（若存在）"""
-    global current_task
-    if current_task and isinstance(current_task, dict):
-        return current_task.get("task_id")
-    return None
-
-
-async def broadcast_ws_message(message_obj):
-    """向所有WebSocket客户端广播JSON消息"""
-    message = json.dumps(message_obj, ensure_ascii=False)
-    with clients_lock:
-        clients = list(connected_clients)
-
-    stale_clients = []
-    for client in clients:
-        try:
-            await client.send(message)
-        except Exception:
-            stale_clients.append(client)
-
-    if stale_clients:
-        with clients_lock:
-            for stale_client in stale_clients:
-                if stale_client in connected_clients:
-                    connected_clients.remove(stale_client)
-
-
-def push_attention_feedback(task_id, consecutive_count):
-    """
-    从 gaze 回调线程触发一次前端注意力反馈。
-    action=flash_mode 与前端 useRadarData 的闪烁判断逻辑对齐。
-    """
-    global ws_event_loop
-    if ws_event_loop is None:
-        return
-
-    payload = {
-        "ok": True,
-        "type": "attention_feedback",
-        "action": "flash_mode",
-        "should_flash": True,
-        "duration_ms": 3000,
-        "reason": "consecutive_out_of_box_false",
-        "consecutive_false_count": consecutive_count,
-        "task_id": task_id,
-        "server_time_ms": int(time.time() * 1000)
-    }
-    print("发送注意力反馈:", payload)
-    asyncio.run_coroutine_threadsafe(broadcast_ws_message(payload), ws_event_loop)
+# ─────────────────────────────────────────────────────────────
+# HTTP Server
+# ─────────────────────────────────────────────────────────────
 
 class HTTPServer:
-    def __init__(self, host, port):
+    def __init__(self, host: str, port: int, gaze_service: GazeService):
         self.host = host
         self.port = port
+        self._svc = gaze_service
         self.app = Flask(__name__)
-        self.setup_routes()
-    
-    def setup_routes(self):
-        """设置HTTP路由"""
+        self._setup_routes()
+
+    def _setup_routes(self):
+        svc = self._svc
+
         @self.app.route("/")
         def index():
             return "Tobii Server Running"
-        
+
         @self.app.route("/tobii/test", methods=["POST"])
         def tobii_test():
             data = request.get_json()
-
             if data is None:
-                return jsonify({
-                    "ok": False,
-                    "msg": "请求体必须是 JSON"
-                }), 400
-
+                return jsonify({"ok": False, "msg": "请求体必须是 JSON"}), 400
             print("收到前端请求:", data)
+            return jsonify({"ok": True, "msg": "请求接收成功", "data": data})
 
-            return jsonify({
-                "ok": True,
-                "msg": "请求接收成功",
-                "data": data
-            })
-        
         @self.app.route("/tobii/hand", methods=["POST"])
         def tobii_hand():
-            global flag, task_active, current_task
-            # init_database()
             data = request.get_json()
             if data is None:
-                return jsonify({
-                    "ok": False,
-                    "msg": "请求体必须是 JSON"
-                }), 400
-
+                return jsonify({"ok": False, "msg": "请求体必须是 JSON"}), 400
             if "box_visible" not in data:
-                return jsonify({
-                    "ok": False,
-                    "msg": "缺少字段: box_visible"
-                }), 400
+                return jsonify({"ok": False, "msg": "缺少字段: box_visible"}), 400
 
             box_visible = bool(data.get("box_visible"))
-            system_time = data.get("system_time", int(time.time() * 1000 * 1000))
-            user_id = data.get("user_id")
-            task_source = data.get("task_source")
-            task_name = data.get("task_name")
-
+            system_time = data.get("system_time", int(time.time() * 1_000_000))
+            user_id = data.get("user_id", "")
+            task_source = data.get("task_source", "")
+            task_name = data.get("task_name", "")
             print("收到前端请求:", data)
 
-            # 1. 窗口出现：开始任务
             if box_visible:
                 bbox = data.get("bbox") or []
                 scream_data = data.get("scream_data") or [1, 1]
                 if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
                     scream_data = [1, 1]
-                screen_width, screen_height = scream_data[0] or 1, scream_data[1] or 1
-                bbox = normalize_bboxes(bbox, screen_width, screen_height)
-                task_id = str(uuid.uuid4())
+                screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+                # 优先使用前端传入的主服务器 task_id，不传则自动生成
+                external_task_id = data.get("task_id")
 
-                with state_lock:
-                    current_task = {
-                        "task_id": task_id,
-                        "bbox": bbox,
-                        "start_system_time": system_time,
-                        "user_id": user_id if user_id is not None else "",
-                        "task_source": task_source if task_source is not None else "",
-                        "task_name": task_name if task_name is not None else ""
-                    }
-                    task_active = True
-                    flag = False
-                    reset_out_of_box_state()
+                task_id = svc.start_task(
+                    bbox=bbox,
+                    screen_size=screen_size,
+                    task_id=external_task_id,
+                    user_id=user_id,
+                    task_source=task_source,
+                    task_name=task_name,
+                    system_time=system_time,
+                )
+                return jsonify({"ok": True, "msg": "窗口出现，任务开始", "task_id": task_id})
 
-                return jsonify({
-                    "ok": True,
-                    "msg": "窗口出现，任务开始",
-                    "task_id": task_id,
-                    "flag": flag
-                })
-
-            # 2. 窗口消失：结束任务
             else:
-                task_id = data.get("task_id") or get_active_task_id()
+                task_id = data.get("task_id") or svc.get_active_task_id()
                 if not task_id:
-                    return jsonify({
-                        "ok": False,
-                        "msg": "窗口消失时必须传 task_id"
-                    }), 400
+                    return jsonify({"ok": False, "msg": "窗口消失时必须传 task_id"}), 400
 
-                with state_lock:
-                    # 如果结束前还是注视中，补一条 fixation_end
-                    if task_active and flag is True:
-                        log_fixation_event(task_id, "fixation_end",system_time)
-
-                    flag = False
-                    task_active = False
-                    reset_out_of_box_state()
-                    task_info = current_task
-                    begin_time = current_task.get("start_system_time") if current_task else system_time
-                    end_time = system_time
-                    effective_user_id = user_id if user_id is not None else (current_task.get("user_id") if current_task else "")
-                    effective_task_source = task_source if task_source is not None else (current_task.get("task_source") if current_task else "")
-                    effective_task_name = task_name if task_name is not None else (current_task.get("task_name") if current_task else "")
-                    current_task = None
-
-                log_task_record(task_id, effective_user_id, effective_task_source, effective_task_name, begin_time, end_time)
+                try:
+                    result = svc.stop_task(
+                        task_id=task_id,
+                        user_id=user_id,
+                        task_source=task_source,
+                        task_name=task_name,
+                        system_time=system_time,
+                    )
+                except ValueError as e:
+                    return jsonify({"ok": False, "msg": str(e)}), 400
 
                 return jsonify({
                     "ok": True,
                     "msg": "窗口消失，任务结束",
-                    "task_id": task_id,
-                    "flag": flag,
-                    "task_info": task_info
+                    "task_id": result["task_id"],
+                    "task_info": result["task_info"],
                 })
-        
+
         @self.app.route("/tobii/gaze_point", methods=["GET"])
         def get_gaze_point():
-            """
-            获取最新的注视点坐标，用于前端可视化
-            """
-            global latest_gaze_point, latest_gaze_time
-            
-            with gaze_point_lock:
-                if latest_gaze_point is None:
-                    return jsonify({
-                        "ok": False,
-                        "msg": "尚无注视点数据"
-                    }), 404
-                
-                # 检查数据是否太旧（超过1秒）
-                current_time = time.time() * 1000
-                if current_time - latest_gaze_time > 1000:
-                    print("数据过期")
-                    return jsonify({
-                        "ok": False,
-                        "msg": "注视点数据已过期"
-                    }), 404
-                
-                return jsonify({
-                    "ok": True,
-                    "gaze_point": latest_gaze_point,
-                    "timestamp": latest_gaze_time
-                })
-    
+            point, ts = svc.get_latest_gaze_point()
+            if point is None:
+                return jsonify({"ok": False, "msg": "注视点数据不可用或已过期"}), 404
+            return jsonify({"ok": True, "gaze_point": point, "timestamp": ts})
+
     def start(self):
-        """启动HTTP服务器"""
-        print(f"HTTP服务器启动在 {self.host}:{self.port}")
+        print(f"[HTTPServer] 启动于 {self.host}:{self.port}")
         self.app.run(host=self.host, port=self.port, debug=False)
 
-def normalize_bboxes(bbox_list, screen_width, screen_height, clip_to_01=True):
-    """
-    将多个bbox根据屏幕分辨率归一化
-    
-    Args:
-        bbox_list: list of [x1, y1, x2, y2]
-        screen_width: 屏幕宽度
-        screen_height: 屏幕高度
-        clip_to_01: 是否将值限制在0-1之间
-    
-    Returns:
-        list of normalized [x1, y1, x2, y2]
-    """
-    normalized = []
-    
-    for bbox in bbox_list:
-        x1, y1, x2, y2 = bbox
-        
-        # 归一化
-        norm_x1 = x1 / screen_width
-        norm_y1 = y1 / screen_height
-        norm_x2 = x2 / screen_width
-        norm_y2 = y2 / screen_height
-        
-        # 限制范围
-        if clip_to_01:
-            norm_x1 = max(0, min(1, norm_x1))
-            norm_y1 = max(0, min(1, norm_y1))
-            norm_x2 = max(0, min(1, norm_x2))
-            norm_y2 = max(0, min(1, norm_y2))
-        
-        normalized.append([norm_x1, norm_y1, norm_x2, norm_y2])
-    
-    return normalized
 
-
-def get_db_connection():
-    """获取数据库连接"""
-    try:
-        connection = pymysql.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            database=DB_CONFIG['database'],
-            charset=DB_CONFIG['charset'],
-            cursorclass=pymysql.cursors.DictCursor  # 返回字典类型的结果
-        )
-        return connection
-    except Error as e:
-        print(f"数据库连接失败: {e}")
-        return None
-def log_fixation_event(task_id, event_type,local_time_ms):
-    """
-    第一张表：注视开始/结束（写入MySQL）
-    """
-    
-    
-    connection = None
-    cursor = None
-    try:
-        connection = get_db_connection()
-        if not connection:
-            print("无法连接数据库，记录写入失败")
-            return False
-            
-        cursor = connection.cursor()
-        
-        # SQL插入语句
-        sql = """
-        INSERT INTO fixation_events (local_time_ms, task_id, event_type) 
-        VALUES (%s, %s, %s)
-        """
-        
-        # 执行插入
-        cursor.execute(sql, (local_time_ms, task_id, event_type))
-        
-        # 提交事务
-        connection.commit()
-        
-        print(f"写入 fixation 事件成功: task_id={task_id}, event_type={event_type}")
-        return True
-        
-    except Error as e:
-        print(f"写入 fixation 事件失败: {e}")
-        if connection:
-            connection.rollback()  # 发生错误时回滚
-        return False
-        
-    finally:
-        # 关闭游标和连接
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
-
-def log_task_record(task_id, user_id, task_source, task_name, begin_time, end_time):
-    """
-    第二张表：任务结束记录（写入MySQL）
-    """
-    # local_time_ms = int(time.time() * 1000)
-    
-    connection = None
-    cursor = None
-    try:
-        connection = get_db_connection()
-        if not connection:
-            print("无法连接数据库，记录写入失败")
-            return False
-            
-        cursor = connection.cursor()
-        
-        # SQL插入语句
-        sql = """
-        INSERT INTO task_records (begin_time, end_time, task_id, user_id, task_source, task_name ) 
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        
-        # 执行插入
-        cursor.execute(sql, (begin_time,end_time, task_id, user_id, task_source, task_name))
-        
-        # 提交事务
-        connection.commit()
-        
-        print(f"写入 task 记录成功: task_id={task_id}, user_id={user_id}")
-        return True
-        
-    except Error as e:
-        print(f"写入 task 记录失败: {e}")
-        if connection:
-            connection.rollback()
-        return False
-        
-    finally:
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
-
-def init_database():
-    """初始化数据库（创建表）"""
-    # 先连接MySQL（不指定数据库）
-    connection = None
-    cursor = None
-    try:
-        connection = pymysql.connect(
-            host=DB_CONFIG['host'],
-            port=DB_CONFIG['port'],
-            user=DB_CONFIG['user'],
-            password=DB_CONFIG['password'],
-            charset='utf8mb4'
-        )
-        cursor = connection.cursor()
-        
-        # 创建数据库
-        cursor.execute("CREATE DATABASE IF NOT EXISTS task_logs DEFAULT CHARACTER SET utf8mb4")
-        cursor.execute("USE task_logs")
-        
-        # 创建表
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS fixation_events (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            local_time_ms BIGINT NOT NULL,
-            task_id VARCHAR(100) NOT NULL,
-            event_type VARCHAR(20) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_task_id (task_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-        
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS task_records (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            begin_time BIGINT NOT NULL,
-            end_time BIGINT NOT NULL,
-            task_id VARCHAR(100) NOT NULL,
-            user_id VARCHAR(50) NOT NULL,
-            task_source VARCHAR(50) NOT NULL,
-            task_name VARCHAR(200) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_task_id (task_id),
-            INDEX idx_user_id (user_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-        
-        connection.commit()
-        print("数据库初始化成功！")
-        
-    except Error as e:
-        print(f"数据库初始化失败: {e}")
-    finally:
-        if cursor:
-            cursor.close()
-        if connection:
-            connection.close()
-
-def query_recent_fixations(limit=10):
-    """查询最近的注视事件"""
-    connection = get_db_connection()
-    if not connection:
-        return []
-    
-    cursor = connection.cursor()
-    cursor.execute("SELECT * FROM fixation_events ORDER BY local_time_ms DESC LIMIT %s", (limit,))
-    results = cursor.fetchall()
-    cursor.close()
-    connection.close()
-    return results
-
-
-
-
-def get_valid_gaze_point(gaze_data):
-    """
-    从 Tobii 返回的数据里提取有效注视点。
-    优先取双眼平均；如果只有单眼有效，就取单眼。
-    返回:
-        (x, y)  # 0~1 归一化坐标
-        或 (0,0)
-    """
-    left_valid = gaze_data.get("left_gaze_point_validity") == 1
-    right_valid = gaze_data.get("right_gaze_point_validity") == 1
-
-    left_point = gaze_data.get("left_gaze_point_on_display_area")
-    right_point = gaze_data.get("right_gaze_point_on_display_area")
-
-    if left_valid and right_valid:
-        lx, ly = left_point
-        rx, ry = right_point
-
-        if not (math.isnan(lx) or math.isnan(ly) or math.isnan(rx) or math.isnan(ry)):
-            return ((lx + rx) / 2, (ly + ry) / 2)
-
-    if left_valid:
-        lx, ly = left_point
-        if not (math.isnan(lx) or math.isnan(ly)):
-            return (lx, ly)
-
-    if right_valid:
-        rx, ry = right_point
-        if not (math.isnan(rx) or math.isnan(ry)):
-            return (rx, ry)
-
-    return (0,0)
-
-
-def gaze_data_callback(gaze_data):
-    """
-    每来一帧 Tobii 数据，就写入滑动窗口
-    并在有活动任务时，实时检测 flag 的状态切换
-    """
-    global flag, task_active, current_task, latest_gaze_point, latest_gaze_time
-    global consecutive_out_of_box_false, out_of_box_feedback_sent
-    # if flag is True :
-    #     print("注释中")
-    # print(gaze_data)
-    system_time_stamp = gaze_data.get("system_time_stamp")
-    system_time_stamp = int(time.time()*1000*1000)
-    gaze_point = get_valid_gaze_point(gaze_data)
-    frame_record = {
-        "system_time_stamp": system_time_stamp,
-        "gaze_point": gaze_point
-    }
-    
-    with window_lock:
-        gaze_window.append(frame_record)
-
-      # 更新最新注视点（用于可视化）
-    with gaze_point_lock:
-        latest_gaze_point = list(gaze_point)  # 转换为列表，便于JSON序列化
-        latest_gaze_time = time.time() * 1000  # 使用本地时间戳
-    # 调试打印
-    # print("最新帧:", frame_record)
-    # print("当前窗口大小:", len(gaze_window))
-
-    with state_lock:
-        if not task_active or current_task is None:
-            return
-        task = current_task
-        old_flag = flag
-
-    # 只在任务开始之后处理
-    if system_time_stamp is None:
-        return
-
-    # if system_time_stamp < task["start_system_time"]:
-    #     print("返回了")
-    #     return
-
-    # 当前帧是否落在框内
-    current_in_box = point_in_bboxes(gaze_point, task["bbox"])
-    # print(current_in_box)
-    should_push_attention_feedback = False
-    feedback_task_id = None
-
-    with state_lock:
-        # 再次确认任务还存在
-        if not task_active or current_task is None:
-            return
-        # print(consecutive_out_of_box_false)
-        # 连续未看框统计：达到阈值时发送提醒，然后重置状态重新计算
-        if current_in_box is False:
-            consecutive_out_of_box_false += 1
-            if consecutive_out_of_box_false >= OUT_OF_BOX_FALSE_THRESHOLD:
-                # 达到阈值，发送提醒
-                should_push_attention_feedback = True
-                feedback_task_id = current_task.get("task_id")
-                # 重置状态，准备下一次计数
-                consecutive_out_of_box_false = 0
-        else:
-            # 用户看回框内，重置计数
-            consecutive_out_of_box_false = 0
-
-        # False -> True
-        if flag is False and current_in_box is True:
-            flag = True
-            log_fixation_event(task["task_id"], "fixation_start",system_time_stamp)
-
-        # True -> False
-        elif flag is True and current_in_box is False:
-            flag = False
-            log_fixation_event(task["task_id"], "fixation_end",system_time_stamp)
-
-    if should_push_attention_feedback:
-        push_attention_feedback(feedback_task_id, consecutive_out_of_box_false)
-
-
-def point_in_bbox(point, bbox):
-    """
-    point: (x, y)，Tobii 归一化坐标 0~1
-    bbox: [x1, y1, x2, y2]
-    这里要求前端传来的 bbox 也是 0~1 坐标
-    """
-    if point is None:
-        return False
-
-    x, y = point
-    x1, y1, x2, y2 = bbox
-
-    return x1 <= x <= x2 and y1 <= y <= y2
-
-
-def point_in_bboxes(point, bboxes):
-    """
-    判断 gaze 点是否在任意一个 bbox 内
-    
-    Args:
-        point: (x, y)，Tobii 归一化坐标 0~1
-        bboxes: 多个bbox的列表 [[x1,y1,x2,y2], [x1,y1,x2,y2], ...]
-               要求每个 bbox 也是 0~1 坐标
-    
-    Returns:
-        bool: 如果在任意一个bbox内返回True，否则返回False
-        int: 所在的bbox索引（可选），如果不在任何bbox内返回-1
-    """
-    return_index = False
-    if point is None or not bboxes:
-        return False if not return_index else (False, -1)
-    
-    x, y = point
-    
-    for i, bbox in enumerate(bboxes):
-        x1, y1, x2, y2 = bbox
-        if x1 <= x <= x2 and y1 <= y <= y2:
-            return True if not return_index else (True, i)
-    
-    return False if not return_index else (False, -1)
-
+# ─────────────────────────────────────────────────────────────
+# WebSocket Server
+# ─────────────────────────────────────────────────────────────
 
 class WebSocketServer:
-    def __init__(self, host, port):
+    def __init__(self, host: str, port: int, gaze_service: GazeService):
         self.host = host
         self.port = port
-        self.server = None
-    
-    async def handle_client(self, websocket):
-        # 注册客户端
-        with clients_lock:
-            connected_clients.add(websocket)
-        
+        self._svc = gaze_service
+
+    async def _handle_client(self, websocket):
+        self._svc.register_ws_client(websocket)
         try:
-            async for message in websocket:
-                # 处理接收到的消息
+            async for raw in websocket:
                 try:
-                    data = json.loads(message)
-                    await self.process_message(websocket, data)
+                    data = json.loads(raw)
+                    await self._process_message(websocket, data)
                 except json.JSONDecodeError:
-                    await websocket.send(json.dumps({"ok": False, "msg": "无效的JSON格式"}))
+                    await websocket.send(json.dumps({"ok": False, "msg": "无效的 JSON 格式"}))
         except websockets.ConnectionClosed:
             pass
         finally:
-            # 移除客户端
-            with clients_lock:
-                connected_clients.remove(websocket)
-    
-    async def process_message(self, websocket, data):
-        """处理WebSocket消息，实现与HTTP服务相同的功能"""
-        global flag, task_active, current_task
-        
+            self._svc.unregister_ws_client(websocket)
+
+    async def _process_message(self, websocket, data: dict):
+        svc = self._svc
+        msg_type = data.get("type")
+
         try:
-            # 初始化数据库
-            # init_database()
-            
-            # 获取消息类型
-            message_type = data.get("type")
-            
-            if message_type == "test":
-                # 测试消息
-                await websocket.send(json.dumps({
-                    "ok": True,
-                    "msg": "请求接收成功",
-                    "data": data
-                }))
-            
-            elif message_type == "hand":
-                
+            if msg_type == "test":
+                await websocket.send(json.dumps({"ok": True, "msg": "请求接收成功", "data": data}))
+
+            elif msg_type == "hand":
                 if "box_visible" not in data:
-                    await websocket.send(json.dumps({
-                        "ok": False,
-                        "msg": "缺少字段: box_visible"
-                    }))
+                    await websocket.send(json.dumps({"ok": False, "msg": "缺少字段: box_visible"}))
                     return
 
                 box_visible = bool(data.get("box_visible"))
-                system_time = data.get("system_time", int(time.time() * 1000 * 1000))
-                user_id = data.get("user_id")
-                task_source = data.get("task_source")
-                task_name = data.get("task_name")
-                
-                # 1. 窗口出现：开始任务
+                system_time = data.get("system_time", int(time.time() * 1_000_000))
+                user_id = data.get("user_id", "")
+                task_source = data.get("task_source", "")
+                task_name = data.get("task_name", "")
+
                 if box_visible:
-                    print("目标出现data:", data)
+                    print("[WS] 目标出现:", data)
                     bbox = data.get("bbox") or []
                     scream_data = data.get("scream_data") or [1, 1]
                     if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
                         scream_data = [1, 1]
-                    screen_width, screen_height = scream_data[0] or 1, scream_data[1] or 1
-                    bbox = normalize_bboxes(bbox, screen_width, screen_height)
-                    task_id = str(uuid.uuid4())
-                    
-                    with state_lock:
-                        current_task = {
-                            "task_id": task_id,
-                            "bbox": bbox,
-                            "start_system_time": system_time,
-                            "user_id": user_id if user_id is not None else "",
-                            "task_source": task_source if task_source is not None else "",
-                            "task_name": task_name if task_name is not None else ""
-                        }
-                        task_active = True
-                        flag = False
-                        reset_out_of_box_state()
-                    
+                    screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+                    # 优先使用前端传入的主服务器 task_id，不传则自动生成
+                    external_task_id = data.get("task_id")
+
+                    task_id = svc.start_task(
+                        bbox=bbox,
+                        screen_size=screen_size,
+                        task_id=external_task_id,
+                        user_id=user_id,
+                        task_source=task_source,
+                        task_name=task_name,
+                        system_time=system_time,
+                    )
                     await websocket.send(json.dumps({
-                        "ok": True,
-                        "msg": "窗口出现，任务开始",
-                        "task_id": task_id,
-                        "flag": flag
+                        "ok": True, "msg": "窗口出现，任务开始", "task_id": task_id
                     }))
-                
-                # 2. 窗口消失：结束任务
+
                 else:
-                    print("窗口消失 data:", data)
-                    task_id = data.get("task_id") or get_active_task_id()
+                    print("[WS] 窗口消失:", data)
+                    task_id = data.get("task_id") or svc.get_active_task_id()
                     if not task_id:
-                        await websocket.send(json.dumps({
-                            "ok": False,
-                            "msg": "窗口消失时必须传 task_id"
-                        }))
+                        await websocket.send(json.dumps({"ok": False, "msg": "窗口消失时必须传 task_id"}))
                         return
-                    
-                    with state_lock:
-                        # 如果结束前还是注视中，补一条 fixation_end
-                        if task_active and flag is True:
-                            log_fixation_event(task_id, "fixation_end", system_time)
-                        
-                        flag = False
-                        task_active = False
-                        reset_out_of_box_state()
-                        task_info = current_task
-                        begin_time = current_task.get("start_system_time") if current_task else system_time
-                        end_time = system_time
-                        effective_user_id = user_id if user_id is not None else (current_task.get("user_id") if current_task else "")
-                        effective_task_source = task_source if task_source is not None else (current_task.get("task_source") if current_task else "")
-                        effective_task_name = task_name if task_name is not None else (current_task.get("task_name") if current_task else "")
-                        current_task = None
-                    
-                    log_task_record(task_id, effective_user_id, effective_task_source, effective_task_name, begin_time, end_time)
-                    
+
+                    try:
+                        result = svc.stop_task(
+                            task_id=task_id,
+                            user_id=user_id,
+                            task_source=task_source,
+                            task_name=task_name,
+                            system_time=system_time,
+                        )
+                    except ValueError as e:
+                        await websocket.send(json.dumps({"ok": False, "msg": str(e)}))
+                        return
+
                     await websocket.send(json.dumps({
                         "ok": True,
                         "msg": "窗口消失，任务结束",
-                        "task_id": task_id,
-                        "flag": flag,
-                        "task_info": task_info
+                        "task_id": result["task_id"],
+                        "task_info": result["task_info"],
                     }))
-            
-            elif message_type == "gaze_point":
-                # 获取最新注视点
-                global latest_gaze_point, latest_gaze_time
-                
-                with gaze_point_lock:
-                    if latest_gaze_point is None:
-                        await websocket.send(json.dumps({
-                            "ok": False,
-                            "msg": "尚无注视点数据"
-                        }))
-                        return
-                    
-                    # 检查数据是否太旧（超过1秒）
-                    current_time = time.time() * 1000
-                    if current_time - latest_gaze_time > 1000:
-                        await websocket.send(json.dumps({
-                            "ok": False,
-                            "msg": "注视点数据已过期"
-                        }))
-                        return
-                    
-                    await websocket.send(json.dumps({
-                        "ok": True,
-                        "gaze_point": latest_gaze_point,
-                        "timestamp": latest_gaze_time
-                    }))
-            
+
+            elif msg_type == "gaze_point":
+                point, ts = svc.get_latest_gaze_point()
+                if point is None:
+                    await websocket.send(json.dumps({"ok": False, "msg": "注视点数据不可用或已过期"}))
+                else:
+                    await websocket.send(json.dumps({"ok": True, "gaze_point": point, "timestamp": ts}))
+
             else:
-                await websocket.send(json.dumps({
-                    "ok": False,
-                    "msg": "未知的消息类型"
-                }))
+                await websocket.send(json.dumps({"ok": False, "msg": "未知的消息类型"}))
+
         except Exception as e:
-            print(f"处理WebSocket消息时出错: {e}")
-            await websocket.send(json.dumps({
-                "ok": False,
-                "msg": f"服务器内部错误: {str(e)}"
-            }))
-    
-    async def broadcast_gaze_data(self):
-        """广播最新的注视点数据给所有客户端"""
-        while True:
-            await asyncio.sleep(0.033)  # 约30fps
-            
-            with gaze_point_lock:
-                if latest_gaze_point is None:
-                    continue
-                
-                # 检查数据是否太旧（超过1秒）
-                current_time = time.time() * 1000
-                if current_time - latest_gaze_time > 1000:
-                    continue
-                
-                message = json.dumps({
-                    "type": "gaze_update",
-                    "gaze_point": latest_gaze_point,
-                    "timestamp": latest_gaze_time
-                })
-            
-            # 广播给所有客户端
-            with clients_lock:
-                for client in connected_clients:
-                    try:
-                        await client.send(message)
-                    except:
-                        # 忽略发送失败的客户端
-                        pass
-    
-    async def _run_server(self):
-        """运行WebSocket服务器的异步方法"""
-        global ws_event_loop
-        ws_event_loop = asyncio.get_running_loop()
-        # 启动广播任务
-        # asyncio.create_task(self.broadcast_gaze_data())
-        
-        # 启动WebSocket服务器
-        async with websockets.serve(
-            self.handle_client, 
-            self.host, 
-            self.port
-        ):
-            # 等待服务器关闭
-            await asyncio.Future()  # 永远等待
-    
+            print(f"[WS] 处理消息出错: {e}")
+            await websocket.send(json.dumps({"ok": False, "msg": f"服务器内部错误: {e}"}))
+
+    async def _run(self):
+        self._svc.set_ws_event_loop(asyncio.get_running_loop())
+        print(f"[WebSocketServer] 启动于 {self.host}:{self.port}")
+        async with websockets.serve(self._handle_client, self.host, self.port):
+            await asyncio.Future()
+
     def start(self):
-        """启动WebSocket服务器"""
-        print(f"WebSocket服务器启动在 {self.host}:{self.port}")
-        # 初始化数据库
-        # init_database()
-        
-        # 使用asyncio.run运行服务器
-        asyncio.run(self._run_server())
+        asyncio.run(self._run())
+
+
+# ─────────────────────────────────────────────────────────────
+# 程序入口
+# ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # 1. 创建服务实例（文件存储替代数据库）
+    gaze_svc = GazeService(data_dir=DEFAULT_DATA_DIR)
 
-    # 启动眼动仪
-    eyetrackers = tr.find_all_eyetrackers()
-    if len(eyetrackers) == 0:
-        raise RuntimeError("No eye tracker found")
-    eyetracker = eyetrackers[0]
-    print("Connected to:", eyetracker.device_name)
+    # 2. 连接眼动仪
+    gaze_svc.connect()
 
-    # 订阅实时注视数据流
-    eyetracker.subscribe_to(
-        tr.EYETRACKER_GAZE_DATA, 
-        gaze_data_callback, 
-        as_dictionary=True)
-    
-    # 初始化数据库
-    init_database()
-    
-    # # 启动HTTP服务（在后台线程）
-    http_server = HTTPServer("0.0.0.0", 8081)
-    def run_http_server():
-        http_server.start()
-    
-    http_thread = threading.Thread(target=run_http_server)
-    http_thread.daemon = True
+    # 3. 启动 HTTP 服务（后台线程）
+    http_server = HTTPServer("0.0.0.0", 8081, gaze_svc)
+    http_thread = threading.Thread(target=http_server.start, daemon=True)
     http_thread.start()
-    
-    # 启动WebSocket服务
-    ws_server = WebSocketServer("0.0.0.0", 8082)
-    ws_server.start()
+
+    # 4. 启动 WebSocket 服务（主线程，阻塞）
+    try:
+        ws_server = WebSocketServer("0.0.0.0", 8082, gaze_svc)
+        ws_server.start()
+    finally:
+        gaze_svc.shutdown()

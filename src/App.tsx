@@ -9,7 +9,7 @@ import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
 import { Toaster } from 'react-hot-toast';
-import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal';
+import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
 interface TargetSelectParams {
   targetId: string | undefined;
   lockX?: number;
@@ -643,7 +643,7 @@ const App: React.FC = observer(() => {
       </div>
 
       {/* ── Questionnaire Modal ─────────────────────────────── */}
-      {isStarted && (
+      {(repetitionInfos.RADAR_TARGETING !== null || repetitionInfos.SA_THREAT_RESPONSE !== null) && (
         <QuestionnaireModal
           ref={questionnaireRef}
           repetitionInfos={repetitionInfos}

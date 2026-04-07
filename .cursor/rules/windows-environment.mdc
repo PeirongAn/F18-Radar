@@ -1,0 +1,13 @@
+---
+description: User environment is Windows; prefer solutions without shell scripts
+alwaysApply: true
+---
+
+# Windows environment
+
+- The primary development machine is **Windows** (PowerShell). Assume Windows paths, line endings, and tooling when suggesting commands or automation.
+- **Avoid shell scripts** (`.sh`, bash-heavy workflows) as the default answer. Prefer:
+  - Native **PowerShell** commands when a terminal step is needed
+  - **Git for Windows** / **Git GUI** / IDE Git UI for git operations when appropriate
+  - Cross-platform tools (Node, Python, Git built-ins) with Windows-friendly invocations
+- If a script is unavoidable, prefer **PowerShell (`.ps1`)** over bash for this project, unless the repo is explicitly cross-platform Unix-only.
