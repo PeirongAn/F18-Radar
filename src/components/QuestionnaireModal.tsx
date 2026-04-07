@@ -181,27 +181,16 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       setIsVisible(true);
     }, []);
 
-    /* ── Watch both task progresses for auto-popup (fallback) ── */
+    /* ── Watch both task types — only auto-popup when ALL_COMPLETED ── */
     useEffect(() => {
       if (!enableAutoPopup || !configLoaded) return;
 
       (['RADAR_TARGETING', 'SA_THREAT_RESPONSE'] as TaskType[]).forEach(taskType => {
-        const info = repetitionInfos[taskType];
-        if (!info || info === 'ALL_COMPLETED') return;
-        // 使用 task_id 作为唯一键，每个任务实例只触发一次
-        // 服务端会在任务完成时通过 show_questionnaire 消息主动触发，
-        // 此处 auto-popup 仅作为兜底（task_id 缺失时退回到 current::total）
-        const taskId = info.task_id;
-        const key = taskId
-          ? `${taskType}::task_id::${taskId}`
-          : `${taskType}::${info.current}::${info.total}`;
+        if (repetitionInfos[taskType] !== 'ALL_COMPLETED') return;
+        const key = `${taskType}::ALL_COMPLETED`;
         if (!triggeredRef.current.has(key)) {
           triggeredRef.current.add(key);
-          // 仅在 task_id 存在时才 auto-popup（说明是新任务实例）；
-          // 无 task_id 时不自动弹，避免在任务开始时错误弹出
-          if (taskId) {
-            openFor(taskType);
-          }
+          openFor(taskType);
         }
       });
     }, [repetitionInfos, enableAutoPopup, configLoaded, openFor]);
