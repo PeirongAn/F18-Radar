@@ -510,17 +510,15 @@ class TaskScenarioManager:
             # self._update_completion_status(True)  # True = 已完成
         print('get_next_task_parameters# 4need_new_scenario', need_new_scenario)
         if need_new_scenario:
-            # 如果上一个任务未完成，先强制完成它（但要排除第一次获取任务的情况）
-            # if not previous_task_completed and self.current_scenario is not None:
-            #     # 只有当存在当前场景时，才说明这不是第一次获取任务
-            #     self.logger.warning(f"Forcing completion of previous task before starting new scenario")
-                # self._update_completion_status(True)  # True = 已完成
-                
             if not self.active_queue:
-                # 队列已空，重新初始化队列（用最新配置），覆盖旧记录继续
-                self.logger.info(f"Active queue empty, reinitializing for task '{self.task_type}'")
-                self._initialize_new_progress()
-                self.active_queue = self.ai_queue if is_ai_active_request else self.manual_queue
+                self.logger.info(f"Active queue empty for task '{self.task_type}', all scenarios completed")
+                if self.is_practice:
+                    self._save_to_memory()
+                else:
+                    self._save_to_db()
+                if self.are_all_scenarios_completed():
+                    return "ALL_COMPLETED"
+                return None
 
             self.current_scenario = self.active_queue.pop(0)
             self.repetition_counter = 1

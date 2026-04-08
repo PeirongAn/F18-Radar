@@ -28,6 +28,7 @@ interface SAPageProps {
   onResetTargets?: () => void;
   onThreatListUpdate?: (threatData: any[]) => void; // 新增：威胁数据回调
   onShowDetailedInfoChange?: (showDetailed: boolean) => void; // 新增：详细信息显示状态回调
+  onResultConfirmed?: () => void;
 }
 
 // 添加威胁数据接口
@@ -167,7 +168,7 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
   const [userId, setUserId] = useState(originalUserId);
@@ -1456,6 +1457,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         console.log('[SAPage] Button2按下，确认任务评估弹窗');
         if (isCorrect === true || isCorrect === false) {
           setShowTaskComplete(false);
+          onResultConfirmed?.();
         } else {
           handleResetSA();
         }
@@ -1465,7 +1467,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     }
     prevButton2Ref.current = button2;
-  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA]);
+  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, onResultConfirmed]);
 
   // const [isStarted, setIsStarted] = useState(false);
   // const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
@@ -2088,7 +2090,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               {isCorrect === true || isCorrect === false ? '当前任务已结束，可关闭窗口' : '请重新完成当前任务'}
             </p>
             <button
-              onClick={isCorrect === true || isCorrect === false ? () => setShowTaskComplete(false) : handleResetSA}
+              onClick={isCorrect === true || isCorrect === false ? () => {
+                setShowTaskComplete(false);
+                onResultConfirmed?.();
+              } : handleResetSA}
               style={{
                 fontFamily: "'Share Tech Mono', monospace",
                 fontSize: '13px',

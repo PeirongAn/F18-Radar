@@ -181,11 +181,13 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       setIsVisible(true);
     }, []);
 
-    /* ── Watch both task types — only auto-popup when ALL_COMPLETED ── */
+    /* ── Watch task types — only auto-popup when ALL_COMPLETED ──
+       SA tasks are excluded here; their questionnaire is triggered
+       after the user views the result via imperative show(). */
     useEffect(() => {
       if (!enableAutoPopup || !configLoaded) return;
 
-      (['RADAR_TARGETING', 'SA_THREAT_RESPONSE'] as TaskType[]).forEach(taskType => {
+      (['RADAR_TARGETING'] as TaskType[]).forEach(taskType => {
         if (repetitionInfos[taskType] !== 'ALL_COMPLETED') return;
         const key = `${taskType}::ALL_COMPLETED`;
         if (!triggeredRef.current.has(key)) {

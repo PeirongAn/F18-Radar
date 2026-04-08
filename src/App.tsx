@@ -101,6 +101,9 @@ const App: React.FC = observer(() => {
   const [enableQuestionnairePopup, setEnableQuestionnairePopup] = useState<boolean>(true);
   const questionnaireRef = useRef<QuestionnaireModalHandle>(null);
 
+  // SA 任务：等用户查看结果后才弹问卷
+  const pendingSaQuestionnaireRef = useRef(false);
+
   const { radarStore } = useStore();
   const { antennaAdjustmentRequired, targetAntennaElevation } = radarStore;
 
@@ -165,7 +168,11 @@ const App: React.FC = observer(() => {
       setEnableQuestionnairePopup(!!lastMessage.enabled);
     } else if (lastMessage.type === 'show_questionnaire') {
       const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | undefined;
-      questionnaireRef.current?.show(taskType);
+      if (taskType === 'SA_THREAT_RESPONSE') {
+        pendingSaQuestionnaireRef.current = true;
+      } else {
+        questionnaireRef.current?.show(taskType);
+      }
     }
   }, [lastMessage]);
 
@@ -279,6 +286,14 @@ const App: React.FC = observer(() => {
     setScanAngle(angle);
     radarStore.updateRadarParams(range, angle);
   }, [radarStore]);
+
+  /* ── SA 查看结果后弹出问卷 ──────────────────────── */
+  const handleSAResultConfirmed = useCallback(() => {
+    if (pendingSaQuestionnaireRef.current) {
+      pendingSaQuestionnaireRef.current = false;
+      questionnaireRef.current?.show('SA_THREAT_RESPONSE');
+    }
+  }, []);
 
   /* ── SA 重置 ──────────────────────────────────── */
   const handleSATaskReset = useCallback(() => {
@@ -587,6 +602,7 @@ const App: React.FC = observer(() => {
                 onResetSA={handleSATaskReset}
                 onThreatListUpdate={handleThreatListUpdate}
                 onShowDetailedInfoChange={handleShowDetailedInfoChange}
+                onResultConfirmed={handleSAResultConfirmed}
               />
               {activeDisplay === 'sa' && (
                 <div style={{ width: '800px', borderTop: '1px solid #0a2010' }}>

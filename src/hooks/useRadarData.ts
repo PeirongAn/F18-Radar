@@ -1242,6 +1242,13 @@ const useRadarData = (
       }
     } else if (message.type === 'all_tasks_completed') {
       console.log('[useRadarData] Received all_tasks_completed:', message);
+      const completedTaskType = message.task_type as TaskType;
+      if (completedTaskType) {
+        setRepetitionInfos(prev => ({
+          ...prev,
+          [completedTaskType]: 'ALL_COMPLETED',
+        }));
+      }
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 

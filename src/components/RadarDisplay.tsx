@@ -125,6 +125,18 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     return radarRepetitionInfo && typeof radarRepetitionInfo !== 'string' ? !!(radarRepetitionInfo as any).is_ai_active : false;
   }, [repetitionInfos]);
 
+  const isAllTasksCompleted = useMemo(() => {
+    const info = repetitionInfos['RADAR_TARGETING'];
+    if (info === 'ALL_COMPLETED') return true;
+    if (!info || typeof info === 'string') return false;
+    const ri = info as any;
+    const repsDone = ri.current >= ri.total;
+    const scenariosDone = ri.scenario_index != null && ri.scenario_total != null
+      ? ri.scenario_index >= ri.scenario_total
+      : true;
+    return repsDone && scenariosDone;
+  }, [repetitionInfos]);
+
   // 添加任务确认弹窗状态
   const [showMissionConfirm, setShowMissionConfirm] = React.useState(false);
   const [missionResultMessage, setMissionResultMessage] = React.useState(''); // State to hold the result message
@@ -528,6 +540,12 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       onClearMessages();
     }
 
+    if (isAllTasksCompleted) {
+      setShowMissionConfirm(false);
+      console.log('[RadarDisplay] 所有任务轮次已完成，不再重置，等待问卷弹窗');
+      return;
+    }
+
     const hasLockedTarget = !!radarStore.lockedTargetId;
     if (hasLockedTarget && onNavigateToSA) {
       setShowMissionConfirm(false);
@@ -538,7 +556,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [onClearMessages, onResetForNextMission, onNavigateToSA]);
+  }, [onClearMessages, onResetForNextMission, onNavigateToSA, isAllTasksCompleted]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
