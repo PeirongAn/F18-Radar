@@ -157,6 +157,12 @@ class DatabaseManager:
                 
                 # 检查并创建 user_progress 表
                 self._create_user_progress_table(cursor, conn)
+
+                # 检查并创建 platform_external_tasks 表
+                self._create_platform_external_tasks_table(cursor, conn)
+
+                # 检查并创建 questionnaire_responses 表
+                self._create_questionnaire_responses_table(cursor, conn)
                 
             self.logger.info("数据库初始化成功")
         except Exception as e:
@@ -338,5 +344,135 @@ class DatabaseManager:
             conn.commit()
             self.logger.info("manual_repetition_counter 列添加成功")
 
+    def _create_platform_external_tasks_table(self, cursor, conn) -> None:
+        """创建外部平台任务表"""
+        cursor.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='platform_external_tasks'
+        """)
+        if not cursor.fetchone():
+            self.logger.info("platform_external_tasks 表不存在，正在创建...")
+            cursor.execute("""
+                CREATE TABLE platform_external_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    task_category TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    sub_task_seq INTEGER,
+                    user_id TEXT,
+                    task_name TEXT,
+                    gender TEXT,
+                    ai_control_time REAL,
+                    person_control_time REAL,
+                    ai_remind_time REAL,
+                    switch_count INTEGER,
+                    fire_count INTEGER,
+                    fire_success_count INTEGER,
+                    raw_message TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            self.logger.info("platform_external_tasks 表创建成功")
+
+    def record_external_task(self, task_id: int, task_category: str,
+                             event_type: str, raw_message: str,
+                             timestamp: int, user_id: str = None,
+                             task_name: str = None, gender: str = None,
+                             sub_task_seq: int = None) -> None:
+        """记录外部平台任务生命周期事件"""
+        sql = """
+            INSERT INTO platform_external_tasks (
+                task_id, task_category, event_type, sub_task_seq,
+                user_id, task_name, gender, raw_message, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (task_id, task_category, event_type, sub_task_seq,
+                  user_id, task_name, gender, raw_message, timestamp)
+        self.execute_async(sql, params)
+        self.logger.info("记录外部任务事件: task_id=%s category=%s event=%s seq=%s",
+                         task_id, task_category, event_type, sub_task_seq)
+
+    def _create_questionnaire_responses_table(self, cursor, conn) -> None:
+        """创建问卷响应表"""
+        cursor.execute("""
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='questionnaire_responses'
+        """)
+        if not cursor.fetchone():
+            self.logger.info("questionnaire_responses 表不存在，正在创建...")
+            cursor.execute("""
+                CREATE TABLE questionnaire_responses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    task_type TEXT NOT NULL,
+                    repetition_current INTEGER,
+                    repetition_total INTEGER,
+                    difficulty TEXT,
+                    is_ai_active BOOLEAN,
+                    is_practice BOOLEAN,
+                    answers_json TEXT NOT NULL,
+                    source TEXT DEFAULT 'unknown',
+                    client_timestamp INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            self.logger.info("questionnaire_responses 表创建成功")
+
+    def record_questionnaire(self, data: Dict[str, Any]) -> None:
+        """记录问卷提交数据"""
+        task_info = data.get('taskInfo') or {}
+        sql = """
+            INSERT INTO questionnaire_responses (
+                user_id, task_type, repetition_current, repetition_total,
+                difficulty, is_ai_active, is_practice,
+                answers_json, source, client_timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            data.get('userId', ''),
+            data.get('taskType', ''),
+            data.get('repetitionCurrent', 0),
+            data.get('repetitionTotal', 0),
+            task_info.get('difficulty'),
+            1 if task_info.get('isAIActive') else 0,
+            1 if task_info.get('isPractice') else 0,
+            json.dumps(data.get('answers', {})),
+            data.get('source', 'unknown'),
+            data.get('timestamp'),
+        )
+        self.execute_async(sql, params)
+        self.logger.info("记录问卷: user=%s task=%s rep=%s",
+                         data.get('userId'), data.get('taskType'),
+                         data.get('repetitionCurrent'))
+
+    def record_external_task_result(self, task_id: int, task_category: str,
+                                    raw_message: str, timestamp: int,
+                                    user_id: str = None,
+                                    ai_control_time: float = None,
+                                    person_control_time: float = None,
+                                    ai_remind_time: float = None,
+                                    switch_count: int = None,
+                                    fire_count: int = None,
+                                    fire_success_count: int = None) -> None:
+        """记录外部平台任务结果"""
+        sql = """
+            INSERT INTO platform_external_tasks (
+                task_id, task_category, event_type, user_id,
+                ai_control_time, person_control_time, ai_remind_time,
+                switch_count, fire_count, fire_success_count,
+                raw_message, timestamp
+            ) VALUES (?, ?, 'task_result', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (task_id, task_category, user_id,
+                  ai_control_time, person_control_time, ai_remind_time,
+                  switch_count, fire_count, fire_success_count,
+                  raw_message, timestamp)
+        self.execute_async(sql, params)
+        self.logger.info("记录外部任务结果: task_id=%s category=%s", task_id, task_category)
+
+
 # 全局数据库管理器实例
-db_manager = DatabaseManager() 
+db_manager = DatabaseManager()

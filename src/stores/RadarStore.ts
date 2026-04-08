@@ -22,7 +22,7 @@ export interface TargetDisplayPosition {
 }
 
 // 定义任务类型，确保与useRadarData和服务器中使用的类型一致
-export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
+export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
 
 /**
  * 雷达系统的MobX Store，管理雷达相关状态

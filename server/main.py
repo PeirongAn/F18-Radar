@@ -13,7 +13,7 @@ import argparse
 # 添加当前目录到Python路径
 sys.path.insert(0, os.path.dirname(__file__))
 
-from managers import config_manager, db_manager, target_manager, info, error
+from managers import config_manager, db_manager, info, error
 from network import websocket_server
 from joystick.joystick_event_handler import JoystickEventHandler
 from network.http_server import http_server
@@ -39,29 +39,22 @@ async def initialize_system():
     db_manager.initialize_database()
     info("✅ 数据库初始化完成", "main")
     
-    # 2. 初始化目标管理器（使用默认难度）
-    info("2. 初始化目标管理器...", "main")
-    default_difficulty_name = config_manager.get_game_settings().get('current_difficulty', 'low')
-    default_difficulty_config = config_manager.get_difficulty_levels().get(default_difficulty_name, {})
-    target_manager.initialize_targets(default_difficulty_config)
-    info("✅ 目标管理器初始化完成", "main")
-    
-    # 3. 初始化操纵杆事件处理器
-    info("3. 初始化操纵杆事件处理器...", "main")
+    # 2. 初始化操纵杆事件处理器
+    info("2. 初始化操纵杆事件处理器...", "main")
     _joystick_handler = JoystickEventHandler()
     
-    # 4. 将操纵杆处理器集成到WebSocket服务器和HTTP服务器
-    info("4. 集成操纵杆处理器到服务器...", "main")
+    # 3. 将操纵杆处理器集成到WebSocket服务器和HTTP服务器
+    info("3. 集成操纵杆处理器到服务器...", "main")
     websocket_server.set_joystick_handler(_joystick_handler)
     http_server.set_joystick_handler(_joystick_handler)
     
-    # 5. 启动操纵杆事件处理器（在异步上下文中启动）
-    info("5. 启动操纵杆事件处理器...", "main")
+    # 4. 启动操纵杆事件处理器（在异步上下文中启动）
+    info("4. 启动操纵杆事件处理器...", "main")
     await asyncio.sleep(0.1)
     _joystick_handler.start()
 
-    # 6. 初始化眼动追踪服务
-    info("6. 初始化眼动追踪服务...", "main")
+    # 5. 初始化眼动追踪服务
+    info("5. 初始化眼动追踪服务...", "main")
     try:
         from tobii.gaze_service import GazeService
         from core import message_handler as _mh

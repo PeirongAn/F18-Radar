@@ -1,16 +1,22 @@
 """
 平台任务 WS：解析平台包、维护 pending、供 task_start 合并；platform_task 向其它连接广播 platform_task_config。
+支持外部平台（平台控制 / 武器发射）的生命周期记录和结果存储。
 """
 from __future__ import annotations
 
 import copy
+import json
+import time as _time
 from typing import Any, Dict, List, Optional, Tuple
 
-from managers import config_manager, get_logger
+from managers import config_manager, db_manager, generate_task_id, get_logger
 
 logger = get_logger("platform_task")
 
 _pending: Optional[Dict[str, Any]] = None
+
+# 外部任务活跃状态  key=(task_category, user_id)
+_active_external_tasks: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
 
 def _valid_levels(config: Dict[str, Any]) -> List[str]:
@@ -100,6 +106,24 @@ def _infer_web_task_kind(message: Dict[str, Any]) -> str:
         if token in tn:
             return "radar"
     return ""
+
+
+def _classify_task_category(message: Dict[str, Any]) -> str:
+    """根据 TaskName 关键词推断任务类别。"""
+    tn = str(message.get("TaskName") or "").lower()
+    for token in ("平台控制", "平台任务", "platform_control"):
+        if token in tn:
+            return "platform_control"
+    for token in ("武器", "发射", "weapon", "fire", "launch"):
+        if token in tn:
+            return "weapon_launch"
+    for token in ("威胁", "threat", "排序", "sa威胁", "situation"):
+        if token in tn:
+            return "sa"
+    for token in ("传感器", "雷达", "radar", "目标", "targeting"):
+        if token in tn:
+            return "radar"
+    return "unknown"
 
 
 def _build_overlay(normalized: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,7 +230,161 @@ def consume_pending_for_task_start() -> Tuple[Optional[Dict[str, Any]], Optional
     return overlay, meta
 
 
+def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[Dict[str, Any]]:
+    """处理外部平台任务（平台控制 / 武器发射）的生命周期事件。"""
+    user_id = str(message_data.get("ID") or "").strip()
+    if not user_id:
+        return [{"type": "platform_task_ack", "status": "error",
+                 "message": "external task requires non-empty ID"}]
+
+    action = str(message_data.get("Action") or "task_start").strip()
+    task_name = message_data.get("TaskName")
+    gender = message_data.get("Gender")
+    ts = int(_time.time() * 1000)
+    raw = json.dumps(message_data, ensure_ascii=False)
+    key = (category, user_id)
+
+    if action == "task_start":
+        tid = generate_task_id()
+        _active_external_tasks[key] = {
+            "task_id": tid, "sub_task_seq": 0,
+            "task_name": task_name, "gender": gender,
+        }
+        db_manager.record_external_task(
+            task_id=tid, task_category=category, event_type="task_start",
+            raw_message=raw, timestamp=ts, user_id=user_id,
+            task_name=task_name, gender=gender,
+        )
+        logger.info("external task_start: category=%s user=%s task_id=%s",
+                     category, user_id, tid)
+        return [{"type": "platform_task_ack", "status": "ok",
+                 "task_id": tid, "task_category": category}]
+
+    active = _active_external_tasks.get(key)
+    if not active:
+        return [{"type": "platform_task_ack", "status": "error",
+                 "message": f"no active {category} task for user {user_id}"}]
+    tid = active["task_id"]
+
+    if action == "sub_start":
+        active["sub_task_seq"] += 1
+        seq = active["sub_task_seq"]
+        db_manager.record_external_task(
+            task_id=tid, task_category=category, event_type="sub_start",
+            raw_message=raw, timestamp=ts, user_id=user_id,
+            task_name=task_name, gender=gender, sub_task_seq=seq,
+        )
+        logger.info("external sub_start: task_id=%s seq=%s", tid, seq)
+        return [{"type": "platform_task_ack", "status": "ok",
+                 "task_id": tid, "sub_task_seq": seq}]
+
+    if action == "sub_end":
+        seq = active["sub_task_seq"]
+        db_manager.record_external_task(
+            task_id=tid, task_category=category, event_type="sub_end",
+            raw_message=raw, timestamp=ts, user_id=user_id,
+            task_name=task_name, gender=gender, sub_task_seq=seq,
+        )
+        logger.info("external sub_end: task_id=%s seq=%s", tid, seq)
+
+        result = message_data.get("result")
+        if result and isinstance(result, dict):
+            fire_list = result.get("Fire") or []
+            switch_list = result.get("SwitchInfo") or []
+            ai_time_obj = result.get("AITIME") or {}
+            db_manager.record_external_task_result(
+                task_id=tid, task_category=category,
+                raw_message=json.dumps(result, ensure_ascii=False),
+                timestamp=ts, user_id=user_id,
+                ai_control_time=result.get("AIcontrolTime"),
+                person_control_time=result.get("PersonControlTime"),
+                ai_remind_time=ai_time_obj.get("AiRemindTime"),
+                switch_count=len(switch_list),
+                fire_count=len(fire_list),
+                fire_success_count=sum(1 for f in fire_list if f.get("FireResult")),
+            )
+            logger.info("external sub_end with result: task_id=%s seq=%s", tid, seq)
+
+        return [{"type": "platform_task_ack", "status": "ok",
+                 "task_id": tid, "sub_task_seq": seq}]
+
+    if action == "task_end":
+        db_manager.record_external_task(
+            task_id=tid, task_category=category, event_type="task_end",
+            raw_message=raw, timestamp=ts, user_id=user_id,
+            task_name=task_name, gender=gender,
+        )
+        _active_external_tasks.pop(key, None)
+        logger.info("external task_end: task_id=%s", tid)
+        return [{"type": "platform_task_ack", "status": "ok",
+                 "task_id": tid, "event_type": "task_end"}]
+
+    return [{"type": "platform_task_ack", "status": "error",
+             "message": f"unknown Action: {action}"}]
+
+
+def handle_platform_task_result_ws(message_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """处理外部平台任务结果消息。"""
+    logger.info("RAW platform_task_result: %s",
+                json.dumps(message_data, ensure_ascii=False))
+
+    user_id = str(message_data.get("ID") or "").strip()
+    if not user_id:
+        return [{"type": "platform_task_ack", "status": "error",
+                 "message": "platform_task_result requires non-empty ID"}]
+
+    active = None
+    matched_key = None
+    for k, v in _active_external_tasks.items():
+        if k[1] == user_id:
+            active = v
+            matched_key = k
+            break
+
+    if not active:
+        logger.warning("platform_task_result: no active task for user %s, "
+                       "storing with task_id=-1", user_id)
+        tid = -1
+        category = "unknown"
+    else:
+        tid = active["task_id"]
+        category = matched_key[0]
+
+    ts = int(_time.time() * 1000)
+    raw = json.dumps(message_data, ensure_ascii=False)
+
+    fire_list = message_data.get("Fire") or []
+    switch_list = message_data.get("SwitchInfo") or []
+    ai_time_obj = message_data.get("AITIME") or {}
+
+    db_manager.record_external_task_result(
+        task_id=tid, task_category=category, raw_message=raw, timestamp=ts,
+        user_id=user_id,
+        ai_control_time=message_data.get("AIcontrolTime"),
+        person_control_time=message_data.get("PersonControlTime"),
+        ai_remind_time=ai_time_obj.get("AiRemindTime"),
+        switch_count=len(switch_list),
+        fire_count=len(fire_list),
+        fire_success_count=sum(1 for f in fire_list if f.get("FireResult")),
+    )
+
+    if matched_key:
+        _active_external_tasks.pop(matched_key, None)
+
+    logger.info("platform_task_result stored: task_id=%s category=%s", tid, category)
+    return [{"type": "platform_task_ack", "status": "ok",
+             "task_id": tid, "event_type": "task_result"}]
+
+
 async def handle_platform_task_ws(websocket_server: Any, sender_client_id: str, message_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    logger.info("RAW platform message: %s",
+                json.dumps(message_data, ensure_ascii=False))
+
+    category = _classify_task_category(message_data)
+    if category in ("platform_control", "weapon_launch"):
+        return _handle_external_task(message_data, category)
+
+    # ---- 现有 radar / sa 逻辑 ----
     try:
         normalized = apply_platform_task_message(message_data)
     except ValueError as e:

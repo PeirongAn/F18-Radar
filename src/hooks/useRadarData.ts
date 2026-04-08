@@ -396,12 +396,14 @@ export interface RepetitionInfo {
   will_difficulty_change?: boolean;
 }
 
-export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
+export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
 
 // 定义不同任务类型的进度状态接口
 interface AllRepetitionInfos {
   RADAR_TARGETING: RepetitionInfo | 'ALL_COMPLETED' | null;
   SA_THREAT_RESPONSE: RepetitionInfo | 'ALL_COMPLETED' | null;
+  PLATFORM_CONTROL: RepetitionInfo | 'ALL_COMPLETED' | null;
+  WEAPON_FIRING: RepetitionInfo | 'ALL_COMPLETED' | null;
 }
 
 interface UseRadarDataOptions {
@@ -462,6 +464,8 @@ const useRadarData = (
   const [repetitionInfos, setRepetitionInfos] = useState<AllRepetitionInfos>({
     RADAR_TARGETING: null,
     SA_THREAT_RESPONSE: null,
+    PLATFORM_CONTROL: null,
+    WEAPON_FIRING: null,
   });
   
   // 初始设置参数状态
@@ -1069,7 +1073,7 @@ const useRadarData = (
   const clearAndResetView = useCallback(() => {
     setRadarData(null); 
     // 重置所有任务次数信息
-    setRepetitionInfos({ RADAR_TARGETING: null, SA_THREAT_RESPONSE: null });
+    setRepetitionInfos({ RADAR_TARGETING: null, SA_THREAT_RESPONSE: null, PLATFORM_CONTROL: null, WEAPON_FIRING: null });
     setPlatformTaskConfig(null);
     sendMessage({ type: 'reset_view' });
     console.log("View reset command sent, data stream paused, and local state cleared.");

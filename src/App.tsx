@@ -167,7 +167,7 @@ const App: React.FC = observer(() => {
     if (lastMessage.type === 'set_questionnaire_popup') {
       setEnableQuestionnairePopup(!!lastMessage.enabled);
     } else if (lastMessage.type === 'show_questionnaire') {
-      const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | undefined;
+      const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING' | undefined;
       if (taskType === 'SA_THREAT_RESPONSE') {
         pendingSaQuestionnaireRef.current = true;
       } else {
@@ -659,7 +659,7 @@ const App: React.FC = observer(() => {
       </div>
 
       {/* ── Questionnaire Modal ─────────────────────────────── */}
-      {(repetitionInfos.RADAR_TARGETING !== null || repetitionInfos.SA_THREAT_RESPONSE !== null) && (
+      {(repetitionInfos.RADAR_TARGETING !== null || repetitionInfos.SA_THREAT_RESPONSE !== null || repetitionInfos.PLATFORM_CONTROL !== null || repetitionInfos.WEAPON_FIRING !== null) && (
         <QuestionnaireModal
           ref={questionnaireRef}
           repetitionInfos={repetitionInfos}
@@ -669,7 +669,8 @@ const App: React.FC = observer(() => {
           questionnaireApiUrl="/questionnaire_config.json"
           sendMessage={sendMessage ?? undefined}
           onSubmit={(data: QuestionnaireSubmitData) => {
-            addMessage('system', `问卷已提交 · ${data.taskType === 'RADAR_TARGETING' ? '传感器任务' : '威胁排序'} · 第 ${data.repetitionCurrent} 次`);
+            const taskLabels: Record<string, string> = { RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序', PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射' };
+            addMessage('system', `问卷已提交 · ${taskLabels[data.taskType] ?? data.taskType} · 第 ${data.repetitionCurrent} 次`);
           }}
         />
       )}

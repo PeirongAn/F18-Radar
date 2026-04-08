@@ -402,8 +402,12 @@ function renderContext() {
   document.getElementById('displayExpNo').textContent  = experimentNo || '-';
 
   // Task type label
+  const FALLBACK_TASK_LABELS = {
+    RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序',
+    PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射',
+  };
   const taskLabel = config?.taskTypeLabels?.[taskType]
-    ?? (taskType === 'SA_THREAT_RESPONSE' ? '威胁排序' : '传感器任务');
+    ?? FALLBACK_TASK_LABELS[taskType] ?? taskType ?? '-';
   setSelectValue('selTaskType', taskLabel);
 
   // Difficulty
@@ -612,9 +616,26 @@ function handleSubmit() {
   // 2. Load config (needed before renderContext)
   await loadConfig();
 
-  // 3. Connect WS
+  // 3. Pre-fill answers from URL (e.g. q1=5&q2=3)
+  prefillAnswersFromURL();
+
+  // 4. Connect WS
   connectWS();
 })();
+
+function prefillAnswersFromURL() {
+  const p = new URLSearchParams(window.location.search);
+  const qs = config?.questions || [];
+  qs.forEach(q => {
+    const val = parseInt(p.get(`q${q.id}`));
+    if (!val || val < 1 || val > (config.scales || []).length) return;
+    const radio = document.querySelector(`input[name="q_${q.id}"][value="${val}"]`);
+    if (radio) {
+      radio.checked = true;
+      onAnswer(q.id, val);
+    }
+  });
+}
 </script>
 </body>
 </html>

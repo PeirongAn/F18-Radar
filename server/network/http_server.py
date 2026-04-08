@@ -12,7 +12,7 @@ import sys
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from managers import config_manager, target_manager, get_logger
+from managers import config_manager, target_manager, db_manager, get_logger
 from core import message_handler
 
 class HTTPServer:
@@ -57,6 +57,9 @@ class HTTPServer:
             
         # WebSocket路由
         self.app.router.add_get('/ws', self.websocket_handler)
+
+        # 问卷提交路由
+        self.app.router.add_post('/api/questionnaire', self.questionnaire_submit_handler)
 
         # 眼动追踪路由
         self.app.router.add_post('/tobii/hand', self.tobii_hand_handler)
@@ -239,6 +242,30 @@ class HTTPServer:
                             await ws.send_str(json.dumps(reply, ensure_ascii=False))
                         continue
 
+                    if message_type == 'platform_task_result':
+                        from network.platform_task_bridge import handle_platform_task_result_ws
+                        for reply in handle_platform_task_result_ws(message_data):
+                            await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                        continue
+
+                    if message_type == 'questionnaire_submitted':
+                        message_data['source'] = message_data.get('source', 'websocket')
+                        try:
+                            db_manager.record_questionnaire(message_data)
+                            await ws.send_str(json.dumps({
+                                "type": "questionnaire_saved",
+                                "ok": True,
+                                "msg": "问卷已保存"
+                            }, ensure_ascii=False))
+                        except Exception as e:
+                            self.logger.error(f"WebSocket 保存问卷失败: {e}", exc_info=True)
+                            await ws.send_str(json.dumps({
+                                "type": "questionnaire_saved",
+                                "ok": False,
+                                "msg": str(e)
+                            }, ensure_ascii=False))
+                        continue
+
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'joystick_connect' and not self.joystick_handler:
                         try:
@@ -300,6 +327,28 @@ class HTTPServer:
             
         return ws
     
+    async def questionnaire_submit_handler(self, request: web.Request) -> web.Response:
+        """POST /api/questionnaire — 保存问卷提交到数据库"""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "msg": "请求体必须是 JSON"}, status=400)
+
+        if not data.get('answers'):
+            return web.json_response({"ok": False, "msg": "缺少 answers 字段"}, status=400)
+
+        if 'source' not in data:
+            data['source'] = 'http_api'
+
+        try:
+            db_manager.record_questionnaire(data)
+            self.logger.info("问卷已通过 HTTP 接口保存: user=%s task=%s",
+                             data.get('userId'), data.get('taskType'))
+            return web.json_response({"ok": True, "msg": "问卷已保存"})
+        except Exception as e:
+            self.logger.error(f"保存问卷失败: {e}", exc_info=True)
+            return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
     async def tobii_hand_handler(self, request: web.Request) -> web.Response:
         """
         POST /tobii/hand

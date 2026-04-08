@@ -10,7 +10,7 @@ import React, {
 /* ─────────────────────────────────────────────────────────────
    Types
 ───────────────────────────────────────────────────────────── */
-export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
+export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
 
 export interface RepetitionInfo {
   current: number;
@@ -27,6 +27,8 @@ export interface RepetitionInfo {
 interface AllRepetitionInfos {
   RADAR_TARGETING: RepetitionInfo | 'ALL_COMPLETED' | null;
   SA_THREAT_RESPONSE: RepetitionInfo | 'ALL_COMPLETED' | null;
+  PLATFORM_CONTROL: RepetitionInfo | 'ALL_COMPLETED' | null;
+  WEAPON_FIRING: RepetitionInfo | 'ALL_COMPLETED' | null;
 }
 
 interface QuestionItem {
@@ -238,7 +240,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
         timestamp: Date.now(),
       };
 
-      sendMessage?.({ type: 'questionnaire_submitted', ...data });
+      sendMessage?.({ type: 'questionnaire_submitted', ...data, source: 'react_modal' });
       onSubmit?.(data);
 
       setIsSubmitting(false);
@@ -254,9 +256,13 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     const scales = config.scales ?? DEFAULT_CONFIG.scales!;
 
+    const FALLBACK_TASK_LABELS: Record<string, string> = {
+      RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序',
+      PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射',
+    };
     const taskLabel =
       config.taskTypeLabels?.[currentTaskType] ??
-      (currentTaskType === 'RADAR_TARGETING' ? '传感器任务' : '威胁排序');
+      FALLBACK_TASK_LABELS[currentTaskType] ?? currentTaskType;
 
     const difficultyLabel = translateDifficulty(info?.difficulty, config.difficultyLabels);
     const autonomyLabel = info?.is_ai_active

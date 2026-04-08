@@ -195,6 +195,12 @@ class WebSocketServer:
                             await self.send_message(websocket, reply)
                         continue
 
+                    if message_type == 'platform_task_result':
+                        from network.platform_task_bridge import handle_platform_task_result_ws
+                        for reply in handle_platform_task_result_ws(message_data):
+                            await self.send_message(websocket, reply)
+                        continue
+
                     # tobii_hand：更新眼动注意力区域（等价于 POST /tobii/hand）
                     if message_type == 'tobii_hand':
                         reply = await self._handle_tobii_hand(message_data)
