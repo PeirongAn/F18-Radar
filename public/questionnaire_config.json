@@ -1,8 +1,10 @@
 {
   "title": "智能助手信任度问卷",
   "taskTitles": {
-    "RADAR_TARGETING": "传感器任务 · 智能助手信任度问卷",
-    "SA_THREAT_RESPONSE": "威胁排序 · 智能助手信任度问卷"
+    "RADAR_TARGETING": "传感器操作 · 智能助手信任度问卷",
+    "SA_THREAT_RESPONSE": "威胁排序 · 智能助手信任度问卷",
+    "PLATFORM_CONTROL": "平台控制 · 智能助手信任度问卷",
+    "WEAPON_FIRING": "武器发射 · 智能助手信任度问卷"
   },
   "scales": ["非常不同意", "不同意", "一般", "同意", "非常同意"],
   "difficultyLabels": {
@@ -15,8 +17,10 @@
     "ai_off": "低等级"
   },
   "taskTypeLabels": {
-    "RADAR_TARGETING": "传感器任务",
-    "SA_THREAT_RESPONSE": "威胁排序"
+    "RADAR_TARGETING": "传感器操作",
+    "SA_THREAT_RESPONSE": "威胁排序",
+    "PLATFORM_CONTROL": "平台控制",
+    "WEAPON_FIRING": "武器发射"
   },
   "questions": [
     { "id": 1, "text": "我对智能助手有信心。" },
