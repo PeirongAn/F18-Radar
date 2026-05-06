@@ -372,13 +372,52 @@ class TaskScenarioManager:
             self.logger.debug(f"Formal mode: completion status will be set to default FALSE in database")
 
     def _refresh_config(self) -> None:
-        """重新读取最新配置文件，更新运行时参数（max_repetitions 等）"""
+        """重新读取最新配置文件，更新运行时参数（max_repetitions 等）
+
+        若当前场景上挂了 max_repetitions_override（来自外部平台 TaskNumber），
+        以场景上的覆盖值为准，配置文件中的 max_repetitions / practice_repetitions 让位。
+        """
         self.config = config_manager.get_config()
         game_settings = self.config.get('game_settings', {})
         practice_reps = game_settings.get('practice_repetitions', 3)
         formal_reps = game_settings.get('max_repetitions', 1)
-        self.max_repetitions = practice_reps if self.is_practice else formal_reps
+        base = practice_reps if self.is_practice else formal_reps
+
+        override = (self.current_scenario or {}).get('max_repetitions_override')
+        if override is not None:
+            try:
+                self.max_repetitions = max(1, int(override))
+            except (TypeError, ValueError):
+                self.max_repetitions = base
+        else:
+            self.max_repetitions = base
         self.logger.debug("Config refreshed from file")
+
+    def apply_repetition_override(self, n: int) -> None:
+        """外部平台 TaskNumber 注入：把当前场景的总重复次数锁定为 n。
+
+        语义：以"第一次设置"为准——若当前场景已有 override，则忽略本次。
+        会同时更新 self.max_repetitions 并把 override 持久化到当前场景，
+        以便下一次 task_start 创建新的 manager 时仍能加载到。
+        """
+        if self.current_scenario is None:
+            return
+        if self.current_scenario.get('max_repetitions_override') is not None:
+            return
+        try:
+            n_int = max(1, int(n))
+        except (TypeError, ValueError):
+            return
+        self.current_scenario['max_repetitions_override'] = n_int
+        self.max_repetitions = n_int
+        if self.is_practice:
+            self._save_to_memory()
+        else:
+            self._save_to_db()
+        self.logger.info(
+            "Applied repetition override n=%s for user '%s' task '%s'",
+            n_int, self.user_id, self.task_type,
+        )
 
     def _refresh_scenario_config(self, scenario: Dict[str, Any]) -> None:
         """用最新配置刷新场景中所有可配置字段"""

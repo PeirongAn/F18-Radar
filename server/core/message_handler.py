@@ -148,7 +148,10 @@ class MessageHandler:
             current_scenario['audio_enabled'] = overlay['audio_enabled']
             rep_info = current_scenario.get('repetition_info') or {}
             if overlay.get('repetition_total_override') is not None:
-                rep_info['total'] = overlay['repetition_total_override']
+                # 把 TaskNumber 真正灌进引擎：锁定 max_repetitions（首次设置生效，
+                # 之后 task_start 中途换值会被忽略）。然后用引擎认可的值刷新显示。
+                task_manager.apply_repetition_override(overlay['repetition_total_override'])
+                rep_info['total'] = task_manager.max_repetitions
             rep_info['difficulty'] = current_scenario['difficulty_name']
             rep_info['is_ai_active'] = current_scenario['is_ai_active']
             current_scenario['repetition_info'] = rep_info
@@ -399,6 +402,25 @@ class MessageHandler:
             return [{"type": "all_tasks_completed", "task_type": task_type, "message": "所有威胁排序任务已完成。"}]
         if not current_scenario:
             return [{"type": "all_tasks_completed", "task_type": task_type, "message": f"当前模式的{task_type}任务已完成。"}]
+
+        # 与 _handle_task_start 保持一致：消费外部平台 task_start 留下的 overlay，
+        # 把 difficulty/AI/audio 以及 TaskNumber→max_repetitions 灌到 scenario 上。
+        overlay, platform_meta = consume_pending_for_task_start()
+        if overlay:
+            current_scenario['difficulty_name'] = overlay['difficulty_name']
+            current_scenario['difficulty_config'] = overlay['difficulty_config']
+            current_scenario['is_ai_active'] = overlay['is_ai_active']
+            current_scenario['ai_level_name'] = overlay['ai_level_name']
+            current_scenario['ai_level_config'] = overlay['ai_level_config']
+            current_scenario['audio_enabled'] = overlay['audio_enabled']
+            rep_info = current_scenario.get('repetition_info') or {}
+            if overlay.get('repetition_total_override') is not None:
+                task_manager.apply_repetition_override(overlay['repetition_total_override'])
+                rep_info['total'] = task_manager.max_repetitions
+            rep_info['difficulty'] = current_scenario['difficulty_name']
+            rep_info['is_ai_active'] = current_scenario['is_ai_active']
+            current_scenario['repetition_info'] = rep_info
+            event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
 
         task_id = generate_task_id()
         self.current_session['task_id'] = task_id
