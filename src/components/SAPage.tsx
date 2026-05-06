@@ -1458,6 +1458,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         if (isCorrect === true || isCorrect === false) {
           setShowTaskComplete(false);
           onResultConfirmed?.();
+          // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
+          handleResetSA();
         } else {
           handleResetSA();
         }
@@ -2093,6 +2095,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               onClick={isCorrect === true || isCorrect === false ? () => {
                 setShowTaskComplete(false);
                 onResultConfirmed?.();
+                // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
+                handleResetSA();
               } : handleResetSA}
               style={{
                 fontFamily: "'Share Tech Mono', monospace",

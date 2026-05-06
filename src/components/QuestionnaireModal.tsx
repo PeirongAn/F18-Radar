@@ -184,8 +184,9 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     }, []);
 
     /* ── Watch task types — only auto-popup when ALL_COMPLETED ──
-       SA tasks are excluded here; their questionnaire is triggered
-       after the user views the result via imperative show(). */
+       SA tasks are excluded here; their questionnaire is queued
+       in App.tsx when SA reaches ALL_COMPLETED, then shown after
+       the user views the result via imperative show(). */
     useEffect(() => {
       if (!enableAutoPopup || !configLoaded) return;
 

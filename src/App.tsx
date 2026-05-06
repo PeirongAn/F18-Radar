@@ -161,6 +161,9 @@ const App: React.FC = observer(() => {
      服务端可发送：
        { type: 'set_questionnaire_popup', enabled: bool }  → 开关自动弹出
        { type: 'show_questionnaire', task_type?: string }  → 手动弹出
+     注意：SA 不通过 show_questionnaire 触发（服务端会在每次完成时
+     都发一条），改为监听 repetitionInfos 达到 ALL_COMPLETED 时再置
+     pending，避免每完成一轮就弹一次。
   ───────────────────────────────────────────────── */
   useEffect(() => {
     if (!lastMessage) return;
@@ -168,13 +171,21 @@ const App: React.FC = observer(() => {
       setEnableQuestionnairePopup(!!lastMessage.enabled);
     } else if (lastMessage.type === 'show_questionnaire') {
       const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING' | undefined;
-      if (taskType === 'SA_THREAT_RESPONSE') {
-        pendingSaQuestionnaireRef.current = true;
-      } else {
+      if (taskType && taskType !== 'SA_THREAT_RESPONSE') {
         questionnaireRef.current?.show(taskType);
       }
     }
   }, [lastMessage]);
+
+  /* ── SA 任务次数达到上限时直接弹问卷 ──
+     最后一轮的时序：用户点完「确认」→ onResultConfirmed → handleResetSA
+     发 ResetSA → 服务端回 all_tasks_completed → 此处接到 ALL_COMPLETED。
+     这时用户已经看完结果了，直接 show 即可。 */
+  useEffect(() => {
+    if (repetitionInfos.SA_THREAT_RESPONSE === 'ALL_COMPLETED') {
+      questionnaireRef.current?.show('SA_THREAT_RESPONSE');
+    }
+  }, [repetitionInfos.SA_THREAT_RESPONSE]);
 
   /* ── 监听 SA 临机事件 ─────────────────────────── */
   useEffect(() => {
