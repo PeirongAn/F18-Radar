@@ -667,7 +667,7 @@ const useRadarData = (
     }
   }, [buildAntennaStatusPayload]);
 
-  // gazerelation: 打开当前回合 Radar WS；连接成功后发送 hand(box_visible=true) 开始消息
+  // gazerelation: 打开当前回合 Radar WS；连接成功后发送 tobii_hand(box_visible=true) 消息
   const openAntennaRoundWs = useCallback((roundId: number, promptPosition?: any) => {
     const hasValidPromptPosition = (pos: any): boolean =>
       !!pos &&
@@ -693,7 +693,7 @@ const useRadarData = (
       lastAntennaPromptPositionRef.current = promptPosition;
     }
 
-    const ws = new WebSocket('ws://localhost:8082');
+    const ws = new WebSocket(wsUrl);
     antennaRoundWsRef.current = ws;
     // 处理 WS 连接成功事件
     ws.onopen = () => {
@@ -727,7 +727,7 @@ const useRadarData = (
         antennaRoundWsRef.current = null;
       }
     };
-  }, [buildAntennaStatusPayload, closeAntennaRoundWs, handleAntennaStatusResponse]);
+  }, [buildAntennaStatusPayload, closeAntennaRoundWs, handleAntennaStatusResponse, wsUrl]);
 
   // gazerelation: 开始SA最高优先级目标的Tobii回合
   const startSaTobiiRound = useCallback((promptPosition: any) => {
@@ -757,7 +757,7 @@ const useRadarData = (
       saTobiiWsRef.current = null;
     }
 
-    const ws = new WebSocket('ws://localhost:8082');
+    const ws = new WebSocket(wsUrl);
     saTobiiWsRef.current = ws;
     ws.onopen = () => {
       if (!saTobiiRoundActiveRef.current || saTobiiRoundEndedRef.current) return;
@@ -794,7 +794,7 @@ const useRadarData = (
         saTobiiWsRef.current = null;
       }
     };
-  }, [buildTobiiStatusPayload, handleSaTobiiResponse]);
+  }, [buildTobiiStatusPayload, handleSaTobiiResponse, wsUrl]);
 
   // gazerelation: 结束SA最高优先级目标的Tobii回合
   const endSaTobiiRound = useCallback((promptPosition?: any) => {

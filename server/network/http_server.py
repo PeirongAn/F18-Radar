@@ -161,6 +161,28 @@ class HTTPServer:
                 text=f"index.html不存在: {index_path}\n请确保前端项目已正确构建",
                 status=404
             )
+
+    def _log_ws_request(self, client_id: str, message: str, message_data=None) -> None:
+        """记录收到的 WebSocket 请求摘要到统一日志。"""
+        message_bytes = len(message.encode('utf-8')) if isinstance(message, str) else len(message)
+        message_type = ""
+        task_id = ""
+        user_id = ""
+        if isinstance(message_data, dict):
+            message_type = message_data.get('type', '') or message_data.get('TaskName', '') or 'unknown'
+            task_id = message_data.get('task_id', message_data.get('ID', ''))
+            user_id = message_data.get('user_id', message_data.get('userId', ''))
+        else:
+            message_type = "invalid_json"
+
+        self.logger.info(
+            "收到WebSocket请求: client_id=%s type=%s bytes=%s task_id=%s user_id=%s",
+            client_id,
+            message_type,
+            message_bytes,
+            task_id,
+            user_id,
+        )
     
     async def websocket_handler(self, request):
         """处理WebSocket连接"""
@@ -203,6 +225,8 @@ class HTTPServer:
                     except json.JSONDecodeError:
                         message_data = None
                         message_type = ''
+
+                    self._log_ws_request(client_id, message, message_data)
                     
                     # 1) 如果收到的是config_update
                     if  message_type == "config_update":

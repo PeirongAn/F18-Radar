@@ -109,13 +109,14 @@ class LoggerManager:
     def _should_create_file_handler(self) -> bool:
         """判断是否应该创建文件处理器"""
         # 从环境变量或配置中读取
-        return os.getenv('LOG_TO_FILE', 'false').lower() == 'true'
+        return os.getenv('LOG_TO_FILE', 'true').lower() == 'true'
     
     def _create_file_handler(self, log_level) -> Optional[logging.FileHandler]:
         """创建文件处理器"""
         try:
-            # 确保日志目录存在
-            log_dir = "logs"
+            # 确保日志目录存在，固定写到 server/logs，避免受启动目录影响
+            server_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            log_dir = os.path.join(server_dir, "logs")
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
             
