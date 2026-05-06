@@ -302,15 +302,8 @@ class MessageHandler:
         # 停止眼动追踪
         self._gaze_stop(self.current_session.get('task_id'))
 
-        responses = []
-        # 正式模式下，任务完成后主动推送问卷
-        if not session_state.get('is_practice', False):
-            responses.append({
-                "type": "show_questionnaire",
-                "task_type": "RADAR_TARGETING",
-                "task_id": self.current_session.get('task_id'),
-            })
-        return responses
+        # 问卷由 all_tasks_completed 触发，单轮完成时不弹。
+        return []
     
     async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                    client_event_owner: str) -> List[Dict[str, Any]]:
@@ -348,15 +341,8 @@ class MessageHandler:
         # 停止眼动追踪
         self._gaze_stop(self.current_session.get('task_id'))
 
-        responses = []
-        # 正式模式下，任务完成后主动推送问卷
-        if not session_state.get('is_practice', False):
-            responses.append({
-                "type": "show_questionnaire",
-                "task_type": "SA_THREAT_RESPONSE",
-                "task_id": self.current_session.get('task_id'),
-            })
-        return responses
+        # 问卷由 all_tasks_completed 触发，单轮完成时不弹。
+        return []
     
     async def _handle_record_operation(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                      client_event_owner: str) -> List[Dict[str, Any]]:

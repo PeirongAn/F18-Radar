@@ -160,10 +160,8 @@ const App: React.FC = observer(() => {
   /* ── 监听问卷弹窗外部控制指令 ────────────────────
      服务端可发送：
        { type: 'set_questionnaire_popup', enabled: bool }  → 开关自动弹出
-       { type: 'show_questionnaire', task_type?: string }  → 手动弹出
-     注意：SA 不通过 show_questionnaire 触发（服务端会在每次完成时
-     都发一条），改为监听 repetitionInfos 达到 ALL_COMPLETED 时再置
-     pending，避免每完成一轮就弹一次。
+       { type: 'show_questionnaire', task_type?: string }  → 兼容旧服务端；
+       只有对应任务已经 ALL_COMPLETED 时才会弹出。
   ───────────────────────────────────────────────── */
   useEffect(() => {
     if (!lastMessage) return;
@@ -171,11 +169,11 @@ const App: React.FC = observer(() => {
       setEnableQuestionnairePopup(!!lastMessage.enabled);
     } else if (lastMessage.type === 'show_questionnaire') {
       const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING' | undefined;
-      if (taskType && taskType !== 'SA_THREAT_RESPONSE') {
+      if (taskType && repetitionInfos[taskType] === 'ALL_COMPLETED') {
         questionnaireRef.current?.show(taskType);
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, repetitionInfos]);
 
   /* ── SA 任务次数达到上限时直接弹问卷 ──
      最后一轮的时序：用户点完「确认」→ onResultConfirmed → handleResetSA
