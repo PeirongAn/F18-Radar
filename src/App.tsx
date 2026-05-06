@@ -208,7 +208,6 @@ const App: React.FC = observer(() => {
 
   /* ── 目标选择 ─────────────────────────────────── */
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
-    if (params.targetId && params.targetId === radarStore.lockedTargetId) return;
     radarStore.setLockedTargetId(params.targetId);
     if (params.targetId && params.lockX !== undefined) {
       radarStore.setLockScreenX(params.lockX);
