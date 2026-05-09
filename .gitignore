@@ -26,3 +26,4 @@ radar_env/
 *.pyc
 .claude/
 server/venv/
+server/data/
