@@ -134,9 +134,21 @@ class MessageHandler:
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
 
         if current_scenario == "ALL_COMPLETED":
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": "所有传感器任务已完成。"}]
+            return [{
+                "type": "all_tasks_completed",
+                "task_type": task_type,
+                "message": "所有传感器任务已完成。",
+                "is_ai_active": bool(is_ai_active_request),
+                "is_practice": bool(is_practice),
+            }]
         if not current_scenario:
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": f"当前模式的{task_type}任务已完成。"}]
+            return [{
+                "type": "all_tasks_completed",
+                "task_type": task_type,
+                "message": f"当前模式的{task_type}任务已完成。",
+                "is_ai_active": bool(is_ai_active_request),
+                "is_practice": bool(is_practice),
+            }]
 
         overlay, platform_meta = consume_pending_for_task_start()
         if overlay:
@@ -152,8 +164,10 @@ class MessageHandler:
                 # 之后 task_start 中途换值会被忽略）。然后用引擎认可的值刷新显示。
                 task_manager.apply_repetition_override(overlay['repetition_total_override'])
                 rep_info['total'] = task_manager.max_repetitions
-            rep_info['difficulty'] = current_scenario['difficulty_name']
+            rep_info['difficulty'] = overlay.get('difficulty_display') or current_scenario['difficulty_name']
+            rep_info['engine_difficulty'] = current_scenario['difficulty_name']
             rep_info['is_ai_active'] = current_scenario['is_ai_active']
+            rep_info['autonomy_level'] = overlay.get('autonomy_level') or current_scenario.get('ai_level_name')
             current_scenario['repetition_info'] = rep_info
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
         
@@ -375,19 +389,30 @@ class MessageHandler:
         task_type = 'SA_THREAT_RESPONSE'
         is_practice = message.get('is_practice', False)
         session_state['is_practice'] = is_practice
-        is_ai_active_request = message.get('is_ai_active', False)
+        is_ai_active_request = bool(message.get('is_ai_active', False))
         # 为SA任务也创建一个持久化管理器
         task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice, is_ai_active_request=is_ai_active_request)
         session_state['sa_task_manager'] = task_manager
-        event_owner = message.get('event_owner', 'manual')
-        is_ai_active_request = (event_owner == 'AI')
+        event_owner = message.get('event_owner') or ('AI' if is_ai_active_request else 'manual')
         
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
 
         if current_scenario == "ALL_COMPLETED":
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": "所有威胁排序任务已完成。"}]
+            return [{
+                "type": "all_tasks_completed",
+                "task_type": task_type,
+                "message": "所有威胁排序任务已完成。",
+                "is_ai_active": bool(is_ai_active_request),
+                "is_practice": bool(is_practice),
+            }]
         if not current_scenario:
-            return [{"type": "all_tasks_completed", "task_type": task_type, "message": f"当前模式的{task_type}任务已完成。"}]
+            return [{
+                "type": "all_tasks_completed",
+                "task_type": task_type,
+                "message": f"当前模式的{task_type}任务已完成。",
+                "is_ai_active": bool(is_ai_active_request),
+                "is_practice": bool(is_practice),
+            }]
 
         # 与 _handle_task_start 保持一致：消费外部平台 task_start 留下的 overlay，
         # 把 difficulty/AI/audio 以及 TaskNumber→max_repetitions 灌到 scenario 上。
@@ -403,8 +428,10 @@ class MessageHandler:
             if overlay.get('repetition_total_override') is not None:
                 task_manager.apply_repetition_override(overlay['repetition_total_override'])
                 rep_info['total'] = task_manager.max_repetitions
-            rep_info['difficulty'] = current_scenario['difficulty_name']
+            rep_info['difficulty'] = overlay.get('difficulty_display') or current_scenario['difficulty_name']
+            rep_info['engine_difficulty'] = current_scenario['difficulty_name']
             rep_info['is_ai_active'] = current_scenario['is_ai_active']
+            rep_info['autonomy_level'] = overlay.get('autonomy_level') or current_scenario.get('ai_level_name')
             current_scenario['repetition_info'] = rep_info
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
 

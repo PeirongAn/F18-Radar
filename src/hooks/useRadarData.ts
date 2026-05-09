@@ -1166,7 +1166,11 @@ const useRadarData = (
         console.log('[useRadarData] Received repetition_info:', message.repetition_info);
         setRepetitionInfos(prev => ({
           ...prev,
-          [message.task_type]: { ...message.repetition_info, task_id: message.task_id },
+          [message.task_type]: {
+            ...message.repetition_info,
+            task_id: message.task_id,
+            autonomy_level: message.repetition_info.autonomy_level ?? message.ai_level,
+          },
         }));
       }
 
@@ -1230,7 +1234,11 @@ const useRadarData = (
       if (message.task_type && message.repetition_info) {
         setRepetitionInfos(prev => ({
           ...prev,
-          [message.task_type]: { ...message.repetition_info, task_id: message.task_id },
+          [message.task_type]: {
+            ...message.repetition_info,
+            task_id: message.task_id,
+            autonomy_level: message.repetition_info.autonomy_level ?? message.ai_level,
+          },
         }));
       }
       //  初始化AI和任务状态

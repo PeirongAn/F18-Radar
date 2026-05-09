@@ -410,6 +410,7 @@ class DatabaseManager:
                     repetition_current INTEGER,
                     repetition_total INTEGER,
                     difficulty TEXT,
+                    autonomy_level TEXT,
                     is_ai_active BOOLEAN,
                     is_practice BOOLEAN,
                     answers_json TEXT NOT NULL,
@@ -420,6 +421,13 @@ class DatabaseManager:
             """)
             conn.commit()
             self.logger.info("questionnaire_responses 表创建成功")
+        else:
+            cursor.execute("PRAGMA table_info(questionnaire_responses)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if 'autonomy_level' not in columns:
+                cursor.execute("ALTER TABLE questionnaire_responses ADD COLUMN autonomy_level TEXT")
+                conn.commit()
+                self.logger.info("questionnaire_responses 表已添加 autonomy_level 列")
 
     def record_questionnaire(self, data: Dict[str, Any]) -> None:
         """记录问卷提交数据"""
@@ -427,17 +435,22 @@ class DatabaseManager:
         sql = """
             INSERT INTO questionnaire_responses (
                 user_id, task_type, repetition_current, repetition_total,
-                difficulty, is_ai_active, is_practice,
+                difficulty, autonomy_level, is_ai_active, is_practice,
                 answers_json, source, client_timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
+        autonomy_level = task_info.get('autonomyLevel') or task_info.get('autonomy_level')
+        legacy_is_ai_active = task_info.get('is_ai_active')
+        if legacy_is_ai_active is None:
+            legacy_is_ai_active = bool(autonomy_level)
         params = (
             data.get('userId', ''),
             data.get('taskType', ''),
             data.get('repetitionCurrent', 0),
             data.get('repetitionTotal', 0),
             task_info.get('difficulty'),
-            1 if task_info.get('isAIActive') else 0,
+            autonomy_level,
+            1 if legacy_is_ai_active else 0,
             1 if task_info.get('isPractice') else 0,
             json.dumps(data.get('answers', {})),
             data.get('source', 'unknown'),

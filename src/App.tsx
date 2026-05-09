@@ -18,6 +18,8 @@ interface TargetSelectParams {
   event_owner?: 'AI' | 'manual';
 }
 
+type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
+
 function translateDifficulty(d: string): string {
   switch (d) {
     case 'low':    return '低';
@@ -100,9 +102,13 @@ const App: React.FC = observer(() => {
   // 问卷弹出控制：外部可通过 WebSocket 消息 { type:'set_questionnaire_popup', enabled:bool } 修改
   const [enableQuestionnairePopup, setEnableQuestionnairePopup] = useState<boolean>(true);
   const questionnaireRef = useRef<QuestionnaireModalHandle>(null);
-
-  // SA 任务：等用户查看结果后才弹问卷
-  const pendingSaQuestionnaireRef = useRef(false);
+  const questionnaireEligibilityRef = useRef<Record<TaskType, { isAIActive: boolean; isPractice: boolean } | null>>({
+    RADAR_TARGETING: null,
+    SA_THREAT_RESPONSE: null,
+    PLATFORM_CONTROL: null,
+    WEAPON_FIRING: null,
+  });
+  const shownQuestionnairesRef = useRef<Set<string>>(new Set());
 
   const { radarStore } = useStore();
   const { antennaAdjustmentRequired, targetAntennaElevation } = radarStore;
@@ -141,6 +147,36 @@ const App: React.FC = observer(() => {
     radarStore.setUserId(userId);
   }, [userId, radarStore]);
 
+  useEffect(() => {
+    (['RADAR_TARGETING', 'SA_THREAT_RESPONSE', 'PLATFORM_CONTROL', 'WEAPON_FIRING'] as TaskType[]).forEach(taskType => {
+      const info = repetitionInfos[taskType];
+      if (!info || typeof info === 'string') return;
+      questionnaireEligibilityRef.current[taskType] = {
+        isAIActive: !!(info as any).is_ai_active,
+        isPractice: !!(info as any).is_practice,
+      };
+    });
+  }, [repetitionInfos]);
+
+  const canShowQuestionnaire = useCallback((taskType: TaskType, source?: any) => {
+    const fallback = questionnaireEligibilityRef.current[taskType];
+    const isAIActive = typeof source?.is_ai_active === 'boolean'
+      ? source.is_ai_active
+      : fallback?.isAIActive;
+    const isPractice = typeof source?.is_practice === 'boolean'
+      ? source.is_practice
+      : fallback?.isPractice;
+    return enableQuestionnairePopup && isAIActive === true && isPractice === false;
+  }, [enableQuestionnairePopup]);
+
+  const showQuestionnaireForTask = useCallback((taskType: TaskType, source?: any) => {
+    if (!canShowQuestionnaire(taskType, source)) return;
+    const key = `${taskType}::AI_FORMAL_COMPLETED`;
+    if (shownQuestionnairesRef.current.has(key)) return;
+    shownQuestionnairesRef.current.add(key);
+    questionnaireRef.current?.show(taskType);
+  }, [canShowQuestionnaire]);
+
   /* ── 监听后台指令切换显示模式 ─────────────────────
      后台可发送以下消息驱动切换：
        { type: 'SwitchSA', ... }      → 切换到威胁排序
@@ -161,29 +197,29 @@ const App: React.FC = observer(() => {
      服务端可发送：
        { type: 'set_questionnaire_popup', enabled: bool }  → 开关自动弹出
        { type: 'show_questionnaire', task_type?: string }  → 兼容旧服务端；
-      只有对应任务类型（RADAR 或 SA）已经 ALL_COMPLETED 时才会弹出。
+      只有对应任务类型已完成，且为 AI 正式模式时才会弹出。
   ───────────────────────────────────────────────── */
   useEffect(() => {
     if (!lastMessage) return;
     if (lastMessage.type === 'set_questionnaire_popup') {
       setEnableQuestionnairePopup(!!lastMessage.enabled);
     } else if (lastMessage.type === 'show_questionnaire') {
-      const taskType = lastMessage.task_type as 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING' | undefined;
+      const taskType = lastMessage.task_type as TaskType | undefined;
       if (taskType && repetitionInfos[taskType] === 'ALL_COMPLETED') {
-        questionnaireRef.current?.show(taskType);
+        showQuestionnaireForTask(taskType, lastMessage);
       }
     }
-  }, [lastMessage, repetitionInfos]);
+  }, [lastMessage, repetitionInfos, showQuestionnaireForTask]);
 
-  /* ── SA 这一项任务次数达到上限时直接弹问卷 ──
-     最后一轮的时序：用户点完「确认」→ onResultConfirmed → handleResetSA
-     发 ResetSA → 服务端回 all_tasks_completed → 此处接到 ALL_COMPLETED。
-     这时用户已经看完结果了，直接 show 即可。 */
+  /* ── 每个任务类型完成后，仅 AI 正式模式弹问卷 ── */
   useEffect(() => {
-    if (repetitionInfos.SA_THREAT_RESPONSE === 'ALL_COMPLETED') {
-      questionnaireRef.current?.show('SA_THREAT_RESPONSE');
+    if (repetitionInfos.RADAR_TARGETING === 'ALL_COMPLETED') {
+      showQuestionnaireForTask('RADAR_TARGETING', lastMessage?.task_type === 'RADAR_TARGETING' ? lastMessage : undefined);
     }
-  }, [repetitionInfos.SA_THREAT_RESPONSE]);
+    if (repetitionInfos.SA_THREAT_RESPONSE === 'ALL_COMPLETED') {
+      showQuestionnaireForTask('SA_THREAT_RESPONSE', lastMessage?.task_type === 'SA_THREAT_RESPONSE' ? lastMessage : undefined);
+    }
+  }, [repetitionInfos.RADAR_TARGETING, repetitionInfos.SA_THREAT_RESPONSE, lastMessage, showQuestionnaireForTask]);
 
   /* ── 监听 SA 临机事件 ─────────────────────────── */
   useEffect(() => {
@@ -295,13 +331,8 @@ const App: React.FC = observer(() => {
     radarStore.updateRadarParams(range, angle);
   }, [radarStore]);
 
-  /* ── SA 查看结果后弹出问卷 ──────────────────────── */
-  const handleSAResultConfirmed = useCallback(() => {
-    if (pendingSaQuestionnaireRef.current) {
-      pendingSaQuestionnaireRef.current = false;
-      questionnaireRef.current?.show('SA_THREAT_RESPONSE');
-    }
-  }, []);
+  /* ── SA 查看结果确认回调保留给页面流程；问卷由任务类型完成状态统一控制 ── */
+  const handleSAResultConfirmed = useCallback(() => {}, []);
 
   /* ── SA 重置 ──────────────────────────────────── */
   const handleSATaskReset = useCallback(() => {
@@ -334,6 +365,7 @@ const App: React.FC = observer(() => {
       difficulty: (info as any).difficulty as string | undefined,
       is_practice: (info as any).is_practice as boolean | undefined,
       is_ai_active: (info as any).is_ai_active as boolean | undefined,
+      autonomy_level: (info as any).autonomy_level as string | undefined,
     };
   }, [activeDisplay, repetitionInfos]);
 
@@ -673,7 +705,7 @@ const App: React.FC = observer(() => {
           repetitionInfos={repetitionInfos}
           activeDisplay={activeDisplay}
           userId={userId}
-          enableAutoPopup={enableQuestionnairePopup}
+          enableAutoPopup={false}
           questionnaireApiUrl="/questionnaire_config.json"
           sendMessage={sendMessage ?? undefined}
           onSubmit={(data: QuestionnaireSubmitData) => {

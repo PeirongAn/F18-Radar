@@ -17,6 +17,7 @@ export interface RepetitionInfo {
   total: number;
   difficulty?: string;
   is_ai_active?: boolean;
+  autonomy_level?: string;
   is_practice?: boolean;
   scenario_index?: number;
   scenario_total?: number;
@@ -42,7 +43,7 @@ interface QuestionnaireConfig {
   scales?: string[];
   questions: QuestionItem[];
   difficultyLabels?: Record<string, string>;
-  autonomyLabels?: { ai_on?: string; ai_off?: string };
+  autonomyLabels?: Record<string, string>;
   taskTypeLabels?: Partial<Record<TaskType, string>>;
 }
 
@@ -54,7 +55,7 @@ export interface QuestionnaireSubmitData {
   answers: Record<number, number>;
   taskInfo: {
     difficulty?: string;
-    isAIActive?: boolean;
+    autonomyLevel?: string;
     isPractice?: boolean;
   };
   timestamp: number;
@@ -100,6 +101,21 @@ function translateDifficulty(d: string | undefined, labels?: Record<string, stri
     case 'medium': return '中难度';
     case 'high': return '高难度';
     default: return d;
+  }
+}
+
+function translateAutonomyLevel(level: string | undefined, labels?: Record<string, string>): string {
+  if (!level) return '-';
+  if (labels?.[level]) return labels[level];
+  switch (level) {
+    case '0':
+    case '1':
+    case 'L0': return '低自主等级';
+    case '2':
+    case 'L1': return '中自主等级';
+    case '3':
+    case 'L2': return '高自主等级';
+    default: return level;
   }
 }
 
@@ -155,6 +171,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     // Track which task_ids already triggered popup (server-driven via show_questionnaire)
     const triggeredRef = useRef<Set<string>>(new Set());
+    const lastInfoRef = useRef<Partial<Record<TaskType, RepetitionInfo>>>({});
 
     /* ── Fetch questionnaire config ── */
     useEffect(() => {
@@ -173,6 +190,22 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
         });
     }, [questionnaireApiUrl]);
 
+    /* ── Preserve the last concrete info before a task flips to ALL_COMPLETED ── */
+    useEffect(() => {
+      (Object.keys(repetitionInfos) as TaskType[]).forEach(taskType => {
+        const info = repetitionInfos[taskType];
+        if (info && info !== 'ALL_COMPLETED') {
+          lastInfoRef.current[taskType] = info;
+        }
+      });
+    }, [repetitionInfos]);
+
+    const getInfoForTask = useCallback((taskType: TaskType): RepetitionInfo | null => {
+      const info = repetitionInfos[taskType];
+      if (info && info !== 'ALL_COMPLETED') return info;
+      return lastInfoRef.current[taskType] ?? null;
+    }, [repetitionInfos]);
+
     /* ── Internal open helper ── */
     const openFor = useCallback((taskType: TaskType) => {
       setCurrentTaskType(taskType);
@@ -183,8 +216,8 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       setIsVisible(true);
     }, []);
 
-    /* ── Watch each task type — popup when that task type reaches ALL_COMPLETED ──
-       SA is handled in App.tsx so the result view can finish before the questionnaire appears. */
+    /* ── Legacy auto-popup path. App.tsx now owns questionnaire eligibility
+       because it must check AI-active and formal-mode gates before opening. */
     useEffect(() => {
       if (!enableAutoPopup || !configLoaded) return;
 
@@ -222,8 +255,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       }
 
       setIsSubmitting(true);
-      const info = repetitionInfos[currentTaskType];
-      const infoObj = info && info !== 'ALL_COMPLETED' ? info : null;
+      const infoObj = getInfoForTask(currentTaskType);
 
       const data: QuestionnaireSubmitData = {
         taskType: currentTaskType,
@@ -233,7 +265,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
         answers,
         taskInfo: {
           difficulty: infoObj?.difficulty,
-          isAIActive: infoObj?.is_ai_active,
+          autonomyLevel: infoObj?.autonomy_level,
           isPractice: infoObj?.is_practice,
         },
         timestamp: Date.now(),
@@ -245,13 +277,10 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       setIsSubmitting(false);
       setSubmitted(true);
       setTimeout(() => setIsVisible(false), 1800);
-    }, [config, answers, currentTaskType, userId, repetitionInfos, sendMessage, onSubmit]);
+    }, [config, answers, currentTaskType, userId, getInfoForTask, sendMessage, onSubmit]);
 
     /* ── Derive display values ── */
-    const info = (() => {
-      const v = repetitionInfos[currentTaskType];
-      return v && v !== 'ALL_COMPLETED' ? v : null;
-    })();
+    const info = getInfoForTask(currentTaskType);
 
     const scales = config.scales ?? DEFAULT_CONFIG.scales!;
 
@@ -264,9 +293,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       FALLBACK_TASK_LABELS[currentTaskType] ?? currentTaskType;
 
     const difficultyLabel = translateDifficulty(info?.difficulty, config.difficultyLabels);
-    const autonomyLabel = info?.is_ai_active
-      ? (config.autonomyLabels?.ai_on ?? '高等级')
-      : (config.autonomyLabels?.ai_off ?? '低等级');
+    const autonomyLabel = translateAutonomyLevel(info?.autonomy_level, config.autonomyLabels);
 
     const modalTitle =
       config.taskTitles?.[currentTaskType] ?? config.title ?? '智能助手信任度问卷';
@@ -388,11 +415,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
               <span style={{ color: '#cc0000', fontWeight: 'bold', marginLeft: '8px' }}>自主等级：</span>
               <select style={selectStyle} value={autonomyLabel} disabled onChange={() => {}}>
                 <option>{autonomyLabel}</option>
-              </select>
-
-              <span style={{ color: '#cc0000', fontWeight: 'bold', marginLeft: '8px' }}>交互工效：</span>
-              <select style={selectStyle} value="高工效" disabled onChange={() => {}}>
-                <option>高工效</option>
               </select>
             </div>
 

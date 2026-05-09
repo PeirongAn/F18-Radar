@@ -266,11 +266,6 @@
 
       <span class="attr-label">自主等级：</span>
       <select class="attr-select" id="selAutonomy" disabled></select>
-
-      <span class="attr-label">交互工效：</span>
-      <select class="attr-select" id="selInteraction" disabled>
-        <option>高工效</option>
-      </select>
     </div>
 
     <!-- Instruction -->
@@ -326,7 +321,8 @@ function getParams() {
     userId:       p.get('userId')       || '',
     taskType:     p.get('taskType')     || 'RADAR_TARGETING',
     difficulty:   p.get('difficulty')   || '',
-    isAIActive:   p.get('isAIActive')   === 'true',
+    autonomyLevel: p.get('autonomyLevel') || p.get('autonomy_level') ||
+      p.get('AIAutonomyLevel') || p.get('AIAutonomyLeve') || '',
     isPractice:   p.get('isPractice')   === 'true',
     experimentNo: p.get('experimentNo') || p.get('current') || '-',
     total:        p.get('total')        || '-',
@@ -396,7 +392,7 @@ function applyContext(ctx) {
 }
 
 function renderContext() {
-  const { userId, taskType, difficulty, isAIActive, experimentNo } = contextData;
+  const { userId, taskType, difficulty, autonomyLevel, experimentNo } = contextData;
 
   document.getElementById('displayUserId').textContent = userId || '-';
   document.getElementById('displayExpNo').textContent  = experimentNo || '-';
@@ -422,8 +418,8 @@ function renderContext() {
   }
 
   // Autonomy
-  const aiLabels = config?.autonomyLabels || { ai_on: '高等级', ai_off: '低等级' };
-  const autoLabel = isAIActive ? aiLabels.ai_on : aiLabels.ai_off;
+  const aiLabels = config?.autonomyLabels || { L0: '低自主等级', L1: '中自主等级', L2: '高自主等级' };
+  const autoLabel = aiLabels[autonomyLevel] || autonomyLevel || '-';
   setSelectValue('selAutonomy', autoLabel);
 
   // Title
@@ -567,7 +563,7 @@ function handleSubmit() {
   const btn = document.getElementById('btnSubmit');
   btn.disabled = true;
 
-  const { userId, taskType, difficulty, isAIActive, isPractice, experimentNo, total } = contextData;
+  const { userId, taskType, difficulty, autonomyLevel, isPractice, experimentNo, total } = contextData;
 
   const payload = {
     type:               'questionnaire_submitted',
@@ -578,7 +574,7 @@ function handleSubmit() {
     answers:            { ...answers },
     taskInfo: {
       difficulty:  difficulty || null,
-      isAIActive:  !!isAIActive,
+      autonomyLevel: autonomyLevel || null,
       isPractice:  !!isPractice,
     },
     timestamp: Date.now(),

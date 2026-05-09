@@ -40,14 +40,48 @@ def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
             return cand
     try:
         n = int(float(s))
-        cand = f"L{n}"
+        # 平台协议：1=低自主等级, 2=中自主等级, 3=高自主等级；
+        # 本地配置使用 L0/L1/L2，因此数字协议需要转成 0-based level。
+        if n <= 1:
+            idx = 0
+        elif n == 2:
+            idx = 1
+        else:
+            idx = 2
+        cand = f"L{idx}"
         if cand in valid:
             return cand
-        if valid and 0 <= n < len(valid):
-            return valid[n]
+        if valid:
+            return valid[min(idx, len(valid) - 1)]
     except ValueError:
         pass
     return default
+
+
+def _normalize_difficulty_display_key(raw: Any, engine_key: str) -> str:
+    """保留平台业务难度给问卷展示：1=高, 2=中, 3=低。"""
+    if raw is None or str(raw).strip() == "":
+        return engine_key
+    s = str(raw).strip()
+    sl = s.lower()
+    try:
+        n = int(float(s))
+        if n <= 1:
+            return "1"
+        if n == 2:
+            return "2"
+        return "3"
+    except ValueError:
+        pass
+    if sl in ("high", "medium", "low"):
+        return sl
+    if "高" in s:
+        return "high"
+    if "中" in s:
+        return "medium"
+    if "低" in s:
+        return "low"
+    return engine_key
 
 
 def _normalize_difficulty_key(raw: Any, config: Dict[str, Any]) -> str:
@@ -142,8 +176,10 @@ def _build_overlay(normalized: Dict[str, Any], config: Dict[str, Any]) -> Dict[s
 
     overlay: Dict[str, Any] = {
         "difficulty_name": dkey,
+        "difficulty_display": normalized.get("difficulty_display") or dkey,
         "difficulty_config": diff_conf,
         "is_ai_active": normalized["include_ai"],
+        "autonomy_level": level_name,
         "ai_level_name": level_name,
         "ai_level_config": ai_conf,
         "audio_enabled": gs.get("audio_enabled", True),
@@ -168,6 +204,7 @@ def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
         ai_raw = message.get("AIAutonomyLeve")
     current_level = _normalize_current_level(ai_raw, cfg)
     difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg)
+    difficulty_display = _normalize_difficulty_display_key(message.get("Difficulty"), difficulty_key)
     # DefaultControlMode: "0"=人工(manual), "1"=AI
     include_ai = _task_mode_to_include_ai(message.get("DefaultControlMode"))
     # TaskMode: "0"=练习(practice), "1"=正式(formal)
@@ -190,6 +227,7 @@ def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
         "current_level": current_level,
         "task_mode": message.get("TaskMode"),
         "difficulty_key": difficulty_key,
+        "difficulty_display": difficulty_display,
         "difficulty_raw": message.get("Difficulty"),
         "task_number": message.get("TaskNumber"),
         "ai_precision": message.get("aiprecision"),

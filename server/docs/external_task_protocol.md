@@ -452,7 +452,7 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 外部平台在任务结束后，通过浏览器打开以下 URL 让被试填写问卷：
 
 ```
-http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型>&difficulty=<难度>&isAIActive=<是否AI>&isPractice=<是否练习>&experimentNo=<当前序号>&total=<总数>
+http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型>&difficulty=<难度>&autonomyLevel=<自主等级>&isPractice=<是否练习>&experimentNo=<当前序号>&total=<总数>
 ```
 
 **参数说明：**
@@ -462,7 +462,7 @@ http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型
 | userId | string | 是 | 被试 ID，应与 task_start 中的 `ID` 一致 | 如 `12345` |
 | taskType | string | 是 | 任务类型常量 | `PLATFORM_CONTROL` / `WEAPON_FIRING` |
 | difficulty | string | 否 | 任务难度 | `low` / `medium` / `high` |
-| isAIActive | string | 否 | 是否启用 AI | `true` / `false` |
+| autonomyLevel | string | 否 | AI 自主等级，对应平台字段 `AIAutonomyLevel` / `AIAutonomyLeve`。页面也兼容直接传 `AIAutonomyLevel` / `AIAutonomyLeve` | `L0` / `L1` / `L2` 或 `1` / `2` / `3` |
 | isPractice | string | 否 | 是否练习模式 | `true` / `false` |
 | experimentNo | string | 否 | 当前实验序号 | 如 `3` |
 | total | string | 否 | 总实验数 | 如 `10` |
@@ -471,13 +471,13 @@ http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型
 **平台控制任务示例：**
 
 ```
-http://localhost:8080/questionnaire.html?userId=12345&taskType=PLATFORM_CONTROL&difficulty=high&isAIActive=true&isPractice=false&experimentNo=3&total=10
+http://localhost:8080/questionnaire.html?userId=12345&taskType=PLATFORM_CONTROL&difficulty=high&autonomyLevel=L2&isPractice=false&experimentNo=3&total=10
 ```
 
 **武器发射任务示例：**
 
 ```
-http://localhost:8080/questionnaire.html?userId=12345&taskType=WEAPON_FIRING&difficulty=medium&isAIActive=false&isPractice=false&experimentNo=5&total=10
+http://localhost:8080/questionnaire.html?userId=12345&taskType=WEAPON_FIRING&difficulty=medium&autonomyLevel=L1&isPractice=false&experimentNo=5&total=10
 ```
 
 ### 问卷提交方式
@@ -498,7 +498,7 @@ http://localhost:8080/questionnaire.html?userId=12345&taskType=WEAPON_FIRING&dif
   "answers": { "1": 5, "2": 4, "3": 3, "4": 4, "5": 5, "6": 3, "7": 4 },
   "taskInfo": {
     "difficulty": "high",
-    "isAIActive": true,
+    "autonomyLevel": "L2",
     "isPractice": false
   },
   "timestamp": 1712567890123,
@@ -548,7 +548,8 @@ Content-Type: application/json
 | repetition_current | INTEGER | 当前实验序号 |
 | repetition_total | INTEGER | 总实验数 |
 | difficulty | TEXT | 任务难度 |
-| is_ai_active | BOOLEAN | 是否启用 AI |
+| autonomy_level | TEXT | AI 自主等级（`L0` / `L1` / `L2`） |
+| is_ai_active | BOOLEAN | 兼容旧数据字段；新问卷对外使用 `autonomy_level` |
 | is_practice | BOOLEAN | 是否练习 |
 | answers_json | TEXT | 答案 JSON，如 `{"1":5,"2":4,...}` |
 | source | TEXT | 来源标识：`html_page` / `websocket` / `react_modal` / `http_api` |
