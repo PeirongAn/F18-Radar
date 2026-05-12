@@ -168,6 +168,7 @@ export class RadarStore {
         const message = {
           type: 'antenna_adjusted', // 使用新的消息类型
           elevation: newElevation,
+          targetElevation: this.targetAntennaElevation,
           timestamp: Date.now(),
           receive_timestamp: this.adjustAntennaReceiveTimestamp || Date.now(), // 使用保存的接收时间戳
           // user_id is now added by globalWS.sendMessage

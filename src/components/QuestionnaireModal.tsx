@@ -97,9 +97,12 @@ function translateDifficulty(d: string | undefined, labels?: Record<string, stri
   if (!d) return '-';
   if (labels?.[d]) return labels[d];
   switch (d) {
-    case 'low': return '低难度';
-    case 'medium': return '中难度';
-    case 'high': return '高难度';
+    case 'low': return '低';
+    case 'medium': return '中';
+    case 'high': return '高';
+    case '1': return '高';
+    case '2': return '中';
+    case '3': return '低';
     default: return d;
   }
 }
@@ -110,11 +113,11 @@ function translateAutonomyLevel(level: string | undefined, labels?: Record<strin
   switch (level) {
     case '0':
     case '1':
-    case 'L0': return '低自主等级';
+    case 'L0': return 'L0';
     case '2':
-    case 'L1': return '中自主等级';
+    case 'L1': return 'L1';
     case '3':
-    case 'L2': return '高自主等级';
+    case 'L2': return 'L2';
     default: return level;
   }
 }
@@ -132,16 +135,12 @@ const selectStyle: React.CSSProperties = {
   borderRadius: '2px',
   fontSize: '13px',
   background: 'white',
+  color: '#008000',
+  WebkitTextFillColor: '#008000',
+  opacity: 1,
   cursor: 'default',
   outline: 'none',
   ...fontBase,
-};
-
-const selectHighlight: React.CSSProperties = {
-  ...selectStyle,
-  background: '#0055cc',
-  color: 'white',
-  borderColor: '#003399',
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -285,7 +284,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     const scales = config.scales ?? DEFAULT_CONFIG.scales!;
 
     const FALLBACK_TASK_LABELS: Record<string, string> = {
-      RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序',
+      RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务',
       PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射',
     };
     const taskLabel =
@@ -297,9 +296,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     const modalTitle =
       config.taskTitles?.[currentTaskType] ?? config.title ?? '智能助手信任度问卷';
-
-    const isHighDifficulty = info?.difficulty === 'high';
-    const experimentNo = info?.current ?? '-';
 
     if (!isVisible) return null;
 
@@ -381,9 +377,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 <strong>被试姓名：</strong>
                 <span style={{ fontWeight: 'bold' }}>{userId || '-'}</span>
               </span>
-              <span style={{ color: '#1a5fb4', fontWeight: 'bold' }}>
-                实验序号：{experimentNo}
-              </span>
             </div>
 
             {/* Task attribute row */}
@@ -404,7 +397,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
               <span style={{ color: '#cc0000', fontWeight: 'bold', marginLeft: '8px' }}>任务难度：</span>
               <select
-                style={isHighDifficulty ? selectHighlight : selectStyle}
+                style={selectStyle}
                 value={difficultyLabel}
                 disabled
                 onChange={() => {}}

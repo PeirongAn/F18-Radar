@@ -95,14 +95,12 @@
       border-radius: 2px;
       font-size: 13px;
       background: white;
+      color: #008000;
+      -webkit-text-fill-color: #008000;
+      opacity: 1;
       font-family: inherit;
       cursor: default;
       outline: none;
-    }
-    select.attr-select.highlight {
-      background: #0055cc;
-      color: white;
-      border-color: #003399;
     }
 
     .instruction {
@@ -253,7 +251,6 @@
     <!-- Info row -->
     <div class="info-row">
       <span><strong>被试姓名：</strong><span class="subject-name" id="displayUserId">-</span></span>
-      <span class="exp-no">实验序号：<span id="displayExpNo">-</span></span>
     </div>
 
     <!-- Attributes row -->
@@ -266,11 +263,6 @@
 
       <span class="attr-label">自主等级：</span>
       <select class="attr-select" id="selAutonomy" disabled></select>
-
-      <span class="attr-label">交互工效：</span>
-      <select class="attr-select" id="selInteraction" disabled>
-        <option>高工效</option>
-      </select>
     </div>
 
     <!-- Instruction -->
@@ -326,7 +318,8 @@ function getParams() {
     userId:       p.get('userId')       || '',
     taskType:     p.get('taskType')     || 'RADAR_TARGETING',
     difficulty:   p.get('difficulty')   || '',
-    isAIActive:   p.get('isAIActive')   === 'true',
+    autonomyLevel: p.get('autonomyLevel') || p.get('autonomy_level') ||
+      p.get('AIAutonomyLevel') || p.get('AIAutonomyLeve') || '',
     isPractice:   p.get('isPractice')   === 'true',
     experimentNo: p.get('experimentNo') || p.get('current') || '-',
     total:        p.get('total')        || '-',
@@ -396,30 +389,27 @@ function applyContext(ctx) {
 }
 
 function renderContext() {
-  const { userId, taskType, difficulty, isAIActive, experimentNo } = contextData;
+  const { userId, taskType, difficulty, autonomyLevel } = contextData;
 
   document.getElementById('displayUserId').textContent = userId || '-';
-  document.getElementById('displayExpNo').textContent  = experimentNo || '-';
 
   // Task type label
+  const FALLBACK_TASK_LABELS = {
+    RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务',
+    PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射',
+  };
   const taskLabel = config?.taskTypeLabels?.[taskType]
-    ?? (taskType === 'SA_THREAT_RESPONSE' ? '威胁排序' : '传感器任务');
+    ?? FALLBACK_TASK_LABELS[taskType] ?? taskType ?? '-';
   setSelectValue('selTaskType', taskLabel);
 
   // Difficulty
-  const diffLabels = config?.difficultyLabels || { low: '低难度', medium: '中难度', high: '高难度' };
+  const diffLabels = config?.difficultyLabels || { low: '低', medium: '中', high: '高', 1: '高', 2: '中', 3: '低' };
   const diffLabel  = diffLabels[difficulty] || difficulty || '-';
-  const selDiff    = document.getElementById('selDifficulty');
   setSelectValue('selDifficulty', diffLabel);
-  if (difficulty === 'high') {
-    selDiff.classList.add('highlight');
-  } else {
-    selDiff.classList.remove('highlight');
-  }
 
   // Autonomy
-  const aiLabels = config?.autonomyLabels || { ai_on: '高等级', ai_off: '低等级' };
-  const autoLabel = isAIActive ? aiLabels.ai_on : aiLabels.ai_off;
+  const aiLabels = config?.autonomyLabels || { 0: 'L0', 1: 'L0', 2: 'L1', 3: 'L2', L0: 'L0', L1: 'L1', L2: 'L2' };
+  const autoLabel = aiLabels[autonomyLevel] || autonomyLevel || '-';
   setSelectValue('selAutonomy', autoLabel);
 
   // Title
@@ -563,7 +553,7 @@ function handleSubmit() {
   const btn = document.getElementById('btnSubmit');
   btn.disabled = true;
 
-  const { userId, taskType, difficulty, isAIActive, isPractice, experimentNo, total } = contextData;
+  const { userId, taskType, difficulty, autonomyLevel, isPractice, experimentNo, total } = contextData;
 
   const payload = {
     type:               'questionnaire_submitted',
@@ -574,7 +564,7 @@ function handleSubmit() {
     answers:            { ...answers },
     taskInfo: {
       difficulty:  difficulty || null,
-      isAIActive:  !!isAIActive,
+      autonomyLevel: autonomyLevel || null,
       isPractice:  !!isPractice,
     },
     timestamp: Date.now(),
@@ -612,9 +602,26 @@ function handleSubmit() {
   // 2. Load config (needed before renderContext)
   await loadConfig();
 
-  // 3. Connect WS
+  // 3. Pre-fill answers from URL (e.g. q1=5&q2=3)
+  prefillAnswersFromURL();
+
+  // 4. Connect WS
   connectWS();
 })();
+
+function prefillAnswersFromURL() {
+  const p = new URLSearchParams(window.location.search);
+  const qs = config?.questions || [];
+  qs.forEach(q => {
+    const val = parseInt(p.get(`q${q.id}`));
+    if (!val || val < 1 || val > (config.scales || []).length) return;
+    const radio = document.querySelector(`input[name="q_${q.id}"][value="${val}"]`);
+    if (radio) {
+      radio.checked = true;
+      onAnswer(q.id, val);
+    }
+  });
+}
 </script>
 </body>
 </html>

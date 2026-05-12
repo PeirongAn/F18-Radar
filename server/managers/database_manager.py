@@ -5,7 +5,7 @@ import threading
 import atexit
 import os
 from contextlib import contextmanager
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set, Tuple
 from .logger_manager import get_logger
 
 class DatabaseManager:
@@ -20,8 +20,38 @@ class DatabaseManager:
         self.writer_queue = queue.Queue()
         self.db_thread: Optional[threading.Thread] = None
         self.logger = get_logger("database")
+        self._task_settings_lock = threading.Lock()
+        self._pending_task_setting_keys: Set[Tuple[Any, ...]] = set()
+        self._operation_lock = threading.Lock()
+        self._pending_operation_keys: Set[Tuple[Any, ...]] = set()
         self._start_db_worker()
         atexit.register(self._cleanup_db_thread)
+
+    @staticmethod
+    def normalize_difficulty_value(value: Any) -> Any:
+        """统一数据库中的难度表示为 high / medium / low。"""
+        if value is None:
+            return value
+        s = str(value).strip()
+        sl = s.lower()
+        if sl in ('high', 'medium', 'low'):
+            return sl
+        try:
+            n = int(float(s))
+            if n <= 1:
+                return 'high'
+            if n == 2:
+                return 'medium'
+            return 'low'
+        except ValueError:
+            pass
+        if '高' in s:
+            return 'high'
+        if '中' in s:
+            return 'medium'
+        if '低' in s:
+            return 'low'
+        return value
     
     def _start_db_worker(self) -> None:
         """启动数据库工作线程"""
@@ -76,22 +106,118 @@ class DatabaseManager:
     def execute_async(self, sql: str, params: tuple) -> None:
         """异步执行SQL语句"""
         self.writer_queue.put((sql, params))
+
+    def build_task_setting_key(self, scenario: Dict[str, Any], user_id: str, event_owner: str, task_type: str = '') -> Tuple[Any, ...]:
+        """生成任务设置去重键。"""
+        difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
+        return (
+            user_id,
+            task_type,
+            event_owner,
+            scenario['repetition_info']['current'],
+            int(bool(scenario['is_ai_active'])),
+            scenario.get('ai_level_name') or '',
+            difficulty_name,
+            int(bool(scenario['audio_enabled'])),
+        )
+
+    def find_existing_task_setting_id(self, scenario: Dict[str, Any], user_id: str, event_owner: str, task_type: str = '') -> Optional[int]:
+        """查找同一任务设置组合和重复序号是否已经有 task_id。"""
+        task_setting_key = self.build_task_setting_key(scenario, user_id, event_owner, task_type)
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT task_id FROM task_settings
+                    WHERE user_id = ?
+                      AND IFNULL(task_type, '') = ?
+                      AND IFNULL(event_owner, '') = ?
+                      AND repetition_count = ?
+                      AND is_ai_active = ?
+                      AND IFNULL(ai_level_name, '') = ?
+                      AND difficulty_name = ?
+                      AND audio_enabled = ?
+                    ORDER BY task_id
+                    LIMIT 1
+                    """,
+                    task_setting_key
+                )
+                row = cursor.fetchone()
+                return int(row[0]) if row else None
+        except Exception as e:
+            self.logger.warning(f"查找已有 task_settings 记录失败: {e}")
+            return None
+
+    def clear_task_operations(self, task_id: int) -> None:
+        """清除某个 task_id 下的旧操作记录，用于重做未完成任务。"""
+        if not task_id:
+            return
+        with self._operation_lock:
+            self._pending_operation_keys = {
+                key for key in self._pending_operation_keys
+                if not key or key[0] != task_id
+            }
+        self.execute_async("DELETE FROM user_operations WHERE task_id = ?", (task_id,))
+        self.logger.info(f"已排队清除未完成任务的旧操作记录: task_id {task_id}")
     
     def record_task_settings(self, task_id: int, scenario: Dict[str, Any], 
-                           user_id: str, event_owner: str, is_practice: bool) -> None:
+                           user_id: str, event_owner: str, is_practice: bool,
+                           task_type: str = '') -> None:
         """记录任务设置"""
         if is_practice:
             self.logger.debug(f"练习模式，跳过 task_settings 记录: task_id {task_id}")
             return
-            
+
+        task_setting_key = self.build_task_setting_key(scenario, user_id, event_owner, task_type)
+
+        with self._task_settings_lock:
+            if task_setting_key in self._pending_task_setting_keys:
+                self.logger.info(
+                    "跳过重复任务设置记录: "
+                    f"user_id={user_id}, task_type={task_type}, repetition={scenario['repetition_info']['current']}"
+                )
+                return
+
+            try:
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT task_id FROM task_settings
+                        WHERE user_id = ?
+                          AND IFNULL(task_type, '') = ?
+                          AND IFNULL(event_owner, '') = ?
+                          AND repetition_count = ?
+                          AND is_ai_active = ?
+                          AND IFNULL(ai_level_name, '') = ?
+                          AND difficulty_name = ?
+                          AND audio_enabled = ?
+                        LIMIT 1
+                        """,
+                        task_setting_key
+                    )
+                    if cursor.fetchone():
+                        self.logger.info(
+                            "跳过已存在的任务设置记录: "
+                            f"user_id={user_id}, task_type={task_type}, repetition={scenario['repetition_info']['current']}"
+                        )
+                        return
+            except Exception as e:
+                self.logger.warning(f"检查 task_settings 重复记录失败，将继续写入: {e}")
+
+            self._pending_task_setting_keys.add(task_setting_key)
+
         sql = """
             INSERT INTO task_settings (
-                task_id, user_id, event_owner, repetition_count, is_ai_active, 
+                task_id, task_type, user_id, event_owner, repetition_count, is_ai_active, 
                 ai_level_config, difficulty_config, audio_enabled, ai_level_name, difficulty_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
+        difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
         params = (
             task_id,
+            task_type,
             user_id,
             event_owner,
             scenario['repetition_info']['current'],
@@ -100,7 +226,7 @@ class DatabaseManager:
             json.dumps(scenario['difficulty_config']),
             scenario['audio_enabled'],
             scenario.get('ai_level_name'),
-            scenario['difficulty_name']
+            difficulty_name
         )
         self.execute_async(sql, params)
         self.logger.info(f"记录任务设置: task_id {task_id}")
@@ -114,6 +240,44 @@ class DatabaseManager:
         # 从parameters中提取is_correct值
         parameters = operation.get('parameters', {})
         parameters_json = json.dumps(parameters)
+        task_id = operation.get('task_id')
+        operation_type = operation.get('operationType')
+
+        single_record_operations = {'settings_update', 'antenna_adjusted', 'sa_emergency', 'sa_emergency_enhanced'}
+        actor_scoped_operations = {'target_selected', 'threat_clicked'}
+        operation_key = None
+        if operation_type in single_record_operations:
+            operation_key = (task_id, operation_type)
+        elif operation_type in actor_scoped_operations:
+            operation_key = (task_id, operation_type, operation.get('event_owner') or '')
+        if operation_key and task_id:
+            with self._operation_lock:
+                if operation_key in self._pending_operation_keys:
+                    self.logger.info(f"跳过重复操作记录: task_id={task_id}, operation={operation_type}")
+                    return
+                try:
+                    with self.get_connection() as conn:
+                        cursor = conn.cursor()
+                        if operation_type in single_record_operations:
+                            cursor.execute(
+                                "SELECT id FROM user_operations WHERE task_id = ? AND operation_type = ? LIMIT 1",
+                                operation_key,
+                            )
+                        else:
+                            cursor.execute(
+                                """
+                                SELECT id FROM user_operations
+                                WHERE task_id = ? AND operation_type = ? AND IFNULL(event_owner, '') = ?
+                                LIMIT 1
+                                """,
+                                operation_key,
+                            )
+                        if cursor.fetchone():
+                            self.logger.info(f"跳过已存在操作记录: task_id={task_id}, operation={operation_type}")
+                            return
+                except Exception as e:
+                    self.logger.warning(f"检查 user_operations 重复记录失败，将继续写入: {e}")
+                self._pending_operation_keys.add(operation_key)
         
         # 处理is_correct字段，支持true, false, not_set三个值
         is_correct_value = parameters.get('is_correct', 'not_set')
@@ -131,8 +295,8 @@ class DatabaseManager:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
-            operation.get('task_id'),
-            operation.get('operationType'),
+            task_id,
+            operation_type,
             operation.get('timestamp'),
             operation.get('receive_timestamp'),
             1 if operation.get('isActive', False) else 0,
@@ -163,10 +327,41 @@ class DatabaseManager:
 
                 # 检查并创建 questionnaire_responses 表
                 self._create_questionnaire_responses_table(cursor, conn)
+
+                # 统一历史难度字段表示
+                self._normalize_existing_difficulty_values(cursor, conn)
                 
             self.logger.info("数据库初始化成功")
         except Exception as e:
             self.logger.error(f"数据库初始化失败: {e}", exc_info=True)
+
+    def _normalize_existing_difficulty_values(self, cursor, conn) -> None:
+        """把历史数据库中的数字/中文难度统一成 high / medium / low。"""
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_settings'")
+        if cursor.fetchone():
+            cursor.execute("""
+                UPDATE task_settings
+                SET difficulty_name = CASE
+                    WHEN difficulty_name IN ('1', '1.0') OR difficulty_name LIKE '%高%' THEN 'high'
+                    WHEN difficulty_name IN ('2', '2.0') OR difficulty_name LIKE '%中%' THEN 'medium'
+                    WHEN difficulty_name IN ('3', '3.0') OR difficulty_name LIKE '%低%' THEN 'low'
+                    ELSE difficulty_name
+                END
+            """)
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='questionnaire_responses'")
+        if cursor.fetchone():
+            cursor.execute("""
+                UPDATE questionnaire_responses
+                SET difficulty = CASE
+                    WHEN difficulty IN ('1', '1.0') OR difficulty LIKE '%高%' THEN 'high'
+                    WHEN difficulty IN ('2', '2.0') OR difficulty LIKE '%中%' THEN 'medium'
+                    WHEN difficulty IN ('3', '3.0') OR difficulty LIKE '%低%' THEN 'low'
+                    ELSE difficulty
+                END
+            """)
+
+        conn.commit()
     
     def _create_user_operations_table(self, cursor, conn) -> None:
         """创建用户操作表"""
@@ -231,6 +426,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id INTEGER NOT NULL UNIQUE,
                     user_id TEXT,
+                    task_type TEXT,
                     event_owner TEXT,
                     execution_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     repetition_count INTEGER NOT NULL,
@@ -263,6 +459,35 @@ class DatabaseManager:
             self.logger.info("正在添加 event_owner 列...")
             cursor.execute("ALTER TABLE task_settings ADD COLUMN event_owner TEXT")
             conn.commit()
+
+        if 'task_type' not in columns:
+            self.logger.info("正在添加 task_type 列...")
+            cursor.execute("ALTER TABLE task_settings ADD COLUMN task_type TEXT")
+            conn.commit()
+
+        self._backfill_task_settings_task_type(cursor, conn)
+
+    def _backfill_task_settings_task_type(self, cursor, conn) -> None:
+        """根据已有操作记录回填历史 task_settings 的任务类型。"""
+        cursor.execute("""
+            UPDATE task_settings
+            SET task_type = 'RADAR_TARGETING'
+            WHERE (task_type IS NULL OR task_type = '')
+              AND task_id IN (
+                  SELECT DISTINCT task_id FROM user_operations
+                  WHERE operation_type IN ('task_start', 'settings_update', 'antenna_adjusted', 'target_selected')
+              )
+        """)
+        cursor.execute("""
+            UPDATE task_settings
+            SET task_type = 'SA_THREAT_RESPONSE'
+            WHERE (task_type IS NULL OR task_type = '')
+              AND task_id IN (
+                  SELECT DISTINCT task_id FROM user_operations
+                  WHERE operation_type IN ('SwitchSA', 'ResetSA', 'threat_clicked')
+              )
+        """)
+        conn.commit()
     
     def _create_user_progress_table(self, cursor, conn) -> None:
         """创建用户进度表"""
@@ -448,7 +673,7 @@ class DatabaseManager:
             data.get('taskType', ''),
             data.get('repetitionCurrent', 0),
             data.get('repetitionTotal', 0),
-            task_info.get('difficulty'),
+            self.normalize_difficulty_value(task_info.get('difficulty')),
             autonomy_level,
             1 if legacy_is_ai_active else 0,
             1 if task_info.get('isPractice') else 0,

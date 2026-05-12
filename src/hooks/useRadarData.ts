@@ -472,6 +472,8 @@ const useRadarData = (
   const [initSettings, setInitSettings] = useState<any>(null);
   const [initSettingsTimestamp, setInitSettingsTimestamp] = useState<number | null>(null);
   const [settingsValidationTimestamp, setSettingsValidationTimestamp] = useState<number | null>(null);
+  const playedRadarRangeTaskIdsRef = useRef<Set<number | string>>(new Set());
+  const submittedSettingsKeysRef = useRef<Set<string>>(new Set());
   
   // 当前有效的参数设置
   const [currentSettings, setCurrentSettings] = useState<{ range: number, scanAngle: number } | null>(null);
@@ -1036,6 +1038,13 @@ const useRadarData = (
       return;
     }
 
+    const settingsKey = `${radarStore.taskId || 'pending'}:${settings.range}:${settings.scanAngle}`;
+    if (submittedSettingsKeysRef.current.has(settingsKey)) {
+      console.log('[useRadarData] 跳过重复 settings_update:', settingsKey);
+      return;
+    }
+    submittedSettingsKeysRef.current.add(settingsKey);
+
     const timestamp = Date.now();
     const settingsMessage = {
       type: 'settings_update',
@@ -1139,11 +1148,6 @@ const useRadarData = (
     }
 
     if (message.type === 'init_settings') {
-      // Play sound only if it's a new task and the correct type
-      // if (message.task_id !== radarStore.taskId && message.task_type === 'RADAR_TARGETING' && message.audio_enabled && !message.is_ai_active) {
-      //   audioManager.play('radarRange');
-      // }
-
       console.log('[useRadarData] Processing full init_settings from server:', message);
       if (message.platform_task?.raw && message.platform_task?.normalized) {
         setPlatformTaskConfig({
@@ -1154,9 +1158,28 @@ const useRadarData = (
       
       // 1. 初始化AI和任务状态
       agentStore.initializeFromServer(message);
+
+      if (
+        message.task_type === 'RADAR_TARGETING' &&
+        message.audio_enabled &&
+        !message.is_ai_active &&
+        !playedRadarRangeTaskIdsRef.current.has(message.task_id)
+      ) {
+        playedRadarRangeTaskIdsRef.current.add(message.task_id);
+        audioManager.playOnce(`radarRange:${message.task_id}`, 'radarRange');
+      }
       
       // 2. 设置任务ID
       radarStore.setTaskId(message.task_id);
+
+      // 每次传感器任务开始时，天线高度从 0 开始，避免沿用上一轮调整结果。
+      if (message.task_type === 'RADAR_TARGETING') {
+        radarStore.setCurrentAntennaElevation(0, 'server');
+        setAntennaAdjustmentRequired(false);
+        radarStore.setAntennaAdjustmentRequired(false);
+        setTargetAntennaElevation(null);
+        radarStore.setTargetAntennaElevation(null);
+      }
 
       // 3. 设置雷达参数供UI自动配置
       setInitSettings(message.settings);

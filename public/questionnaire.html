@@ -95,14 +95,12 @@
       border-radius: 2px;
       font-size: 13px;
       background: white;
+      color: #008000;
+      -webkit-text-fill-color: #008000;
+      opacity: 1;
       font-family: inherit;
       cursor: default;
       outline: none;
-    }
-    select.attr-select.highlight {
-      background: #0055cc;
-      color: white;
-      border-color: #003399;
     }
 
     .instruction {
@@ -253,7 +251,6 @@
     <!-- Info row -->
     <div class="info-row">
       <span><strong>被试姓名：</strong><span class="subject-name" id="displayUserId">-</span></span>
-      <span class="exp-no">实验序号：<span id="displayExpNo">-</span></span>
     </div>
 
     <!-- Attributes row -->
@@ -392,14 +389,13 @@ function applyContext(ctx) {
 }
 
 function renderContext() {
-  const { userId, taskType, difficulty, autonomyLevel, experimentNo } = contextData;
+  const { userId, taskType, difficulty, autonomyLevel } = contextData;
 
   document.getElementById('displayUserId').textContent = userId || '-';
-  document.getElementById('displayExpNo').textContent  = experimentNo || '-';
 
   // Task type label
   const FALLBACK_TASK_LABELS = {
-    RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序',
+    RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务',
     PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射',
   };
   const taskLabel = config?.taskTypeLabels?.[taskType]
@@ -407,18 +403,12 @@ function renderContext() {
   setSelectValue('selTaskType', taskLabel);
 
   // Difficulty
-  const diffLabels = config?.difficultyLabels || { low: '低难度', medium: '中难度', high: '高难度' };
+  const diffLabels = config?.difficultyLabels || { low: '低', medium: '中', high: '高', 1: '高', 2: '中', 3: '低' };
   const diffLabel  = diffLabels[difficulty] || difficulty || '-';
-  const selDiff    = document.getElementById('selDifficulty');
   setSelectValue('selDifficulty', diffLabel);
-  if (difficulty === 'high') {
-    selDiff.classList.add('highlight');
-  } else {
-    selDiff.classList.remove('highlight');
-  }
 
   // Autonomy
-  const aiLabels = config?.autonomyLabels || { L0: '低自主等级', L1: '中自主等级', L2: '高自主等级' };
+  const aiLabels = config?.autonomyLabels || { 0: 'L0', 1: 'L0', 2: 'L1', 3: 'L2', L0: 'L0', L1: 'L1', L2: 'L2' };
   const autoLabel = aiLabels[autonomyLevel] || autonomyLevel || '-';
   setSelectValue('selAutonomy', autoLabel);
 

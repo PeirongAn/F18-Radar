@@ -33,6 +33,7 @@ export interface RadarProps {
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
   onNavigateToSA?: () => void;
+  onTaskCompleted?: () => void;
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -44,6 +45,7 @@ const Radar: React.FC<RadarProps> = (({
   onAddMessage,
   onClearMessages,
   onNavigateToSA,
+  onTaskCompleted,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
   const { 
@@ -69,6 +71,9 @@ const Radar: React.FC<RadarProps> = (({
   const { radarStore } = useStore();
 
   const resetIffRef = useRef<() => void>(() => {});
+  const aiAntennaActionsRef = useRef<Set<string>>(new Set());
+  const aiTargetSelectionsRef = useRef<Set<string>>(new Set());
+  const pendingAiTargetSelectionsRef = useRef<Set<string>>(new Set());
   
   const [missionSettingsReady, setMissionSettingsReady] = useState(false);
   const [missionAntennaReady, setMissionAntennaReady] = useState(false);
@@ -365,6 +370,7 @@ const Radar: React.FC<RadarProps> = (({
   ]);
 
   const initSettingsProcessedRef = useRef(false);
+  const submittedInitialSettingsKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     // If initSettings is null (e.g., after a reset), do nothing until new settings arrive.
@@ -427,10 +433,14 @@ const Radar: React.FC<RadarProps> = (({
 
       if (needsSettingsSubmission) {
         console.log('[Radar] Submitting initSettings to backend.');
-        submitSettings({
-          range: targetRange,
-          scanAngle: targetScanAngle,
-        });
+        const settingsKey = `${taskId || 'pending'}:${targetRange}:${targetScanAngle}`;
+        if (submittedInitialSettingsKeyRef.current !== settingsKey) {
+          submittedInitialSettingsKeyRef.current = settingsKey;
+          submitSettings({
+            range: targetRange,
+            scanAngle: targetScanAngle,
+          });
+        }
         console.log('[Radar] Initial parameters (from initSettings) processed.');
       } else if (paramsChangedForUI) {
         console.log('[Radar] initSettings: UI parameters updated, but no submission needed as values might match server expectations already or validation might handle it.');
@@ -550,8 +560,17 @@ const Radar: React.FC<RadarProps> = (({
         const targetDisplayPosition = radarStore.targetDisplayPositions.get(finalTargetToSelect.id);
         
         // 使用tdc_select_delay_ms作为统一的延迟参数
+        const selectionKey = `${taskId || 'pending'}:${radarData?.externalTargetsTimestamp || 'targets'}`;
+        if (aiTargetSelectionsRef.current.has(selectionKey) || pendingAiTargetSelectionsRef.current.has(selectionKey)) {
+          return;
+        }
+        pendingAiTargetSelectionsRef.current.add(selectionKey);
+
         const actionTimeout = setTimeout(() => {
+          pendingAiTargetSelectionsRef.current.delete(selectionKey);
+          if (aiTargetSelectionsRef.current.has(selectionKey)) return;
           if (!agentStore.isAIActive) return;
+          aiTargetSelectionsRef.current.add(selectionKey);
 
           // 第一步：移动TDC到目标位置
           if (targetDisplayPosition) {
@@ -592,7 +611,10 @@ const Radar: React.FC<RadarProps> = (({
           }
         }, config.tdc_select_delay_ms);
 
-        return () => clearTimeout(actionTimeout);
+        return () => {
+          pendingAiTargetSelectionsRef.current.delete(selectionKey);
+          clearTimeout(actionTimeout);
+        };
       }
     }
   }, [
@@ -602,7 +624,8 @@ const Radar: React.FC<RadarProps> = (({
     radarStore.lockedTargetId,
     onTargetSelect,
     isStarted,
-    radarStore.targetDisplayPositions
+    radarStore.targetDisplayPositions,
+    taskId
   ]);
 
   // useEffect for AI to automatically adjust antenna when required
@@ -619,6 +642,12 @@ const Radar: React.FC<RadarProps> = (({
       antennaAdjustmentRequired &&
       targetAntennaElevation !== null
     ) {
+      const antennaKey = `${taskId || 'pending'}:${targetAntennaElevation}`;
+      if (aiAntennaActionsRef.current.has(antennaKey)) {
+        return;
+      }
+      aiAntennaActionsRef.current.add(antennaKey);
+
       console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${targetAntennaElevation}. AI is taking action.`);
       
       // Pass 'ai' as source and the sendMessage callback
@@ -636,7 +665,8 @@ const Radar: React.FC<RadarProps> = (({
     targetAntennaElevation,
     sendMessage,
     confirmAntennaAdjustmentHandled,
-    radarStore
+    radarStore,
+    taskId
   ]);
 
   // 当rangeIndex或scanMode变化时发送消息到服务器
@@ -671,15 +701,16 @@ const Radar: React.FC<RadarProps> = (({
       console.log('自动设置', initSettings)
       const range = RADAR_RANGES[rangeIndex];
       const scanAngle = initSettings.scanAngle;
-      submitSettings(
-        {
-          range,
-          scanAngle,
-        }
-      );
+      const settingsKey = `${taskId || 'pending'}:${range}:${scanAngle}`;
+      if (submittedInitialSettingsKeyRef.current === settingsKey) return;
+      submittedInitialSettingsKeyRef.current = settingsKey;
+      submitSettings({
+        range,
+        scanAngle,
+      });
     }
 
-  }, [submitSettings, initSettings])
+  }, [submitSettings, initSettings, rangeIndex, taskId])
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
@@ -1016,6 +1047,7 @@ const Radar: React.FC<RadarProps> = (({
             error={error}
             onResetForNextMission={handleClearAndReset}
             onNavigateToSA={onNavigateToSA}
+            onTaskCompleted={onTaskCompleted}
             resetIFF={resetIffRef}
             onAddMessage={onAddMessage}
             onClearMessages={onClearMessages}

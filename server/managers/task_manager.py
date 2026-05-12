@@ -9,13 +9,22 @@ import random
 class TaskScenarioManager:
     """管理与数据库绑定的、持久化的用户任务场景"""
     
-    # 练习模式的内存缓存，格式: {(user_id, task_type): progress_data}
+    # 练习模式的内存缓存，格式: {(user_id, progress_task_type): progress_data}
     _practice_memory_cache: Dict[tuple, Dict[str, Any]] = {}
     
-    def __init__(self, config: Dict[str, Any], user_id: str, task_type: str, is_practice: bool = False, is_ai_active_request: bool = False):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        user_id: str,
+        task_type: str,
+        is_practice: bool = False,
+        is_ai_active_request: bool = False,
+        progress_key: Optional[str] = None,
+    ):
         self.config = config
         self.user_id = user_id
         self.task_type = task_type
+        self.progress_task_type = progress_key or task_type
         self.is_practice = is_practice
         self.logger = get_logger("task_manager")
         
@@ -47,7 +56,7 @@ class TaskScenarioManager:
 
     def _load_from_memory(self) -> bool:
         """尝试从内存缓存加载练习模式进度"""
-        cache_key = (self.user_id, self.task_type)
+        cache_key = (self.user_id, self.progress_task_type)
         if cache_key in self._practice_memory_cache:
             progress_data = self._practice_memory_cache[cache_key]
             self.current_scenario = progress_data.get('current_scenario')
@@ -62,7 +71,7 @@ class TaskScenarioManager:
         if not self.is_practice:
             return
         
-        cache_key = (self.user_id, self.task_type)
+        cache_key = (self.user_id, self.progress_task_type)
         
         # 获取现有的 is_completed 状态（如果存在）
         current_is_completed = False  # 默认为未完成
@@ -76,7 +85,7 @@ class TaskScenarioManager:
             'manual_queue': self.manual_queue.copy(),
             'is_completed': current_is_completed  # 保持现有的完成状态，不自动修改
         }
-        self.logger.debug(f"Practice mode progress saved to memory for user '{self.user_id}', task '{self.task_type}'")
+        self.logger.debug(f"Practice mode progress saved to memory for user '{self.user_id}', progress '{self.progress_task_type}'")
 
     def _load_from_db(self, is_ai_active_request: bool) -> bool:
         """尝试从数据库加载用户进度，根据AI模式选择对应的进度"""
@@ -90,11 +99,11 @@ class TaskScenarioManager:
                               manual_current_scenario_json, manual_repetition_counter,
                               is_ai_completed, is_manual_completed 
                        FROM user_progress WHERE user_id = ? AND task_type = ?""",
-                    (self.user_id, self.task_type)
+                    (self.user_id, self.progress_task_type)
                 )
                 row = cursor.fetchone()
                 if row:
-                    self.logger.info(f"Found existing progress for user '{self.user_id}' and task '{self.task_type}', AI mode: {is_ai_active_request}")
+                    self.logger.info(f"Found existing progress for user '{self.user_id}' and progress '{self.progress_task_type}', AI mode: {is_ai_active_request}")
                     
                     # 加载队列（AI和手动队列都需要加载）
                     self.ai_queue = json.loads(row[2]) if row[2] else []
@@ -172,7 +181,7 @@ class TaskScenarioManager:
                               manual_current_scenario_json, manual_repetition_counter,
                               is_ai_completed, is_manual_completed
                        FROM user_progress WHERE user_id = ? AND task_type = ?""",
-                    (self.user_id, self.task_type)
+                    (self.user_id, self.progress_task_type)
                 )
                 result = cursor.fetchone()
                 if result:
@@ -207,7 +216,7 @@ class TaskScenarioManager:
         """
         params = (
             self.user_id,
-            self.task_type,
+            self.progress_task_type,
             json.dumps(self.current_scenario) if self.current_scenario else None,  # 保留旧字段兼容性
             self.repetition_counter,  # 保留旧字段兼容性
             json.dumps(self.ai_queue),
@@ -221,7 +230,7 @@ class TaskScenarioManager:
             current_is_manual_completed  # 手动模式的完成状态
         )
         db_manager.execute_async(sql, params)
-        self.logger.debug(f"Progress save queued for user '{self.user_id}', task '{self.task_type}'")
+        self.logger.debug(f"Progress save queued for user '{self.user_id}', progress '{self.progress_task_type}'")
         
     def _check_previous_task_completion_status(self) -> bool:
         """检查上一个任务的完成状态
@@ -231,7 +240,7 @@ class TaskScenarioManager:
         """
         if self.is_practice:
             # 练习模式：检查内存缓存
-            cache_key = (self.user_id, self.task_type)
+            cache_key = (self.user_id, self.progress_task_type)
             if cache_key in self._practice_memory_cache:
                 # 根据当前场景的AI模式选择对应的完成状态
                 if self.current_scenario and self.current_scenario.get('is_ai_active', False):
@@ -249,7 +258,7 @@ class TaskScenarioManager:
                     cursor = conn.cursor()
                     cursor.execute(
                         "SELECT is_completed, is_ai_completed, is_manual_completed FROM user_progress WHERE user_id = ? AND task_type = ?",
-                        (self.user_id, self.task_type)
+                        (self.user_id, self.progress_task_type)
                     )
                     result = cursor.fetchone()
                     if result:
@@ -274,15 +283,15 @@ class TaskScenarioManager:
         """
         if self.is_practice:
             # 练习模式：更新内存缓存
-            cache_key = (self.user_id, self.task_type)
+            cache_key = (self.user_id, self.progress_task_type)
             if cache_key in self._practice_memory_cache:
                 # 根据当前场景的AI模式更新对应的完成状态
                 if self.current_scenario and self.current_scenario.get('is_ai_active', False):
                     self._practice_memory_cache[cache_key]['is_ai_completed'] = is_completed
-                    self.logger.debug(f"Practice mode: Updated is_ai_completed={is_completed} for user '{self.user_id}', task '{self.task_type}'")
+                    self.logger.debug(f"Practice mode: Updated is_ai_completed={is_completed} for user '{self.user_id}', progress '{self.progress_task_type}'")
                 else:
                     self._practice_memory_cache[cache_key]['is_manual_completed'] = is_completed
-                    self.logger.debug(f"Practice mode: Updated is_manual_completed={is_completed} for user '{self.user_id}', task '{self.task_type}'")
+                    self.logger.debug(f"Practice mode: Updated is_manual_completed={is_completed} for user '{self.user_id}', progress '{self.progress_task_type}'")
                 # 同时更新通用的is_completed字段以保持兼容性
                 self._practice_memory_cache[cache_key]['is_completed'] = is_completed
         else:
@@ -294,8 +303,8 @@ class TaskScenarioManager:
                     SET is_ai_completed = ?, is_completed = ?, last_updated = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND task_type = ?
                 """
-                db_manager.execute_async(sql, (is_completed, is_completed, self.user_id, self.task_type))
-                self.logger.debug(f"Formal mode: Queued is_ai_completed={is_completed} update for user '{self.user_id}', task '{self.task_type}'")
+                db_manager.execute_async(sql, (is_completed, is_completed, self.user_id, self.progress_task_type))
+                self.logger.debug(f"Formal mode: Queued is_ai_completed={is_completed} update for user '{self.user_id}', progress '{self.progress_task_type}'")
             else:
                 # 当前是手动模式，更新手动完成状态
                 sql = """
@@ -303,15 +312,15 @@ class TaskScenarioManager:
                     SET is_manual_completed = ?, is_completed = ?, last_updated = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND task_type = ?
                 """
-                db_manager.execute_async(sql, (is_completed, is_completed, self.user_id, self.task_type))
-                self.logger.debug(f"Formal mode: Queued is_manual_completed={is_completed} update for user '{self.user_id}', task '{self.task_type}'")
+                db_manager.execute_async(sql, (is_completed, is_completed, self.user_id, self.progress_task_type))
+                self.logger.debug(f"Formal mode: Queued is_manual_completed={is_completed} update for user '{self.user_id}', progress '{self.progress_task_type}'")
 
     def _initialize_new_progress(self) -> None:
         """为新用户或新任务生成全新的队列和状态
         
         只生成 1 个 AI 场景和 1 个手动场景，具体参数由配置文件实时决定。
         """
-        self.logger.info(f"Initializing new progress for user '{self.user_id}', task '{self.task_type}'")
+        self.logger.info(f"Initializing new progress for user '{self.user_id}', progress '{self.progress_task_type}'")
         game_settings = self.config.get('game_settings', {})
         current_diff = game_settings.get('current_difficulty', 'low')
         all_difficulties = game_settings.get('difficulty_levels', {})
@@ -359,7 +368,7 @@ class TaskScenarioManager:
         # 在初始化时显式设置is_completed为False（未完成状态）
         if self.is_practice:
             # 练习模式：设置内存缓存中的初始状态
-            cache_key = (self.user_id, self.task_type)
+            cache_key = (self.user_id, self.progress_task_type)
             if cache_key not in self._practice_memory_cache:
                 self._practice_memory_cache[cache_key] = {}
             self._practice_memory_cache[cache_key]['is_completed'] = False
@@ -415,8 +424,68 @@ class TaskScenarioManager:
         else:
             self._save_to_db()
         self.logger.info(
-            "Applied repetition override n=%s for user '%s' task '%s'",
-            n_int, self.user_id, self.task_type,
+            "Applied repetition override n=%s for user '%s' progress '%s'",
+            n_int, self.user_id, self.progress_task_type,
+        )
+
+    def apply_platform_overlay(self, overlay: Dict[str, Any]) -> None:
+        """外部平台任务注入：锁定本场景的难度、AI、自主等级和重复次数。
+
+        平台包只在任务启动时消费一次，但同一场景会重复多轮。这里把平台
+        指定的难度写进 current_scenario 并标记锁定，避免后续轮次被
+        agent_level.json 中的 current_difficulty 覆盖。
+        """
+        if self.current_scenario is None or not overlay:
+            return
+
+        if overlay.get('difficulty_name'):
+            self.current_scenario['difficulty_name'] = overlay['difficulty_name']
+            self.current_scenario['external_difficulty_locked'] = True
+        if overlay.get('difficulty_config'):
+            self.current_scenario['difficulty_config'] = overlay['difficulty_config']
+        if overlay.get('difficulty_display') is not None:
+            self.current_scenario['external_difficulty_display'] = overlay.get('difficulty_display')
+
+        for key in ('is_ai_active', 'ai_level_name', 'ai_level_config', 'audio_enabled'):
+            if key in overlay:
+                self.current_scenario[key] = overlay[key]
+        if overlay.get('autonomy_level') is not None:
+            self.current_scenario['autonomy_level'] = overlay.get('autonomy_level')
+
+        if overlay.get('repetition_total_override') is not None:
+            if self.current_scenario.get('max_repetitions_override') is None:
+                try:
+                    n_int = max(1, int(overlay['repetition_total_override']))
+                    self.current_scenario['max_repetitions_override'] = n_int
+                    self.max_repetitions = n_int
+                except (TypeError, ValueError):
+                    pass
+
+        rep_info = self.current_scenario.get('repetition_info') or {}
+        rep_info['total'] = self.max_repetitions
+        rep_info['difficulty'] = (
+            self.current_scenario.get('external_difficulty_display')
+            or self.current_scenario.get('difficulty_name')
+        )
+        rep_info['engine_difficulty'] = self.current_scenario.get('difficulty_name')
+        rep_info['is_ai_active'] = self.current_scenario.get('is_ai_active')
+        rep_info['autonomy_level'] = (
+            self.current_scenario.get('autonomy_level')
+            or self.current_scenario.get('ai_level_name')
+        )
+        self.current_scenario['repetition_info'] = rep_info
+
+        if self.is_practice:
+            self._save_to_memory()
+        else:
+            self._save_to_db()
+        self.logger.info(
+            "Applied platform overlay for user '%s' progress '%s': difficulty=%s display=%s reps=%s",
+            self.user_id,
+            self.progress_task_type,
+            self.current_scenario.get('difficulty_name'),
+            self.current_scenario.get('external_difficulty_display'),
+            self.max_repetitions,
         )
 
     def _refresh_scenario_config(self, scenario: Dict[str, Any]) -> None:
@@ -431,20 +500,28 @@ class TaskScenarioManager:
         # 永远启用高功效
         scenario['audio_enabled'] = True
 
-        # 用 current_difficulty 覆盖场景的难度
-        current_diff = game_settings.get('current_difficulty')
-        if current_diff and current_diff in all_difficulties:
-            scenario['difficulty_name'] = current_diff
-            diff_conf = all_difficulties[current_diff].copy()
-            diff_conf['difficulty_name'] = current_diff
-            scenario['difficulty_config'] = diff_conf
-        else:
-            # 回退：用场景自身的 difficulty_name 刷新 config
+        # 外部平台指定的难度在同一场景的重复轮次中保持锁定。
+        if scenario.get('external_difficulty_locked'):
             diff_name = scenario.get('difficulty_name')
             if diff_name and diff_name in all_difficulties:
                 diff_conf = all_difficulties[diff_name].copy()
                 diff_conf['difficulty_name'] = diff_name
                 scenario['difficulty_config'] = diff_conf
+        else:
+            # 用 current_difficulty 覆盖场景的难度
+            current_diff = game_settings.get('current_difficulty')
+            if current_diff and current_diff in all_difficulties:
+                scenario['difficulty_name'] = current_diff
+                diff_conf = all_difficulties[current_diff].copy()
+                diff_conf['difficulty_name'] = current_diff
+                scenario['difficulty_config'] = diff_conf
+            else:
+                # 回退：用场景自身的 difficulty_name 刷新 config
+                diff_name = scenario.get('difficulty_name')
+                if diff_name and diff_name in all_difficulties:
+                    diff_conf = all_difficulties[diff_name].copy()
+                    diff_conf['difficulty_name'] = diff_name
+                    scenario['difficulty_config'] = diff_conf
 
         # 刷新 ai_level_config
         level_name = scenario.get('ai_level_name')
@@ -467,7 +544,7 @@ class TaskScenarioManager:
         - 任务因其他原因需要被标记为完成
         """
         self._update_completion_status(True)  # True = 已完成
-        self.logger.info(f"Task manually marked as completed for user '{self.user_id}', task '{self.task_type}'")
+        self.logger.info(f"Task manually marked as completed for user '{self.user_id}', progress '{self.progress_task_type}'")
 
     @classmethod
     def clear_practice_cache(cls, user_id: str = '', task_type: str = '') -> None:
@@ -575,9 +652,11 @@ class TaskScenarioManager:
             "current": self.repetition_counter,
             "total": self.max_repetitions,
             "is_practice": self.is_practice,
-            "difficulty": self.current_scenario.get('difficulty_name'),
+            "difficulty": self.current_scenario.get('external_difficulty_display') or self.current_scenario.get('difficulty_name'),
+            "engine_difficulty": self.current_scenario.get('difficulty_name'),
             "is_ai_active": self.current_scenario.get('is_ai_active'),
             "audio_enabled": self.current_scenario.get('audio_enabled'),
+            "autonomy_level": self.current_scenario.get('autonomy_level') or self.current_scenario.get('ai_level_name'),
             "previous_task_completed": previous_task_completed,  # 添加状态信息供调试
             "will_difficulty_change": self.current_scenario.get('will_difficulty_change', False)  # 从场景中获取预计算的难度变化标记
         }

@@ -27,11 +27,14 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
   function translateDifficulty(difficulty: string): React.ReactNode {
       switch (difficulty) {
         case 'low':
+        case '3':
           return '低';
         case 'medium':
-          return '中等';
+        case '2':
+          return '中';
         case 'high':
-          return '困难';    
+        case '1':
+          return '高';
         default:
           return difficulty;
       }
@@ -46,7 +49,7 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
       <div className="text-green-400 text-sm">
         {task_type && (
           <p>任务: <span className="font-bold text-white">
-            {{ RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序', PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射' }[task_type] ?? task_type}
+            {{ RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务', PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射' }[task_type] ?? task_type}
           </span></p>
         )}
         <p>模式: <span className="font-bold text-white">{is_practice ? '练习模式' : '正式模式'}</span></p>

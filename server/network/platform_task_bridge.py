@@ -14,6 +14,7 @@ from managers import config_manager, db_manager, generate_task_id, get_logger
 logger = get_logger("platform_task")
 
 _pending: Optional[Dict[str, Any]] = None
+_active_web_task_overlays: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
 # 外部任务活跃状态  key=(task_category, user_id)
 _active_external_tasks: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -98,19 +99,20 @@ def _normalize_difficulty_key(raw: Any, config: Dict[str, Any]) -> str:
         n = int(float(s))
         # 平台协议：1=高, 2=中, 3=低（与直觉相反）
         if n <= 1:
-            pick = "high" if "high" in diff_levels else default
+            pick = "high"
         elif n == 2:
-            pick = "medium" if "medium" in diff_levels else default
+            pick = "medium"
         else:  # n >= 3
-            pick = "low" if "low" in diff_levels else default
-        if pick in diff_levels:
-            return pick
+            pick = "low"
+        return pick
     except ValueError:
         pass
     if "低" in str(raw) or s == "low":
-        return "low" if "low" in diff_levels else default
+        return "low"
+    if "中" in str(raw) or s == "medium":
+        return "medium"
     if "高" in str(raw) or s == "high":
-        return "high" if "high" in diff_levels else default
+        return "high"
     return default if default in diff_levels else (keys[0] if keys else "low")
 
 
@@ -165,6 +167,13 @@ def _build_overlay(normalized: Dict[str, Any], config: Dict[str, Any]) -> Dict[s
     diff_levels = gs.get("difficulty_levels", {}) or {}
     dkey = normalized["difficulty_key"]
     diff_conf = copy.deepcopy(diff_levels.get(dkey, {}))
+    if not diff_conf:
+        if dkey == "high":
+            diff_conf = {"name": "高", "threat_count": 10, "target_count": 10}
+        elif dkey == "medium":
+            diff_conf = {"name": "中", "threat_count": 8, "target_count": 8}
+        elif dkey == "low":
+            diff_conf = {"name": "低", "threat_count": 5, "target_count": 5}
     diff_conf["difficulty_name"] = dkey
 
     level_name = normalized["current_level"]
@@ -238,6 +247,12 @@ def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
     }
     overlay = _build_overlay(normalized, cfg)
     _pending = {"raw": raw, "normalized": normalized, "overlay": overlay}
+    web_kind = normalized.get("web_task_kind") or ""
+    _active_web_task_overlays[(str(normalized["platform_task_id"]), web_kind)] = {
+        "raw": copy.deepcopy(raw),
+        "normalized": copy.deepcopy(normalized),
+        "overlay": copy.deepcopy(overlay),
+    }
     logger.info(
         "platform_task pending set: id=%s difficulty=%s level=%s include_ai=%s",
         normalized["platform_task_id"],
@@ -266,6 +281,41 @@ def consume_pending_for_task_start() -> Tuple[Optional[Dict[str, Any]], Optional
     }
     _pending = None
     return overlay, meta
+
+
+def get_active_overlay_for_task(user_id: str, task_type: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """获取当前用户最近一次平台任务配置，不消费。
+
+    平台包只会在 web 任务开始时广播一次，但 SA/传感器任务内部可能有多次
+    repetition。后续 repetition 需要继续沿用同一个难度和自主等级。
+    """
+    kind = "sa" if task_type == "SA_THREAT_RESPONSE" else "radar"
+    key = (str(user_id), kind)
+    entry = _active_web_task_overlays.get(key) or _active_web_task_overlays.get((str(user_id), ""))
+    if not entry:
+        return None, None
+    overlay = copy.deepcopy(entry.get("overlay") or {})
+    meta = {
+        "raw": copy.deepcopy(entry.get("raw")),
+        "normalized": copy.deepcopy(entry.get("normalized")),
+    }
+    return overlay, meta
+
+
+def get_progress_key_for_task(user_id: str, task_type: str) -> str:
+    """进度隔离键：同一用户可按 DefaultControlMode-AIAutonomyLeve-Difficulty 做多组任务。"""
+    _, meta = get_active_overlay_for_task(user_id, task_type)
+    normalized = (meta or {}).get("normalized") or {}
+    if not normalized:
+        return task_type
+
+    mode = normalized.get("default_control_mode")
+    if mode is None or str(mode).strip() == "":
+        mode = "1" if normalized.get("include_ai") else "0"
+    level = normalized.get("current_level") or normalized.get("ai_autonomy_level") or "L0"
+    difficulty = normalized.get("difficulty_key") or ""
+    combo = f"{str(mode).strip()}-{str(level).strip()}-{str(difficulty).strip()}"
+    return f"{task_type}::{combo}"
 
 
 def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[Dict[str, Any]]:

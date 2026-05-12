@@ -73,6 +73,7 @@ export interface RadarDisplayProps {
   error: string | null;
   onResetForNextMission?: () => void;
   onNavigateToSA?: () => void;
+  onTaskCompleted?: () => void;
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
   cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级：低/中/高
@@ -103,6 +104,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   error,
   onResetForNextMission,
   onNavigateToSA,
+  onTaskCompleted,
   onAddMessage,
   onClearMessages,
   cognitiveLoad = 'low'
@@ -310,17 +312,24 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     }
   }, [radarStore.lockedTargetId, lockedTdcPosition, joystickEnabled, mainPos, tdcToJoystick]);
   
-  // 当TDC位置通过其他方式改变时，同步更新期望摇杆位置
+  // 当TDC位置通过键盘/外部方式改变时，同步摇杆校准，让键盘和摇杆接续控制同一个光标
   React.useEffect(() => {
     if (joystickEnabled && !lockedTdcPosition) { // 只有在TDC位置未锁定时才同步
       const newExpectedPos = tdcToJoystick(tdcPosition);
       if (Math.abs(newExpectedPos.x - expectedJoystickPos.x) > 0.01 || 
           Math.abs(newExpectedPos.y - expectedJoystickPos.y) > 0.01) {
         setExpectedJoystickPos(newExpectedPos);
-        console.log('[TDC摇杆控制] 同步期望摇杆位置:', newExpectedPos);
+        if (mainPos) {
+          const newOffset = {
+            x: Math.max(-1, Math.min(1, newExpectedPos.x - mainPos.x)),
+            y: Math.max(-1, Math.min(1, newExpectedPos.y - mainPos.y))
+          };
+          setCalibrationOffset(newOffset);
+          console.log('[TDC混合控制] 键盘/外部位置同步到摇杆偏移:', newOffset);
+        }
       }
     }
-  }, [joystickEnabled, tdcPosition, expectedJoystickPos, tdcToJoystick, lockedTdcPosition]);
+  }, [joystickEnabled, tdcPosition, expectedJoystickPos, tdcToJoystick, lockedTdcPosition, mainPos]);
   
   // 添加useEffect来监控radarData的变化并更新本地状态
   React.useEffect(() => {
@@ -540,8 +549,15 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       onClearMessages();
     }
 
+    sendMessage?.({
+      type: 'task_result_confirmed',
+      task_type: 'RADAR_TARGETING',
+      timestamp: Date.now(),
+    });
+
     if (isAllTasksCompleted) {
       setShowMissionConfirm(false);
+      onTaskCompleted?.();
       console.log('[RadarDisplay] 所有任务轮次已完成，不再重置，等待问卷弹窗');
       return;
     }
@@ -556,7 +572,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [onClearMessages, onResetForNextMission, onNavigateToSA, isAllTasksCompleted]);
+  }, [onClearMessages, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, isAllTasksCompleted]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {

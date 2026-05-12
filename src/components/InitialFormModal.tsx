@@ -118,7 +118,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
                   onChange={() => setTaskType('sa')}
                   className="form-radio h-5 w-5 text-green-500 focus:ring-green-500 border-gray-600 bg-gray-800"
                 />
-                <span className="ml-2 text-green-400 font-mono">威胁排序</span>
+                <span className="ml-2 text-green-400 font-mono">威胁排序任务</span>
               </label>
             </div>
           </div>

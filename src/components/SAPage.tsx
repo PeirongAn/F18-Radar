@@ -449,6 +449,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
+      sendMessage?.({
+        type: 'task_result_confirmed',
+        task_type: 'SA_THREAT_RESPONSE',
+        timestamp: Date.now(),
+        user_id: userId,
+      });
+
       stopAutoStartSaTobiiRef.current = true;
       const promptPosition = getHighestThreatPromptPositionRef.current?.();
       console.log('gazerelation:查看结果按钮点击了,发送结束Tobii请求', promptPosition);

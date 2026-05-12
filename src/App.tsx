@@ -8,6 +8,7 @@ import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
+import audioManager from './managers/AudioManager';
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
 interface TargetSelectParams {
@@ -22,9 +23,15 @@ type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 
 
 function translateDifficulty(d: string): string {
   switch (d) {
-    case 'low':    return '低';
-    case 'medium': return '中等';
-    case 'high':   return '困难';
+    case 'low':
+    case '3':
+      return '低';
+    case 'medium':
+    case '2':
+      return '中';
+    case 'high':
+    case '1':
+      return '高';
     default:       return d;
   }
 }
@@ -83,6 +90,7 @@ const App: React.FC = observer(() => {
   const [isStarted, setIsStarted] = useState<boolean>(false);
   const [useJoystick, setUseJoystick] = useState<boolean>(false);
   const joystickInitedRef = useRef<boolean>(false);
+  const lastStartRequestRef = useRef<{ key: string; timestamp: number } | null>(null);
   const [radarRange, setRadarRange] = useState<number>(20);
   const [scanAngle, setScanAngle] = useState<number>(60);
 
@@ -109,6 +117,8 @@ const App: React.FC = observer(() => {
     WEAPON_FIRING: null,
   });
   const shownQuestionnairesRef = useRef<Set<string>>(new Set());
+  const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
+  const aiSelectedTargetRef = useRef<string | undefined>(undefined);
 
   const { radarStore } = useStore();
   const { antennaAdjustmentRequired, targetAntennaElevation } = radarStore;
@@ -129,6 +139,7 @@ const App: React.FC = observer(() => {
   } = useRadarData();
 
   const [messages, setMessages] = useState<LogMessage[]>([]);
+  const [completionNoticeTask, setCompletionNoticeTask] = useState<TaskType | null>(null);
   const messageIdRef = useRef(0);
 
   const addMessage = useCallback((type: MessageType, content: string) => {
@@ -177,6 +188,14 @@ const App: React.FC = observer(() => {
     questionnaireRef.current?.show(taskType);
   }, [canShowQuestionnaire]);
 
+  const showCompletionNoticeForTask = useCallback((taskType: TaskType, source?: any) => {
+    if (canShowQuestionnaire(taskType, source)) return;
+    const key = `${taskType}::NO_QUESTIONNAIRE_COMPLETED`;
+    if (shownCompletionNoticeRef.current.has(key)) return;
+    shownCompletionNoticeRef.current.add(key);
+    setCompletionNoticeTask(taskType);
+  }, [canShowQuestionnaire]);
+
   /* ── 监听后台指令切换显示模式 ─────────────────────
      后台可发送以下消息驱动切换：
        { type: 'SwitchSA', ... }      → 切换到威胁排序
@@ -211,15 +230,19 @@ const App: React.FC = observer(() => {
     }
   }, [lastMessage, repetitionInfos, showQuestionnaireForTask]);
 
-  /* ── 每个任务类型完成后，仅 AI 正式模式弹问卷 ── */
+  /* ── 每个任务类型完成后：AI正式模式弹问卷；其它模式显示结束提示 ── */
   useEffect(() => {
     if (repetitionInfos.RADAR_TARGETING === 'ALL_COMPLETED') {
-      showQuestionnaireForTask('RADAR_TARGETING', lastMessage?.task_type === 'RADAR_TARGETING' ? lastMessage : undefined);
+      const source = lastMessage?.task_type === 'RADAR_TARGETING' ? lastMessage : undefined;
+      showQuestionnaireForTask('RADAR_TARGETING', source);
+      showCompletionNoticeForTask('RADAR_TARGETING', source);
     }
     if (repetitionInfos.SA_THREAT_RESPONSE === 'ALL_COMPLETED') {
-      showQuestionnaireForTask('SA_THREAT_RESPONSE', lastMessage?.task_type === 'SA_THREAT_RESPONSE' ? lastMessage : undefined);
+      const source = lastMessage?.task_type === 'SA_THREAT_RESPONSE' ? lastMessage : undefined;
+      showQuestionnaireForTask('SA_THREAT_RESPONSE', source);
+      showCompletionNoticeForTask('SA_THREAT_RESPONSE', source);
     }
-  }, [repetitionInfos.RADAR_TARGETING, repetitionInfos.SA_THREAT_RESPONSE, lastMessage, showQuestionnaireForTask]);
+  }, [repetitionInfos.RADAR_TARGETING, repetitionInfos.SA_THREAT_RESPONSE, lastMessage, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── 监听 SA 临机事件 ─────────────────────────── */
   useEffect(() => {
@@ -242,6 +265,15 @@ const App: React.FC = observer(() => {
 
   /* ── 目标选择 ─────────────────────────────────── */
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
+    if (params.event_owner === 'AI') {
+      aiSelectedTargetRef.current = params.targetId;
+    }
+    const isManualRepeatOfAITarget =
+      agentStore.isAIActive &&
+      params.event_owner === 'manual' &&
+      params.targetId &&
+      params.targetId === aiSelectedTargetRef.current;
+
     radarStore.setLockedTargetId(params.targetId);
     if (params.targetId && params.lockX !== undefined) {
       radarStore.setLockScreenX(params.lockX);
@@ -258,7 +290,9 @@ const App: React.FC = observer(() => {
       };
       if (params.iffMode !== undefined) payload.iff_mode = params.iffMode;
       if (params.externalTargetsTimestamp != null) payload.receive_timestamp = params.externalTargetsTimestamp;
-      sendMessage?.(payload);
+      if (!isManualRepeatOfAITarget) {
+        sendMessage?.(payload);
+      }
     }
   }, [sendMessage, radarStore]);
 
@@ -270,6 +304,15 @@ const App: React.FC = observer(() => {
     practice: boolean,
     _useJoystick: boolean,
   ) => {
+    const startKey = `${id}::${taskType}::${withAI ? 'ai' : 'manual'}::${practice ? 'practice' : 'formal'}`;
+    const now = Date.now();
+    const lastStart = lastStartRequestRef.current;
+    if (lastStart?.key === startKey && now - lastStart.timestamp < 1000) {
+      console.warn('[App] Ignored duplicate task start request:', startKey);
+      return;
+    }
+    lastStartRequestRef.current = { key: startKey, timestamp: now };
+
     setUserId(id);
     setIncludeAI(withAI);
     setUseJoystick(_useJoystick);
@@ -313,6 +356,7 @@ const App: React.FC = observer(() => {
   }, [platformAutoStart, handleStartApp]);
 
   const handleStartTask = useCallback(() => {
+    audioManager.unlock();
     fetch('/init_config.json')
       .then(r => r.json())
       .then((cfg: { userId: string; includeAI: boolean; taskType: 'radar' | 'sa'; isPractice: boolean; useJoystick: boolean }) => {
@@ -330,6 +374,15 @@ const App: React.FC = observer(() => {
     setScanAngle(angle);
     radarStore.updateRadarParams(range, angle);
   }, [radarStore]);
+
+  const handleRadarTaskCompleted = useCallback(() => {
+    const source = {
+      is_ai_active: agentStore.isAIActive,
+      is_practice: radarStore.isPractice,
+    };
+    showQuestionnaireForTask('RADAR_TARGETING', source);
+    showCompletionNoticeForTask('RADAR_TARGETING', source);
+  }, [radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── SA 查看结果确认回调保留给页面流程；问卷由任务类型完成状态统一控制 ── */
   const handleSAResultConfirmed = useCallback(() => {}, []);
@@ -370,7 +423,7 @@ const App: React.FC = observer(() => {
   }, [activeDisplay, repetitionInfos]);
 
   /* ── 右侧标签文字 ─────────────────────────────── */
-  const displayLabel = activeDisplay === 'sa' ? '威胁排序 · 态势感知' : '传感器任务 · 目标识别';
+  const displayLabel = activeDisplay === 'sa' ? '威胁排序任务 · 态势感知' : '传感器任务 · 目标识别';
 
   /* ── 策略说明链接 ─────────────────────────────── */
   const rulesHref = activeDisplay === 'sa'
@@ -535,7 +588,7 @@ const App: React.FC = observer(() => {
                 color: activeDisplay === 'sa' ? '#ffbb22' : '#00ee66',
                 transition: 'all 0.4s',
               }}>
-                {activeDisplay === 'sa' ? '威胁排序' : '传感器任务'}
+                {activeDisplay === 'sa' ? '威胁排序任务' : '传感器任务'}
               </span>
             </div>
           </>
@@ -630,6 +683,7 @@ const App: React.FC = observer(() => {
               onRadarParamsUpdate={handleRadarParamsUpdate}
               onAddMessage={addMessage}
               onClearMessages={clearMessages}
+              onTaskCompleted={handleRadarTaskCompleted}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
@@ -698,6 +752,59 @@ const App: React.FC = observer(() => {
         </div>
       </div>
 
+      {completionNoticeTask && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 10001,
+          background: 'rgba(0,0,0,0.48)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'auto',
+        }}>
+          <div style={{
+            background: 'rgba(1,12,4,0.97)',
+            padding: '28px 36px',
+            border: '1px solid #0d4020',
+            borderLeft: '3px solid #00cc55',
+            borderRadius: '4px',
+            textAlign: 'center',
+            boxShadow: '0 0 30px rgba(0,0,0,0.8), 0 0 20px rgba(0,180,70,0.08)',
+            fontFamily: "'Share Tech Mono', 'SimHei', 'Microsoft YaHei', monospace",
+            minWidth: '300px',
+          }}>
+            <p style={{
+              margin: '0 0 20px 0',
+              fontSize: '18px',
+              letterSpacing: '0.12em',
+              color: '#00cc55',
+            }}>
+              本次任务已结束
+            </p>
+            <button
+              onClick={() => setCompletionNoticeTask(null)}
+              style={{
+                fontFamily: "'Share Tech Mono', 'SimHei', 'Microsoft YaHei', monospace",
+                fontSize: '13px',
+                letterSpacing: '0.15em',
+                background: 'rgba(0,30,12,0.6)',
+                border: '1px solid #0d4020',
+                color: '#00aa44',
+                padding: '8px 28px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,50,20,0.8)'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,30,12,0.6)'; }}
+            >
+              确认
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Questionnaire Modal ─────────────────────────────── */}
       {(repetitionInfos.RADAR_TARGETING !== null || repetitionInfos.SA_THREAT_RESPONSE !== null || repetitionInfos.PLATFORM_CONTROL !== null || repetitionInfos.WEAPON_FIRING !== null) && (
         <QuestionnaireModal
@@ -709,7 +816,7 @@ const App: React.FC = observer(() => {
           questionnaireApiUrl="/questionnaire_config.json"
           sendMessage={sendMessage ?? undefined}
           onSubmit={(data: QuestionnaireSubmitData) => {
-            const taskLabels: Record<string, string> = { RADAR_TARGETING: '传感器操作', SA_THREAT_RESPONSE: '威胁排序', PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射' };
+            const taskLabels: Record<string, string> = { RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务', PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射' };
             addMessage('system', `问卷已提交 · ${taskLabels[data.taskType] ?? data.taskType} · 第 ${data.repetitionCurrent} 次`);
           }}
         />

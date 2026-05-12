@@ -9,7 +9,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, db_manager, TaskScenarioManager, generate_task_id, target_manager, threat_manager
-from network.platform_task_bridge import peek_pending_include_ai, consume_pending_for_task_start
+from network.platform_task_bridge import (
+    peek_pending_include_ai,
+    consume_pending_for_task_start,
+    get_active_overlay_for_task,
+    get_progress_key_for_task,
+)
 from models.threat_models import RadarConfig
 from network.message_protocol import message_protocol
 
@@ -84,6 +89,8 @@ class MessageHandler:
                 return await self._handle_target_selected(message, session_state, client_event_owner)
             elif message_type == 'threat_clicked':
                 return await self._handle_threat_clicked(message, session_state, client_event_owner)
+            elif message_type == 'task_result_confirmed':
+                return await self._handle_task_result_confirmed(message, session_state)
             elif message_type == 'record_operation':
                 return await self._handle_record_operation(message, session_state, client_event_owner)
             elif message_type == 'record_bulk_operations':
@@ -123,11 +130,21 @@ class MessageHandler:
         
         # 将 user_id 保存到全局会话，以便后续操作使用
         self.current_session['user_id'] = user_id
+        self.current_session['target_elevation'] = None
+        self.current_session['stage'] = 'init'
         
         task_type = 'RADAR_TARGETING'
+        progress_key = get_progress_key_for_task(user_id, task_type)
         
         # 创建或加载与用户绑定的持久化任务管理器
-        task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice, is_ai_active_request=is_ai_active_request)
+        task_manager = TaskScenarioManager(
+            config_manager.get_config(),
+            user_id,
+            task_type,
+            is_practice=is_practice,
+            is_ai_active_request=is_ai_active_request,
+            progress_key=progress_key,
+        )
         session_state['task_manager'] = task_manager
         
         # 从管理器获取下一个任务场景
@@ -151,32 +168,32 @@ class MessageHandler:
             }]
 
         overlay, platform_meta = consume_pending_for_task_start()
+        if not overlay:
+            overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
         if overlay:
-            current_scenario['difficulty_name'] = overlay['difficulty_name']
-            current_scenario['difficulty_config'] = overlay['difficulty_config']
-            current_scenario['is_ai_active'] = overlay['is_ai_active']
-            current_scenario['ai_level_name'] = overlay['ai_level_name']
-            current_scenario['ai_level_config'] = overlay['ai_level_config']
-            current_scenario['audio_enabled'] = overlay['audio_enabled']
-            rep_info = current_scenario.get('repetition_info') or {}
-            if overlay.get('repetition_total_override') is not None:
-                # 把 TaskNumber 真正灌进引擎：锁定 max_repetitions（首次设置生效，
-                # 之后 task_start 中途换值会被忽略）。然后用引擎认可的值刷新显示。
-                task_manager.apply_repetition_override(overlay['repetition_total_override'])
-                rep_info['total'] = task_manager.max_repetitions
-            rep_info['difficulty'] = overlay.get('difficulty_display') or current_scenario['difficulty_name']
-            rep_info['engine_difficulty'] = current_scenario['difficulty_name']
-            rep_info['is_ai_active'] = current_scenario['is_ai_active']
-            rep_info['autonomy_level'] = overlay.get('autonomy_level') or current_scenario.get('ai_level_name')
-            current_scenario['repetition_info'] = rep_info
+            task_manager.apply_platform_overlay(overlay)
+            current_scenario = task_manager.current_scenario
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
         
         self.current_session[f'{task_type}_scenario'] = current_scenario
-        task_id = generate_task_id()
+        existing_task_id = db_manager.find_existing_task_setting_id(
+            current_scenario,
+            user_id,
+            event_owner,
+            task_type,
+        )
+        is_retrying_incomplete_task = bool(
+            existing_task_id and
+            current_scenario.get('repetition_info', {}).get('previous_task_completed') is False
+        )
+        if is_retrying_incomplete_task:
+            db_manager.clear_task_operations(existing_task_id)
+        task_id = existing_task_id or generate_task_id()
         self.current_session['task_id'] = task_id
         
         # 记录操作
-        if not session_state.get('is_practice', False):
+        should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
+        if not session_state.get('is_practice', False) and should_record_task_start:
             operation = {
                 'task_id': task_id,
                 'operationType': 'task_start',
@@ -188,9 +205,16 @@ class MessageHandler:
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         else:
-            print("练习模式，跳过 task_start 数据库记录。")
+            print("练习模式或重复启动，跳过 task_start 数据库记录。")
 
-        db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
+        db_manager.record_task_settings(
+            task_id,
+            current_scenario,
+            user_id,
+            event_owner,
+            session_state.get('is_practice', False),
+            task_type,
+        )
         target_manager.initialize_targets(current_scenario['difficulty_config'])
 
         # 启动眼动追踪（有 Tobii 时生效，否则静默跳过）
@@ -227,9 +251,10 @@ class MessageHandler:
             # 参数正确，进入天线调整阶段
             print("雷达参数验证成功，发送天线调整指令。")
             
-            if not session_state.get('is_practice', False):
+            task_id = self.current_session.get('task_id')
+            if not session_state.get('is_practice', False) and task_id:
                 operation = {
-                    'task_id': self.current_session.get('task_id'),
+                    'task_id': task_id,
                     'operationType': 'settings_update',
                     'timestamp': message.get('timestamp', int(time.time() * 1000)),
                     'receive_timestamp': message.get('receive_timestamp'),
@@ -258,9 +283,10 @@ class MessageHandler:
         
         validation_response, is_valid = self._handle_antenna_adjustment(message)
         if is_valid:
-            if not session_state.get('is_practice', False):
+            task_id = self.current_session.get('task_id')
+            if not session_state.get('is_practice', False) and task_id:
                 operation = {
-                    'task_id': self.current_session.get('task_id'),
+                    'task_id': task_id,
                     'operationType': 'antenna_adjusted',
                     'timestamp': message.get('timestamp', int(time.time() * 1000)),
                     'receive_timestamp': message.get('receive_timestamp'),
@@ -287,9 +313,10 @@ class MessageHandler:
         targets = target_manager.get_targets()
         is_enemy = any(target['id'] == target_id and target['type'] == 'army' for target in targets)
         
-        if not session_state.get('is_practice', False):
+        task_id = self.current_session.get('task_id')
+        if not session_state.get('is_practice', False) and task_id:
             operation = {
-                'task_id': self.current_session.get('task_id'),
+                'task_id': task_id,
                 'operationType': 'target_selected',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'receive_timestamp': message.get('receive_timestamp'),
@@ -308,15 +335,6 @@ class MessageHandler:
         else:
             print("练习模式，跳过 target_selected 数据库记录。")
         
-        # 标记雷达目标识别任务完成
-        task_manager = session_state.get('task_manager')
-        if task_manager:
-            task_manager.mark_task_completed()
-
-        # 停止眼动追踪
-        self._gaze_stop(self.current_session.get('task_id'))
-
-        # 问卷由对应任务类型的 all_tasks_completed 触发，单轮完成时不弹。
         return []
     
     async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -324,9 +342,10 @@ class MessageHandler:
         """处理威胁点击消息"""
         print("消息类型: threat_clicked")
 
-        if not session_state.get('is_practice', False):
+        task_id = self.current_session.get('task_id')
+        if not session_state.get('is_practice', False) and task_id:
             operation = {
-                'task_id': self.current_session.get('task_id'),
+                'task_id': task_id,
                 'operationType': 'threat_clicked',
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True,
@@ -347,15 +366,22 @@ class MessageHandler:
         else:
             print("练习模式，跳过 threat_clicked 数据库记录。")
         
-        # 标记SA威胁应对任务完成
-        task_manager = session_state.get('sa_task_manager')
+        return []
+
+    async def _handle_task_result_confirmed(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """处理任务结果确认：传感器任务按 IFF，威胁排序按查看结果，才视为任务结束。"""
+        task_type = message.get('task_type')
+        if task_type == 'RADAR_TARGETING':
+            task_manager = session_state.get('task_manager')
+        elif task_type == 'SA_THREAT_RESPONSE':
+            task_manager = session_state.get('sa_task_manager')
+        else:
+            task_manager = None
+
         if task_manager:
             task_manager.mark_task_completed()
 
-        # 停止眼动追踪
         self._gaze_stop(self.current_session.get('task_id'))
-
-        # 问卷由对应任务类型的 all_tasks_completed 触发，单轮完成时不弹。
         return []
     
     async def _handle_record_operation(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -390,8 +416,16 @@ class MessageHandler:
         is_practice = message.get('is_practice', False)
         session_state['is_practice'] = is_practice
         is_ai_active_request = bool(message.get('is_ai_active', False))
+        progress_key = get_progress_key_for_task(user_id, task_type)
         # 为SA任务也创建一个持久化管理器
-        task_manager = TaskScenarioManager(config_manager.get_config(), user_id, task_type, is_practice=is_practice, is_ai_active_request=is_ai_active_request)
+        task_manager = TaskScenarioManager(
+            config_manager.get_config(),
+            user_id,
+            task_type,
+            is_practice=is_practice,
+            is_ai_active_request=is_ai_active_request,
+            progress_key=progress_key,
+        )
         session_state['sa_task_manager'] = task_manager
         event_owner = message.get('event_owner') or ('AI' if is_ai_active_request else 'manual')
         
@@ -417,25 +451,26 @@ class MessageHandler:
         # 与 _handle_task_start 保持一致：消费外部平台 task_start 留下的 overlay，
         # 把 difficulty/AI/audio 以及 TaskNumber→max_repetitions 灌到 scenario 上。
         overlay, platform_meta = consume_pending_for_task_start()
+        if not overlay:
+            overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
         if overlay:
-            current_scenario['difficulty_name'] = overlay['difficulty_name']
-            current_scenario['difficulty_config'] = overlay['difficulty_config']
-            current_scenario['is_ai_active'] = overlay['is_ai_active']
-            current_scenario['ai_level_name'] = overlay['ai_level_name']
-            current_scenario['ai_level_config'] = overlay['ai_level_config']
-            current_scenario['audio_enabled'] = overlay['audio_enabled']
-            rep_info = current_scenario.get('repetition_info') or {}
-            if overlay.get('repetition_total_override') is not None:
-                task_manager.apply_repetition_override(overlay['repetition_total_override'])
-                rep_info['total'] = task_manager.max_repetitions
-            rep_info['difficulty'] = overlay.get('difficulty_display') or current_scenario['difficulty_name']
-            rep_info['engine_difficulty'] = current_scenario['difficulty_name']
-            rep_info['is_ai_active'] = current_scenario['is_ai_active']
-            rep_info['autonomy_level'] = overlay.get('autonomy_level') or current_scenario.get('ai_level_name')
-            current_scenario['repetition_info'] = rep_info
+            task_manager.apply_platform_overlay(overlay)
+            current_scenario = task_manager.current_scenario
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
 
-        task_id = generate_task_id()
+        existing_task_id = db_manager.find_existing_task_setting_id(
+            current_scenario,
+            user_id,
+            event_owner,
+            task_type,
+        )
+        is_retrying_incomplete_task = bool(
+            existing_task_id and
+            current_scenario.get('repetition_info', {}).get('previous_task_completed') is False
+        )
+        if is_retrying_incomplete_task:
+            db_manager.clear_task_operations(existing_task_id)
+        task_id = existing_task_id or generate_task_id()
         self.current_session['task_id'] = task_id
         self.current_session[f'{task_type}_scenario'] = current_scenario
 
@@ -443,7 +478,8 @@ class MessageHandler:
         self._gaze_start(task_id, user_id=user_id, task_name=task_type)
 
         # 记录操作
-        if not session_state.get('is_practice', False):
+        should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
+        if not session_state.get('is_practice', False) and should_record_task_start:
             operation = {
                 'task_id': self.current_session.get('task_id'),
                 'operationType': message.get('type'),
@@ -454,7 +490,14 @@ class MessageHandler:
                 'event_owner': event_owner
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
-        db_manager.record_task_settings(task_id, current_scenario, user_id, event_owner, session_state.get('is_practice', False))
+        db_manager.record_task_settings(
+            task_id,
+            current_scenario,
+            user_id,
+            event_owner,
+            session_state.get('is_practice', False),
+            task_type,
+        )
         if self.use_enhanced_protocol:
             # 使用增强协议生成完整威胁数据
             print("[MessageHandler] 使用增强协议生成威胁")
@@ -636,6 +679,14 @@ class MessageHandler:
     
     def _generate_antenna_adjustment(self) -> Dict[str, Any]:
         """生成随机天线高度指令"""
+        existing_target = self.current_session.get('target_elevation')
+        if self.current_session.get('stage') == 'antenna_adjustment' and existing_target is not None:
+            return {
+                "type": "adjust_antenna",
+                "targetElevation": existing_target,
+                "message": f"请将天线高度{'上移' if existing_target > 0 else '下移'} {abs(existing_target)}格"
+            }
+
         # 从-3,-2,-1,1,2,3中随机选择一个调整值
         direction = random.choice([-3, -2, -1, 1, 2, 3])
         target_elevation = direction
@@ -663,6 +714,14 @@ class MessageHandler:
                     "type": "settings_validation",
                     "status": "error",
                     "message": "未找到目标天线高度设置，请重新初始化系统"
+                }, False
+
+            client_target_elevation = message.get('targetElevation')
+            if client_target_elevation is not None and abs(client_target_elevation - target_elevation) > 0.1:
+                return {
+                    "type": "settings_validation",
+                    "status": "error",
+                    "message": f"天线目标高度已更新，请按最新提示调整。当前提示目标为{client_target_elevation}°，服务端目标为{target_elevation}°"
                 }, False
             
             if abs(client_elevation - target_elevation) <= 0.1:

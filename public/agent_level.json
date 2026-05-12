@@ -42,6 +42,11 @@
         "threat_count": 10,
         "target_count": 10
       },
+      "medium": {
+        "name": "中",
+        "threat_count": 8,
+        "target_count": 8
+      },
       "low": {
         "name": "低",
         "threat_count": 5,
@@ -51,6 +56,7 @@
     "execution_order": {
       "difficulty_order": [
         "high",
+        "medium",
         "low"
       ],
       "level_order": [
