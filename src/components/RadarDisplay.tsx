@@ -142,6 +142,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 添加任务确认弹窗状态
   const [showMissionConfirm, setShowMissionConfirm] = React.useState(false);
   const [missionResultMessage, setMissionResultMessage] = React.useState(''); // State to hold the result message
+  const [missionCanComplete, setMissionCanComplete] = React.useState(false);
   const [radarAzimuth, setRadarAzimuth] = React.useState<number>(0);
   const [ownHeading, setOwnHeading] = React.useState<number>(0);
   
@@ -545,6 +546,13 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   // 处理确认弹窗的确认操作
   const handleConfirmYes = useCallback(() => {
+    if (!missionCanComplete) {
+      setShowMissionConfirm(false);
+      setIffMode(false);
+      console.log('[RadarDisplay] IFF误触确认，仅关闭提示框，继续当前任务');
+      return;
+    }
+
     if (onClearMessages) {
       onClearMessages();
     }
@@ -562,8 +570,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       return;
     }
 
-    const hasLockedTarget = !!radarStore.lockedTargetId;
-    if (hasLockedTarget && onNavigateToSA) {
+    if (onNavigateToSA) {
       setShowMissionConfirm(false);
       onNavigateToSA();
     } else {
@@ -572,7 +579,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [onClearMessages, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, isAllTasksCompleted]);
+  }, [missionCanComplete, onClearMessages, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, isAllTasksCompleted]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
@@ -692,6 +699,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       // 添加重复次数信息
       const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
       setShowMissionConfirm(true);
+      setMissionCanComplete(true);
       
       // 'army' is considered the correct type for this task (enemy)
       if (lockedTargetObject.type === 'army') {
@@ -701,6 +709,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
     } else {
       setMissionResultMessage('结果: 未锁定目标');
+      setMissionCanComplete(false);
       setShowMissionConfirm(true);
     }
     setIffMode(prev => !prev);
@@ -995,7 +1004,7 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               color: '#55aa66',
               letterSpacing: '0.06em',
             }}>
-              {lockedTargetObject?.type ? '当前任务已结束，可关闭窗口' : '请重新完成当前任务'}
+              {missionCanComplete ? '当前任务已结束，可关闭窗口' : '请继续完成任务'}
             </p>
             <button
               onClick={handleConfirmYes}

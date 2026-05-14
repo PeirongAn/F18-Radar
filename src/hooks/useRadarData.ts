@@ -472,7 +472,6 @@ const useRadarData = (
   const [initSettings, setInitSettings] = useState<any>(null);
   const [initSettingsTimestamp, setInitSettingsTimestamp] = useState<number | null>(null);
   const [settingsValidationTimestamp, setSettingsValidationTimestamp] = useState<number | null>(null);
-  const playedRadarRangeTaskIdsRef = useRef<Set<number | string>>(new Set());
   const submittedSettingsKeysRef = useRef<Set<string>>(new Set());
   
   // 当前有效的参数设置
@@ -1159,16 +1158,6 @@ const useRadarData = (
       // 1. 初始化AI和任务状态
       agentStore.initializeFromServer(message);
 
-      if (
-        message.task_type === 'RADAR_TARGETING' &&
-        message.audio_enabled &&
-        !message.is_ai_active &&
-        !playedRadarRangeTaskIdsRef.current.has(message.task_id)
-      ) {
-        playedRadarRangeTaskIdsRef.current.add(message.task_id);
-        audioManager.playOnce(`radarRange:${message.task_id}`, 'radarRange');
-      }
-      
       // 2. 设置任务ID
       radarStore.setTaskId(message.task_id);
 

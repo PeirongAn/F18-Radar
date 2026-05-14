@@ -1,6 +1,7 @@
 import agentStore from '../stores/AgentStore';
 
 type SoundType = 'missileUp' | 'missileDown' | 'threatUpgrade' | 'saInit' | 'radarRange' | 'radarHeight' | 'radarAISelect';
+type RadarPromptType = 'radarRange' | 'radarHeight';
 
 const soundPaths: Record<SoundType, string> = {
   missileUp: '/sounds/MissileLaunch.wav',
@@ -16,6 +17,8 @@ class AudioManager {
   private unlocked = false;
   private pendingSounds: SoundType[] = [];
   private playedKeys = new Set<string>();
+  private radarPromptQueue: RadarPromptType[] = [];
+  private radarPromptPlaying = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -60,10 +63,51 @@ class AudioManager {
     this.play(type, false);
   }
 
+  playRadarPrompt(type: RadarPromptType) {
+    if (!agentStore.audioEnabled) return;
+    this.radarPromptQueue.push(type);
+    this.flushRadarPromptQueue();
+  }
+
+  playRadarPromptOnce(key: string, type: RadarPromptType) {
+    if (this.playedKeys.has(key)) return;
+    this.playedKeys.add(key);
+    this.playRadarPrompt(type);
+  }
+
   private flushPendingSounds() {
     const sounds = [...this.pendingSounds];
     this.pendingSounds = [];
     sounds.forEach(type => this.play(type));
+  }
+
+  private flushRadarPromptQueue() {
+    if (this.radarPromptPlaying) return;
+
+    const next = this.radarPromptQueue.shift();
+    if (!next) return;
+
+    this.radarPromptPlaying = true;
+    const audio = new Audio(soundPaths[next]);
+    let completed = false;
+    let fallbackTimer: number | undefined;
+
+    const complete = () => {
+      if (completed) return;
+      completed = true;
+      if (fallbackTimer !== undefined) {
+        window.clearTimeout(fallbackTimer);
+      }
+      audio.removeEventListener('ended', complete);
+      audio.removeEventListener('error', complete);
+      this.radarPromptPlaying = false;
+      this.flushRadarPromptQueue();
+    };
+
+    audio.addEventListener('ended', complete);
+    audio.addEventListener('error', complete);
+    fallbackTimer = window.setTimeout(complete, 6000);
+    audio.play().catch(complete);
   }
 }
 

@@ -41,14 +41,9 @@ def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
             return cand
     try:
         n = int(float(s))
-        # 平台协议：1=低自主等级, 2=中自主等级, 3=高自主等级；
-        # 本地配置使用 L0/L1/L2，因此数字协议需要转成 0-based level。
-        if n <= 1:
-            idx = 0
-        elif n == 2:
-            idx = 1
-        else:
-            idx = 2
+        # 平台包里的 AIAutonomyLeve 与界面展示一致：0=L0, 1=L1, 2=L2。
+        # 若旧包仍发送 3，则夹到最高可用等级，避免落到不存在的 L3。
+        idx = max(0, n)
         cand = f"L{idx}"
         if cand in valid:
             return cand

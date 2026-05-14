@@ -454,10 +454,11 @@ const Radar: React.FC<RadarProps> = (({
   const prevAntennaRequiredRef = useRef(false);
   useEffect(() => {
     if (antennaAdjustmentRequired && !prevAntennaRequiredRef.current && !agentStore.isAIActive) {
-      audioManager.play('radarHeight');
+      const promptKey = `radarHeight:${taskId || 'pending'}:${radarStore.targetAntennaElevation ?? 'unknown'}`;
+      audioManager.playRadarPromptOnce(promptKey, 'radarHeight');
     }
     prevAntennaRequiredRef.current = antennaAdjustmentRequired;
-  }, [antennaAdjustmentRequired]);
+  }, [antennaAdjustmentRequired, taskId, radarStore.targetAntennaElevation]);
 
   useEffect(() => {
     // This effect detects when the manual or AI adjustment is complete.
@@ -694,23 +695,42 @@ const Radar: React.FC<RadarProps> = (({
     }
   }, [rangeIndex, scanMode, isSilent, onRadarParamsUpdate]);
 
-  // 自动设置
   useEffect(() => {
-    
-    if (initSettings && submitSettings) {
-      console.log('自动设置', initSettings)
-      const range = RADAR_RANGES[rangeIndex];
-      const scanAngle = initSettings.scanAngle;
-      const settingsKey = `${taskId || 'pending'}:${range}:${scanAngle}`;
-      if (submittedInitialSettingsKeyRef.current === settingsKey) return;
-      submittedInitialSettingsKeyRef.current = settingsKey;
-      submitSettings({
-        range,
-        scanAngle,
+    if (
+      agentStore.isAIActive ||
+      !isStarted ||
+      !initSettings ||
+      typeof initSettings.range !== 'number' ||
+      typeof initSettings.scanAngle !== 'number'
+    ) {
+      return;
+    }
+
+    const targetRange = initSettings.range;
+    const targetScanAngle = initSettings.scanAngle;
+    const settingsKey = `${taskId || 'pending'}:${targetRange}:${targetScanAngle}`;
+    if (submittedInitialSettingsKeyRef.current === settingsKey) return;
+
+    const newRangeIndex = RADAR_RANGES.findIndex(r => r === targetRange);
+    if (newRangeIndex !== -1 && rangeIndex !== newRangeIndex) {
+      setRangeIndex(newRangeIndex);
+    }
+    if (scanMode.scanAngle !== targetScanAngle) {
+      setScanMode({
+        name: targetScanAngle === 15 ? 'narrow' : targetScanAngle === 30 ? 'medium' : 'normal',
+        scanAngle: targetScanAngle,
+        scanFraction: targetScanAngle === 15 ? 0.25 : targetScanAngle === 30 ? 0.5 : 1.0,
+        centerOffset: 0,
       });
     }
 
-  }, [submitSettings, initSettings, rangeIndex, taskId])
+    submittedInitialSettingsKeyRef.current = settingsKey;
+    submitSettings({
+      range: targetRange,
+      scanAngle: targetScanAngle,
+    });
+    setMissionSettingsReady(true);
+  }, [agentStore.isAIActive, isStarted, initSettings, taskId, rangeIndex, scanMode.scanAngle, submitSettings]);
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
