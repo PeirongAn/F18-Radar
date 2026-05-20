@@ -19,12 +19,12 @@ class AudioManager {
   private playedKeys = new Set<string>();
   private radarPromptQueue: RadarPromptType[] = [];
   private radarPromptPlaying = false;
+  private readonly unlockOnUserGesture = () => this.unlock();
 
   constructor() {
     if (typeof window !== 'undefined') {
-      const unlockOnUserGesture = () => this.unlock();
-      window.addEventListener('pointerdown', unlockOnUserGesture, { once: true, capture: true });
-      window.addEventListener('keydown', unlockOnUserGesture, { once: true, capture: true });
+      window.addEventListener('pointerdown', this.unlockOnUserGesture, { capture: true });
+      window.addEventListener('keydown', this.unlockOnUserGesture, { capture: true });
     }
   }
 
@@ -39,7 +39,10 @@ class AudioManager {
         audio.currentTime = 0;
         audio.volume = 1;
         this.unlocked = true;
+        window.removeEventListener('pointerdown', this.unlockOnUserGesture, { capture: true });
+        window.removeEventListener('keydown', this.unlockOnUserGesture, { capture: true });
         this.flushPendingSounds();
+        this.flushRadarPromptQueue();
       })
       .catch(() => {
         this.unlocked = false;
@@ -48,6 +51,11 @@ class AudioManager {
 
   play(type: SoundType, queueOnFailure = false) {
     if (!agentStore.audioEnabled) return;
+
+    if (!this.unlocked) {
+      this.pendingSounds.push(type);
+      return;
+    }
 
     const audio = new Audio(soundPaths[type]);
     audio.play().catch(() => {
@@ -82,6 +90,7 @@ class AudioManager {
   }
 
   private flushRadarPromptQueue() {
+    if (!this.unlocked) return;
     if (this.radarPromptPlaying) return;
 
     const next = this.radarPromptQueue.shift();

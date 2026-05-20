@@ -38,7 +38,7 @@ class MessageHandler:
         """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
         self._gaze_svc = gaze_svc
 
-    def _gaze_start(self, task_id, user_id: str = "", task_name: str = "") -> None:
+    def _gaze_start(self, task_id, user_id: str = "", task_name: str = "", task_source: str = "") -> None:
         """任务开始时启动 gaze 追踪（无 Tobii 设备时静默跳过）。"""
         if self._gaze_svc is None:
             return
@@ -50,7 +50,9 @@ class MessageHandler:
                 screen_size=(1, 1),
                 task_id=task_id,
                 user_id=user_id,
+                task_source=task_source,
                 task_name=task_name,
+                start_trigger="task_start",
             )
         except Exception as e:
             print(f"[MessageHandler] gaze start_task 失败（已跳过）: {e}")
@@ -62,7 +64,7 @@ class MessageHandler:
         try:
             resolved = task_id or self._gaze_svc.get_active_task_id()
             if resolved:
-                self._gaze_svc.stop_task(task_id=str(resolved))
+                self._gaze_svc.stop_task(task_id=str(resolved), end_trigger="task_result_confirmed")
         except Exception as e:
             print(f"[MessageHandler] gaze stop_task 失败（已跳过）: {e}")
 
@@ -288,7 +290,7 @@ class MessageHandler:
         target_manager.initialize_targets(current_scenario['difficulty_config'])
 
         # 启动眼动追踪（有 Tobii 时生效，否则静默跳过）
-        self._gaze_start(task_id, user_id=user_id, task_name=task_type)
+        self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
 
         init_response = {
             "type": "init_settings",
@@ -619,7 +621,7 @@ class MessageHandler:
         self.current_session[f'{task_type}_scenario'] = current_scenario
 
         # 启动眼动追踪
-        self._gaze_start(task_id, user_id=user_id, task_name=task_type)
+        self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
 
         # 记录操作
         should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task

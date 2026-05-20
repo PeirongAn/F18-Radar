@@ -22,8 +22,7 @@ GazeService — 眼动追踪核心服务
 
 文件存储结构（每个任务独立目录）:
     {data_dir}/{task_id}/
-        raw_gaze.jsonl      # 每帧一行：{"ts_us":…,"gaze":[x,y],"in_box":true|false|null}
-        fixation.jsonl      # 注视事件：{"ts_us":…,"event":"fixation_start|fixation_end"}
+        raw_gaze.jsonl      # 每帧一行：{"ts_us":…,"gaze":[x,y],"valid":true,"in_region":true}
         summary.json        # 任务结束时写入：元数据 + 统计信息
 """
 
@@ -64,7 +63,6 @@ GAZE_PROGRESS_LOGS_ENABLED = os.environ.get("GAZE_PROGRESS_LOGS", "").lower() in
 
 # 写入队列中的事件类型标识
 _EVT_GAZE_FRAME = "gaze_frame"
-_EVT_FIXATION = "fixation"
 _EVT_TASK_SUMMARY = "task_summary"
 _EVT_STOP_WRITER = "stop_writer"
 _EVT_DB_EXEC = "db_exec"
@@ -92,7 +90,6 @@ class GazeService:
         self._window_lock = threading.Lock()
 
         # ── 任务状态 ──────────────────────────
-        self._flag: bool = False          # 当前是否处于 fixation 中
         self._task_active: bool = False
         self._current_task: dict | None = None
         self._state_lock = threading.Lock()
@@ -229,6 +226,7 @@ class GazeService:
         system_time: int | None = None,
         regions: list | None = None,
         coordinate_space: str | None = None,
+        start_trigger: str = "task_start",
     ) -> str:
         """
         记录目标窗口出现、开始新任务，并创建对应的文件存储目录。
@@ -261,7 +259,7 @@ class GazeService:
         resolved_task_id = str(task_id) if task_id is not None else str(uuid.uuid4())
 
         # 创建任务目录
-        task_dir = os.path.join(self._data_dir, resolved_task_id)
+        task_dir = self._build_task_dir(user_id=user_id, task_id=resolved_task_id, system_time=system_time)
         os.makedirs(task_dir, exist_ok=True)
 
         with self._state_lock:
@@ -274,19 +272,29 @@ class GazeService:
                 "user_id": user_id or "",
                 "task_source": task_source or "",
                 "task_name": task_name or "",
+                "start_trigger": start_trigger or "task_start",
                 "frame_count": 0,
-                "fixation_count": 0,
+                "valid_frames": 0,
+                "in_region_frames": 0,
+                "feedback_count": 0,
             }
             self._task_active = True
-            self._flag = False
             self._reset_out_of_box_state()
 
         # 记录任务开始到 gaze_records.db
         self._enqueue_db(
             "INSERT OR REPLACE INTO gaze_tasks "
-            "(task_id, user_id, task_name, data_dir, start_time_us, status) "
-            "VALUES (?, ?, ?, ?, ?, 'active')",
-            (resolved_task_id, user_id or "", task_name or "", task_dir, system_time),
+            "(task_id, user_id, task_source, task_name, data_dir, start_time_us, start_trigger, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'active')",
+            (
+                resolved_task_id,
+                user_id or "",
+                task_source or "",
+                task_name or "",
+                task_dir,
+                system_time,
+                start_trigger or "task_start",
+            ),
         )
         if normalized_regions:
             self._enqueue_db(
@@ -307,6 +315,7 @@ class GazeService:
         task_source: str = "",
         task_name: str = "",
         system_time: int | None = None,
+        end_trigger: str = "task_end",
     ) -> dict:
         """
         记录目标窗口消失、结束当前任务并写入 summary.json。
@@ -330,10 +339,6 @@ class GazeService:
             raise ValueError("窗口消失时必须提供 task_id 或存在活动任务")
 
         with self._state_lock:
-            if self._task_active and self._flag is True:
-                self._enqueue_fixation_event(resolved_task_id, "fixation_end", system_time)
-
-            self._flag = False
             self._task_active = False
             self._reset_out_of_box_state()
 
@@ -354,7 +359,9 @@ class GazeService:
             )
             task_dir = self._current_task.get("task_dir") if self._current_task else None
             frame_count = self._current_task.get("frame_count", 0) if self._current_task else 0
-            fixation_count = self._current_task.get("fixation_count", 0) if self._current_task else 0
+            valid_frames = self._current_task.get("valid_frames", 0) if self._current_task else 0
+            in_region_frames = self._current_task.get("in_region_frames", 0) if self._current_task else 0
+            feedback_count = self._current_task.get("feedback_count", 0) if self._current_task else 0
             self._current_task = None
 
         # 自动关闭该任务下所有未关闭的目标事件
@@ -366,10 +373,10 @@ class GazeService:
         # 更新任务记录为已完成
         self._enqueue_db(
             "UPDATE gaze_tasks SET end_time_us = ?, duration_ms = ?, "
-            "total_frames = ?, fixation_count = ?, status = 'completed' "
+            "total_frames = ?, valid_frames = ?, in_region_frames = ?, end_trigger = ?, status = 'completed' "
             "WHERE task_id = ?",
             (system_time, (system_time - begin_time) / 1000,
-             frame_count, fixation_count, resolved_task_id),
+             frame_count, valid_frames, in_region_frames, end_trigger or "task_end", resolved_task_id),
         )
 
         # 向写入队列发送 summary sentinel
@@ -379,11 +386,15 @@ class GazeService:
                 "user_id": effective_user_id,
                 "task_source": effective_task_source,
                 "task_name": effective_task_name,
+                "data_dir": task_dir,
                 "start_us": begin_time,
                 "end_us": system_time,
                 "duration_ms": (system_time - begin_time) / 1000,
                 "total_frames": frame_count,
-                "fixation_count": fixation_count,
+                "valid_frames": valid_frames,
+                "in_region_frames": in_region_frames,
+                "feedback_count": feedback_count,
+                "status": "completed",
             }
             self._writer_queue.put({
                 "evt": _EVT_TASK_SUMMARY,
@@ -503,13 +514,17 @@ class GazeService:
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id     TEXT    NOT NULL UNIQUE,
                 user_id     TEXT    DEFAULT '',
+                task_source TEXT    DEFAULT '',
                 task_name   TEXT    DEFAULT '',
                 data_dir    TEXT,
                 start_time_us INTEGER NOT NULL,
                 end_time_us   INTEGER,
+                start_trigger TEXT DEFAULT '',
+                end_trigger TEXT DEFAULT '',
                 duration_ms   REAL,
                 total_frames    INTEGER DEFAULT 0,
-                fixation_count  INTEGER DEFAULT 0,
+                valid_frames    INTEGER DEFAULT 0,
+                in_region_frames INTEGER DEFAULT 0,
                 status      TEXT    DEFAULT 'active',
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -527,7 +542,24 @@ class GazeService:
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (task_id) REFERENCES gaze_tasks(task_id)
             );
+
+            CREATE TABLE IF NOT EXISTS gaze_feedback_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id     TEXT    NOT NULL,
+                event_time_ms INTEGER NOT NULL,
+                reason      TEXT    DEFAULT '',
+                consecutive_false_count INTEGER DEFAULT 0,
+                threshold   INTEGER DEFAULT 0,
+                payload_json TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES gaze_tasks(task_id)
+            );
         """)
+        _ensure_column(conn, "gaze_tasks", "task_source", "TEXT DEFAULT ''")
+        _ensure_column(conn, "gaze_tasks", "start_trigger", "TEXT DEFAULT ''")
+        _ensure_column(conn, "gaze_tasks", "end_trigger", "TEXT DEFAULT ''")
+        _ensure_column(conn, "gaze_tasks", "valid_frames", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "gaze_tasks", "in_region_frames", "INTEGER DEFAULT 0")
 
     # ═══════════════════════════════════════════
     # WebSocket 客户端管理
@@ -591,6 +623,18 @@ class GazeService:
             return (screen_size[0] or 1, screen_size[1] or 1)
         return (1, 1)
 
+    def _build_task_dir(self, user_id: str, task_id: str, system_time: int) -> str:
+        safe_user_id = _safe_path_segment(user_id, default="unknown_user")
+        safe_task_id = _safe_path_segment(task_id, default=str(uuid.uuid4()))
+        date_part = time.strftime("%Y%m%d", time.localtime(system_time / 1_000_000))
+        task_dir = os.path.abspath(
+            os.path.join(self._data_dir, "users", safe_user_id, date_part, safe_task_id)
+        )
+        data_root = os.path.abspath(self._data_dir)
+        if os.path.commonpath([data_root, task_dir]) != data_root:
+            raise ValueError(f"invalid gaze task data path: {task_dir}")
+        return task_dir
+
     def _get_active_task_id(self) -> str | None:
         if self._current_task and isinstance(self._current_task, dict):
             return self._current_task.get("task_id")
@@ -599,30 +643,41 @@ class GazeService:
     def _gaze_data_callback(self, gaze_data: dict):
         """Tobii 实时数据回调——每帧调用一次。"""
         system_time_stamp = int(time.time() * 1_000_000)
-        gaze_point = _get_valid_gaze_point(gaze_data)
+        gaze_point, gaze_valid = _get_gaze_point(gaze_data)
 
         frame_record = {
             "system_time_stamp": system_time_stamp,
             "gaze_point": gaze_point,
+            "valid": gaze_valid,
         }
 
         with self._window_lock:
             self._gaze_window.append(frame_record)
 
         with self._gaze_point_lock:
-            self._latest_gaze_point = list(gaze_point)
-            self._latest_gaze_time = time.time() * 1000
+            self._latest_gaze_point = list(gaze_point) if gaze_valid else None
+            self._latest_gaze_time = time.time() * 1000 if gaze_valid else None
 
         with self._state_lock:
             if not self._task_active or self._current_task is None:
                 return
-            task = self._current_task
+            task = dict(self._current_task)
             task["frame_count"] = task.get("frame_count", 0) + 1
+            self._current_task["frame_count"] = task["frame_count"]
+            if gaze_valid:
+                self._current_task["valid_frames"] = self._current_task.get("valid_frames", 0) + 1
 
-        current_in_box = _point_in_regions(gaze_point, task.get("regions") or task.get("bbox"))
+        regions = task.get("regions") or task.get("bbox") or []
+        region_hits = _region_hits(gaze_point, regions) if gaze_valid else []
+        current_in_region = bool(region_hits)
         should_push_feedback = False
         feedback_task_id = None
         feedback_count = 0
+
+        if current_in_region:
+            with self._state_lock:
+                if self._task_active and self._current_task is not None:
+                    self._current_task["in_region_frames"] = self._current_task.get("in_region_frames", 0) + 1
 
         # 向文件写入队列发送帧数据
         self._writer_queue.put({
@@ -630,8 +685,12 @@ class GazeService:
             "task_dir": task["task_dir"],
             "data": {
                 "ts_us": system_time_stamp,
-                "gaze": list(gaze_point),
-                "in_box": current_in_box,
+                "task_id": task["task_id"],
+                "user_id": task.get("user_id", ""),
+                "gaze": list(gaze_point) if gaze_valid else None,
+                "valid": gaze_valid,
+                "in_region": current_in_region,
+                "region_hits": region_hits,
             },
         })
 
@@ -639,7 +698,16 @@ class GazeService:
             if not self._task_active or self._current_task is None:
                 return
 
-            if current_in_box is False:
+            if not gaze_valid:
+                if self._progress_logs_enabled and self._consecutive_out_of_box_false > 0:
+                    self._log_info(
+                        "注视点无效，清除离框计数: "
+                        f"task_id={self._current_task.get('task_id')}, "
+                        f"cleared_count={self._consecutive_out_of_box_false}"
+                    )
+                self._consecutive_out_of_box_false = 0
+                self._last_out_of_box_log_count = 0
+            elif current_in_region is False:
                 self._consecutive_out_of_box_false += 1
                 current_count = self._consecutive_out_of_box_false
                 log_step = max(1, OUT_OF_BOX_FALSE_THRESHOLD // 4)
@@ -674,44 +742,11 @@ class GazeService:
                 self._consecutive_out_of_box_false = 0
                 self._last_out_of_box_log_count = 0
 
-            if self._flag is False and current_in_box is True:
-                self._flag = True
-                self._current_task["fixation_count"] = self._current_task.get("fixation_count", 0) + 1
-                self._enqueue_fixation_event(task["task_id"], "fixation_start", system_time_stamp)
-            elif self._flag is True and current_in_box is False:
-                self._flag = False
-                self._enqueue_fixation_event(task["task_id"], "fixation_end", system_time_stamp)
-
         if should_push_feedback:
             self._push_attention_feedback(feedback_task_id, feedback_count)
 
-    def _enqueue_fixation_event(self, task_id: str, event_type: str, ts_us: int):
-        """将注视事件放入写入队列。
-        
-        此方法在已持有 _state_lock 的代码路径中调用，Queue 操作本身是线程安全的，
-        无需再次加锁。task_dir 由 task_id 和 data_dir 确定性计算得到。
-        """
-        task_dir = os.path.join(self._data_dir, task_id)
-        self._writer_queue.put({
-            "evt": _EVT_FIXATION,
-            "task_dir": task_dir,
-            "data": {
-                "ts_us": ts_us,
-                "event": event_type,
-            },
-        })
-        print(f"[GazeService] fixation 事件: task_id={task_id}, type={event_type}")
-
     def _push_attention_feedback(self, task_id: str, consecutive_count: int):
         """从 gaze 回调线程安全地触发前端注意力反馈广播。"""
-        if self._ws_event_loop is None:
-            self._log_info(
-                "注意力反馈未广播: WS事件循环未设置, "
-                f"task_id={task_id}, consecutive_count={consecutive_count}"
-            )
-            return
-        with self._clients_lock:
-            client_count = len(self._connected_clients)
         payload = {
             "ok": True,
             "type": "attention_feedback",
@@ -723,6 +758,50 @@ class GazeService:
             "task_id": task_id,
             "server_time_ms": int(time.time() * 1000),
         }
+
+        user_id = ""
+        with self._state_lock:
+            if (
+                self._current_task
+                and isinstance(self._current_task, dict)
+                and self._current_task.get("task_id") == str(task_id)
+            ):
+                user_id = self._current_task.get("user_id", "")
+                self._current_task["feedback_count"] = (
+                    self._current_task.get("feedback_count", 0) + 1
+                )
+
+        feedback_record = {
+            "event_time_ms": payload["server_time_ms"],
+            "task_id": task_id,
+            "user_id": user_id,
+            "reason": payload["reason"],
+            "consecutive_false_count": consecutive_count,
+            "threshold": OUT_OF_BOX_FALSE_THRESHOLD,
+            "payload": payload,
+        }
+        self._enqueue_db(
+            "INSERT INTO gaze_feedback_events "
+            "(task_id, event_time_ms, reason, consecutive_false_count, threshold, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                str(task_id),
+                payload["server_time_ms"],
+                payload["reason"],
+                int(consecutive_count),
+                int(OUT_OF_BOX_FALSE_THRESHOLD),
+                json.dumps(feedback_record, ensure_ascii=False),
+            ),
+        )
+
+        if self._ws_event_loop is None:
+            self._log_info(
+                "注意力反馈未广播: WS事件循环未设置, "
+                f"task_id={task_id}, consecutive_count={consecutive_count}"
+            )
+            return
+        with self._clients_lock:
+            client_count = len(self._connected_clients)
         self._log_info(f"发送注意力反馈: clients={client_count}, payload={payload}")
         asyncio.run_coroutine_threadsafe(self.broadcast(payload), self._ws_event_loop)
 
@@ -734,7 +813,7 @@ class GazeService:
         """
         后台 daemon 线程：持续消费写入队列，将数据路由到对应文件和数据库。
 
-        每个 task_dir 保持一对打开的文件句柄（raw_gaze + fixation），
+        每个 task_dir 保持 raw_gaze 文件句柄。
         收到 task_summary 事件时写 summary.json 并关闭对应句柄。
         收到 db_exec 事件时执行 SQL 写入 gaze_records.db。
         收到 stop_writer sentinel 时退出。
@@ -745,7 +824,7 @@ class GazeService:
         db_conn.execute("PRAGMA journal_mode=WAL")
         self._init_gaze_db(db_conn)
 
-        # 已打开的文件句柄：{task_dir: {"gaze": file, "fixation": file}}
+        # 已打开的文件句柄：{task_dir: {"gaze": file}}
         open_handles: dict[str, dict] = {}
 
         def _get_handles(task_dir: str) -> dict:
@@ -754,9 +833,6 @@ class GazeService:
                 open_handles[task_dir] = {
                     "gaze": open(
                         os.path.join(task_dir, "raw_gaze.jsonl"), "a", encoding="utf-8"
-                    ),
-                    "fixation": open(
-                        os.path.join(task_dir, "fixation.jsonl"), "a", encoding="utf-8"
                     ),
                 }
             return open_handles[task_dir]
@@ -808,11 +884,6 @@ class GazeService:
                     handles = _get_handles(task_dir)
                     handles["gaze"].write(json.dumps(data, ensure_ascii=False) + "\n")
 
-                elif evt == _EVT_FIXATION:
-                    handles = _get_handles(task_dir)
-                    handles["fixation"].write(json.dumps(data, ensure_ascii=False) + "\n")
-                    handles["fixation"].flush()
-
                 elif evt == _EVT_TASK_SUMMARY:
                     # flush & close 之前打开的帧文件句柄，再写 summary
                     _close_handles(task_dir)
@@ -842,30 +913,47 @@ class GazeService:
 # 纯函数工具（无状态，也可被外部直接导入）
 # ═══════════════════════════════════════════════
 
-def _get_valid_gaze_point(gaze_data: dict) -> tuple:
+def _safe_path_segment(value, default: str = "unknown") -> str:
+    text = str(value or "").strip()
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in text)
+    cleaned = cleaned.strip(" .")
+    return (cleaned or default)[:120]
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def _get_gaze_point(gaze_data: dict) -> tuple[tuple | None, bool]:
     """从 Tobii 帧数据提取有效注视点（优先双眼均值，回退单眼）。"""
     left_valid = gaze_data.get("left_gaze_point_validity") == 1
     right_valid = gaze_data.get("right_gaze_point_validity") == 1
     left_pt = gaze_data.get("left_gaze_point_on_display_area")
     right_pt = gaze_data.get("right_gaze_point_on_display_area")
 
-    if left_valid and right_valid:
-        lx, ly = left_pt
-        rx, ry = right_pt
-        if not any(math.isnan(v) for v in (lx, ly, rx, ry)):
-            return ((lx + rx) / 2, (ly + ry) / 2)
+    if left_valid and right_valid and _is_point_pair(left_pt) and _is_point_pair(right_pt):
+        lx, ly = _as_float(left_pt[0]), _as_float(left_pt[1])
+        rx, ry = _as_float(right_pt[0]), _as_float(right_pt[1])
+        if None not in (lx, ly, rx, ry):
+            return ((lx + rx) / 2, (ly + ry) / 2), True
 
-    if left_valid:
-        lx, ly = left_pt
-        if not (math.isnan(lx) or math.isnan(ly)):
-            return (lx, ly)
+    if left_valid and _is_point_pair(left_pt):
+        lx, ly = _as_float(left_pt[0]), _as_float(left_pt[1])
+        if None not in (lx, ly):
+            return (lx, ly), True
 
-    if right_valid:
-        rx, ry = right_pt
-        if not (math.isnan(rx) or math.isnan(ry)):
-            return (rx, ry)
+    if right_valid and _is_point_pair(right_pt):
+        rx, ry = _as_float(right_pt[0]), _as_float(right_pt[1])
+        if None not in (rx, ry):
+            return (rx, ry), True
 
-    return (0.0, 0.0)
+    return None, False
+
+
+def _is_point_pair(value) -> bool:
+    return isinstance(value, (list, tuple)) and len(value) >= 2
 
 
 def _normalize_bboxes(
@@ -930,6 +1018,8 @@ def _normalize_regions(
             left, right = min(left, right), max(left, right)
             top, bottom = min(top, bottom), max(top, bottom)
             normalized = {"shape": "rect", "left": left, "top": top, "right": right, "bottom": bottom}
+        if region.get("id") is not None:
+            normalized["id"] = str(region.get("id"))
         if clip:
             normalized = _clip_region(normalized)
         result.append(normalized)
@@ -991,10 +1081,16 @@ def _clip_region(region: dict) -> dict:
 
 
 def _point_in_regions(point: tuple, regions: list) -> bool:
+    return bool(_region_hits(point, regions))
+
+
+def _region_hits(point: tuple | None, regions: list) -> list:
     if point is None or not regions:
-        return False
+        return []
     x, y = point
-    for region in regions:
+    hits = []
+    for index, region in enumerate(regions):
+        hit = False
         if isinstance(region, dict):
             shape = str(region.get("shape") or "rect").lower()
             if shape == "ellipse":
@@ -1002,15 +1098,27 @@ def _point_in_regions(point: tuple, regions: list) -> bool:
                 cy = region.get("cy")
                 rx = region.get("rx")
                 ry = region.get("ry")
-                if rx and ry and ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1:
-                    return True
-            elif region.get("left") <= x <= region.get("right") and region.get("top") <= y <= region.get("bottom"):
-                return True
+                if cx is None or cy is None or not rx or not ry:
+                    continue
+                hit = bool(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1)
+            else:
+                left = region.get("left")
+                top = region.get("top")
+                right = region.get("right")
+                bottom = region.get("bottom")
+                if None in (left, top, right, bottom):
+                    continue
+                hit = bool(
+                    left <= x <= right
+                    and top <= y <= bottom
+                )
+            if hit:
+                hits.append(str(region.get("id") or f"region_{index + 1}"))
         else:
             x1, y1, x2, y2 = region
             if x1 <= x <= x2 and y1 <= y <= y2:
-                return True
-    return False
+                hits.append(f"region_{index + 1}")
+    return hits
 
 
 def _point_in_bboxes(point: tuple, bboxes: list) -> bool:
