@@ -562,6 +562,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     sendMessage?.({
       type: 'task_result_confirmed',
       task_type: 'RADAR_TARGETING',
+      task_id: radarStore.taskId,
       timestamp: Date.now(),
     });
 

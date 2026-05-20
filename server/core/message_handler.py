@@ -24,6 +24,7 @@ class MessageHandler:
     def __init__(self):
         self.current_session = {
             'task_id': None,
+            'task_started_at_ms': None,
             'stage': 'init',
             'target_elevation': None,
             'operations': []
@@ -262,6 +263,7 @@ class MessageHandler:
             db_manager.clear_task_operations(existing_task_id)
         task_id = existing_task_id or generate_task_id()
         self.current_session['task_id'] = task_id
+        self.current_session['task_started_at_ms'] = int(time.time() * 1000)
         
         # 记录操作
         should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
@@ -462,6 +464,39 @@ class MessageHandler:
     async def _handle_task_result_confirmed(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """处理任务结果确认：传感器任务按 IFF，威胁排序按查看结果，才视为任务结束。"""
         task_type = message.get('task_type')
+        current_task_id = self.current_session.get('task_id')
+        message_task_id = message.get('task_id')
+        if message_task_id is not None and current_task_id is not None and str(message_task_id) != str(current_task_id):
+            self.logger.warning(
+                "[REMOTE_TASK_COUNT] ignore stale task_result_confirmed task_type=%s "
+                "user=%s message_task_id=%s current_task_id=%s timestamp=%s",
+                task_type or "",
+                message.get('user_id') or self.current_session.get('user_id', ''),
+                message_task_id,
+                current_task_id,
+                message.get('timestamp'),
+            )
+            return []
+
+        if message_task_id is None:
+            started_at = self.current_session.get('task_started_at_ms')
+            if started_at:
+                try:
+                    age_ms = int(time.time() * 1000) - int(started_at)
+                except (TypeError, ValueError):
+                    age_ms = None
+                if age_ms is not None and age_ms < 1000:
+                    self.logger.warning(
+                        "[REMOTE_TASK_COUNT] ignore immediate task_result_confirmed without task_id "
+                        "task_type=%s user=%s current_task_id=%s age_ms=%s timestamp=%s",
+                        task_type or "",
+                        message.get('user_id') or self.current_session.get('user_id', ''),
+                        current_task_id,
+                        age_ms,
+                        message.get('timestamp'),
+                    )
+                    return []
+
         if task_type == 'RADAR_TARGETING':
             task_manager = session_state.get('task_manager')
         elif task_type == 'SA_THREAT_RESPONSE':
@@ -485,14 +520,14 @@ class MessageHandler:
             "结束",
             task_type or "",
             user_id,
-            self.current_session.get('task_id'),
+            current_task_id,
             repetition_info,
             event_owner=event_owner,
         )
         if task_manager:
             task_manager.mark_task_completed()
 
-        self._gaze_stop(self.current_session.get('task_id'))
+        self._gaze_stop(current_task_id)
         return []
     
     async def _handle_record_operation(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -618,6 +653,7 @@ class MessageHandler:
             db_manager.clear_task_operations(existing_task_id)
         task_id = existing_task_id or generate_task_id()
         self.current_session['task_id'] = task_id
+        self.current_session['task_started_at_ms'] = int(time.time() * 1000)
         self.current_session[f'{task_type}_scenario'] = current_scenario
 
         # 启动眼动追踪

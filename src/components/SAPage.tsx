@@ -452,6 +452,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       sendMessage?.({
         type: 'task_result_confirmed',
         task_type: 'SA_THREAT_RESPONSE',
+        task_id: radarStore.taskId,
         timestamp: Date.now(),
         user_id: userId,
       });
