@@ -129,6 +129,8 @@ class MessageHandler:
                 return await self._handle_threat_clicked(message, session_state, client_event_owner)
             elif message_type == 'task_result_confirmed':
                 return await self._handle_task_result_confirmed(message, session_state)
+            elif message_type == 'task_exit_request':
+                return await self._handle_task_exit_request(message)
             elif message_type == 'record_operation':
                 return await self._handle_record_operation(message, session_state, client_event_owner)
             elif message_type == 'record_bulk_operations':
@@ -460,6 +462,18 @@ class MessageHandler:
             print("练习模式，跳过 threat_clicked 数据库记录。")
         
         return []
+
+    async def _handle_task_exit_request(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Notify external hosts, such as UE Web Engine containers, to close this task UI."""
+        timestamp = message.get('timestamp', int(time.time() * 1000))
+        return [{
+            'type': 'task_exit_requested',
+            'reason': message.get('reason', 'task_completed'),
+            'task_type': message.get('task_type'),
+            'task_id': message.get('task_id') or self.current_session.get('task_id'),
+            'user_id': message.get('user_id') or self.current_session.get('user_id', ''),
+            'timestamp': timestamp,
+        }]
 
     async def _handle_task_result_confirmed(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """处理任务结果确认：传感器任务按 IFF，威胁排序按查看结果，才视为任务结束。"""

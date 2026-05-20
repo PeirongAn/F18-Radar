@@ -272,6 +272,12 @@ class WebSocketServer:
                     # 使用原有的消息处理器处理非操纵杆消息（延迟导入避免循环依赖）
                     from core import message_handler
                     result = await message_handler.handle_client_message(message, session_state, websocket)
+
+                    if message_type == 'task_exit_request' and isinstance(result, list):
+                        for msg in result:
+                            if isinstance(msg, dict) and msg.get('type') == 'task_exit_requested':
+                                await self.broadcast_to_clients_except(msg, client_id)
+                        continue
                     
                     # 检查返回结果类型
                     if isinstance(result, list):

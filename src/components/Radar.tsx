@@ -14,6 +14,13 @@ import audioManager from '../managers/AudioManager';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
+const DEFAULT_RANGE_INDEX = 3;
+const DEFAULT_SCAN_MODE: ScanModeType = {
+  name: 'normal',
+  scanAngle: 30,
+  scanFraction: 1.0,
+  centerOffset: 0,
+};
 
 // 定义传递给App.tsx中onTargetSelect回调的参数类型
 interface TargetSelectParams {
@@ -22,6 +29,7 @@ interface TargetSelectParams {
   iffMode?: boolean; // AI可能不直接处理IFF模式，但类型需匹配
   externalTargetsTimestamp?: number | null; // AI获取数据的方式不同，可能为null
   event_owner?: 'AI' | 'manual';
+  action?: 'select' | 'reset';
 }
 
 export interface RadarProps {
@@ -35,6 +43,7 @@ export interface RadarProps {
   onNavigateToSA?: () => void;
   onTaskCompleted?: () => void;
   suppressJoystickActions?: boolean;
+  userId?: string;
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -48,6 +57,7 @@ const Radar: React.FC<RadarProps> = (({
   onNavigateToSA,
   onTaskCompleted,
   suppressJoystickActions = false,
+  userId,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
   const { 
@@ -81,12 +91,7 @@ const Radar: React.FC<RadarProps> = (({
   const [missionAntennaReady, setMissionAntennaReady] = useState(false);
 
   // 定义扫描模式状态
-  const [scanMode, setScanMode] = useState<ScanModeType>({
-    name: 'normal',
-    scanAngle: 30,
-    scanFraction: 1.0,
-    centerOffset: 0 // 设置扫描中心偏移量，0表示居中
-  });
+  const [scanMode, setScanMode] = useState<ScanModeType>(DEFAULT_SCAN_MODE);
 
   // 添加显示控制状态
   const [showVectorHUD, setShowVectorHUD] = useState(false);
@@ -96,7 +101,8 @@ const Radar: React.FC<RadarProps> = (({
   const [unknownTargetCount, setUnknownTargetCount] = useState(5); // 默认显示全部5个未知目标
   
   // 添加雷达范围索引状态
-  const [rangeIndex, setRangeIndex] = useState(3); // 默认为20海里(索引1)
+  const [rangeIndex, setRangeIndex] = useState(DEFAULT_RANGE_INDEX); // 默认扫描范围
+  const [scanLineResetToken, setScanLineResetToken] = useState(0);
   
   // 添加BR计数状态
   const [maxScanCount, setMaxScanCount] = useState(1); // 默认BR计数上限为1
@@ -121,6 +127,7 @@ const Radar: React.FC<RadarProps> = (({
   // Ref for AI target selection timeout - type changed to number for browser environment
   const aiTargetSelectionTimeoutRef = useRef<number | null>(null);
   const aiTdcMoveTimeoutRef = useRef<number | null>(null); // Ref for TDC movement timeout
+  const previousUserIdRef = useRef<string | undefined>(userId);
 
   const radarConfig = {
     backgroundColor: '#000000',
@@ -202,15 +209,10 @@ const Radar: React.FC<RadarProps> = (({
 
    
     // Reset local state in Radar.tsx to initial values
-    setScanMode({
-      name: 'normal',
-      scanAngle: 30,
-      scanFraction: 1.0,
-      centerOffset: 0,
-    });
+    setScanMode(DEFAULT_SCAN_MODE);
     setShowVectorHUD(false);
     setShowUnknownTargets(true);
-    setRangeIndex(3); // 20nm
+    setRangeIndex(DEFAULT_RANGE_INDEX);
     setMaxScanCount(1);
     setDisplayMode('AUTO');
     setIsSilent(false);
@@ -698,6 +700,19 @@ const Radar: React.FC<RadarProps> = (({
   }, [rangeIndex, scanMode, isSilent, onRadarParamsUpdate]);
 
   useEffect(() => {
+    const previousUserId = previousUserIdRef.current;
+    if (previousUserId && userId && previousUserId !== userId) {
+      setScanMode(DEFAULT_SCAN_MODE);
+      setRangeIndex(DEFAULT_RANGE_INDEX);
+      setTdcPosition({ x: width / 2, y: height / 2 });
+      setScanLineResetToken(prev => prev + 1);
+      onRadarParamsUpdate?.(RADAR_RANGES[DEFAULT_RANGE_INDEX], DEFAULT_SCAN_MODE.scanAngle);
+      console.log(`[Radar] Scan line reset for user_id change: ${previousUserId} -> ${userId}`);
+    }
+    previousUserIdRef.current = userId;
+  }, [userId, onRadarParamsUpdate, width, height]);
+
+  useEffect(() => {
     if (
       agentStore.isAIActive ||
       !isStarted ||
@@ -1063,6 +1078,7 @@ const Radar: React.FC<RadarProps> = (({
             onModeDisplayChange={setDisplayMode} // 传递显示模式变更回调
             isSilent={isSilent} // 传递雷达静默状态
             isStarted={isStarted} // 传递系统启动状态
+            userId={userId}
             sendMessage={sendMessage} // 传递发送消息函数
             connected={connected}
             radarData={radarData}
@@ -1075,6 +1091,7 @@ const Radar: React.FC<RadarProps> = (({
             onClearMessages={onClearMessages}
             cognitiveLoad={cognitiveLoad}
             suppressJoystickActions={suppressJoystickActions}
+            scanLineResetToken={scanLineResetToken}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}

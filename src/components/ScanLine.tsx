@@ -16,6 +16,7 @@ interface ScanLineProps {
   scanControl?: ScanControlParams; // 扫描控制参数
   onScanCycleComplete?: () => void; // 添加扫描完成一次循环的回调函数
   isStarted?: boolean; // 添加系统是否已启动的标志
+  resetToken?: number;
 }
 
 const ScanLine: React.FC<ScanLineProps> = ({ 
@@ -29,7 +30,8 @@ const ScanLine: React.FC<ScanLineProps> = ({
     useSineMapping: true 
   }, // 默认扫描控制参数
   onScanCycleComplete,
-  isStarted = false // 默认未启动
+  isStarted = false, // 默认未启动
+  resetToken = 0
 }) => {
   // 设置基准扫描速度（每毫秒移动的像素数）
   const BASE_SPEED = 0.1; // 像素/毫秒
@@ -201,6 +203,19 @@ const ScanLine: React.FC<ScanLineProps> = ({
     animRef.current.position = rangeRef.current.start;
     setDisplayPosition(rangeRef.current.start);
   }, [updateScanRange]);
+
+  useEffect(() => {
+    stopAnimation();
+    updateScanRange();
+    animRef.current.position = rangeRef.current.start;
+    animRef.current.isForward = true;
+    animRef.current.lastTime = 0;
+    animRef.current.cycleCompleted = false;
+    setDisplayPosition(rangeRef.current.start);
+    startAnimation();
+
+    return () => stopAnimation();
+  }, [resetToken, updateScanRange, startAnimation, stopAnimation]);
   
   // 监听扫描角度变化
   useEffect(() => {

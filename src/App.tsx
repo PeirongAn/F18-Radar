@@ -18,6 +18,7 @@ interface TargetSelectParams {
   iffMode?: boolean;
   externalTargetsTimestamp?: number | null;
   event_owner?: 'AI' | 'manual';
+  action?: 'select' | 'reset';
 }
 
 type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
@@ -92,6 +93,7 @@ const App: React.FC = observer(() => {
   const [showGazePoint, setShowGazePoint] = useState<boolean>(false);
   const [gazePointDebug, setGazePointDebug] = useState<GazePointDebug | null>(null);
   const [useJoystick, setUseJoystick] = useState<boolean>(false);
+  const currentUserIdRef = useRef<string>('');
   const joystickInitedRef = useRef<boolean>(false);
   const lastStartRequestRef = useRef<{ key: string; timestamp: number } | null>(null);
   const [radarRange, setRadarRange] = useState<number>(20);
@@ -147,6 +149,7 @@ const App: React.FC = observer(() => {
   const [messages, setMessages] = useState<LogMessage[]>([]);
   const [completionNoticeTask, setCompletionNoticeTask] = useState<TaskType | null>(null);
   const previousCompletionNoticeButton2Ref = useRef(false);
+  const completionExitSentRef = useRef(false);
   const messageIdRef = useRef(0);
   const suppressRadarJoystickActions = !!completionNoticeTask || isQuestionnaireVisible;
 
@@ -163,6 +166,7 @@ const App: React.FC = observer(() => {
   }, []);
 
   useEffect(() => {
+    currentUserIdRef.current = userId;
     radarStore.setUserId(userId);
   }, [userId, radarStore]);
 
@@ -201,8 +205,25 @@ const App: React.FC = observer(() => {
     const key = `${taskType}::NO_QUESTIONNAIRE_COMPLETED`;
     if (shownCompletionNoticeRef.current.has(key)) return;
     shownCompletionNoticeRef.current.add(key);
+    completionExitSentRef.current = false;
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire]);
+
+  const handleCompletionNoticeConfirm = useCallback(() => {
+    const taskType = completionNoticeTask;
+    if (taskType && !completionExitSentRef.current) {
+      completionExitSentRef.current = true;
+      sendMessage?.({
+        type: 'task_exit_request',
+        reason: 'task_completed',
+        task_type: taskType,
+        task_id: taskId,
+        user_id: userId,
+        timestamp: Date.now(),
+      });
+    }
+    setCompletionNoticeTask(null);
+  }, [completionNoticeTask, sendMessage, taskId, userId]);
 
   /* ── 监听后台指令切换显示模式 ─────────────────────
      后台可发送以下消息驱动切换：
@@ -254,10 +275,10 @@ const App: React.FC = observer(() => {
 
   useEffect(() => {
     if (completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {
-      setCompletionNoticeTask(null);
+      handleCompletionNoticeConfirm();
     }
     previousCompletionNoticeButton2Ref.current = button2;
-  }, [completionNoticeTask, joystickEnabled, button2]);
+  }, [completionNoticeTask, joystickEnabled, button2, handleCompletionNoticeConfirm]);
 
   /* ── 监听 SA 临机事件 ─────────────────────────── */
   useEffect(() => {
@@ -295,17 +316,18 @@ const App: React.FC = observer(() => {
     } else {
       radarStore.setLockScreenX(undefined);
     }
-    if (params.targetId) {
+    const action = params.action ?? 'select';
+    if (params.targetId || action !== 'select') {
       const payload: Record<string, unknown> = {
         type: 'target_selected',
         timestamp: Date.now(),
-        target_id: params.targetId,
-        action: 'select',
+        target_id: params.targetId ?? null,
+        action,
         event_owner: params.event_owner,
       };
       if (params.iffMode !== undefined) payload.iff_mode = params.iffMode;
       if (params.externalTargetsTimestamp != null) payload.receive_timestamp = params.externalTargetsTimestamp;
-      if (!isManualRepeatOfAITarget) {
+      if (!isManualRepeatOfAITarget || action !== 'select') {
         sendMessage?.(payload);
       }
     }
@@ -327,6 +349,22 @@ const App: React.FC = observer(() => {
       return;
     }
     lastStartRequestRef.current = { key: startKey, timestamp: now };
+
+    const currentUserId = currentUserIdRef.current;
+    if (currentUserId && currentUserId !== id) {
+      window.dispatchEvent(new Event('resetIFF'));
+      shownQuestionnairesRef.current.clear();
+      shownCompletionNoticeRef.current.clear();
+      questionnaireEligibilityRef.current = {
+        RADAR_TARGETING: null,
+        SA_THREAT_RESPONSE: null,
+        PLATFORM_CONTROL: null,
+        WEAPON_FIRING: null,
+      };
+      aiSelectedTargetRef.current = undefined;
+      completionExitSentRef.current = false;
+      setCompletionNoticeTask(null);
+    }
 
     setUserId(id);
     setIncludeAI(withAI);
@@ -743,6 +781,7 @@ const App: React.FC = observer(() => {
               onClearMessages={clearMessages}
               onTaskCompleted={handleRadarTaskCompleted}
               suppressJoystickActions={suppressRadarJoystickActions}
+              userId={userId}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
@@ -842,7 +881,7 @@ const App: React.FC = observer(() => {
               本次任务已结束
             </p>
             <button
-              onClick={() => setCompletionNoticeTask(null)}
+              onClick={handleCompletionNoticeConfirm}
               style={{
                 fontFamily: "'Share Tech Mono', 'SimHei', 'Microsoft YaHei', monospace",
                 fontSize: '13px',

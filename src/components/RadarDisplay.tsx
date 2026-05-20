@@ -39,6 +39,7 @@ interface TargetSelectParams {
   lockX?: number;
   iffMode?: boolean;
   externalTargetsTimestamp?: number | null;
+  action?: 'select' | 'reset';
 }
 
 // 定义组件属性接口
@@ -66,6 +67,7 @@ export interface RadarDisplayProps {
   onModeDisplayChange?: (mode: 'AUTO' | 'HI' | 'MED') => void; // 添加显示模式变更回调
   isSilent?: boolean; // 添加雷达静默模式属性
   isStarted?: boolean; // 添加系统启动状态属性
+  userId?: string;
   sendMessage: (message: any) => void; // 添加发送消息函数
   resetIFF?: React.MutableRefObject<() => void>; // 添加用于重置IFF模式的ref
   connected: boolean;
@@ -78,6 +80,7 @@ export interface RadarDisplayProps {
   onClearMessages?: () => void; // 添加清空日志功能
   cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级：低/中/高
   suppressJoystickActions?: boolean;
+  scanLineResetToken?: number;
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -98,6 +101,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   onModeDisplayChange, // 显示模式变更回调
   isSilent = false, // 默认不处于静默模式
   isStarted = false, // 默认未启动状态
+  userId,
   sendMessage, // 传递发送消息函数
   resetIFF,
   connected,
@@ -109,7 +113,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   onAddMessage,
   onClearMessages,
   cognitiveLoad = 'low',
-  suppressJoystickActions = false
+  suppressJoystickActions = false,
+  scanLineResetToken = 0
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -161,6 +166,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const previousButton1Ref = React.useRef(false);
   const previousButton2Ref = React.useRef(false);
   const previousButton7Ref = React.useRef(false);
+  const previousUserIdRef = React.useRef<string | undefined>(userId);
   const previousSubYRef = React.useRef<number>(0);
   
   // 摇杆控制天线高度相关状态
@@ -170,15 +176,41 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const lastButton7TriggerTime = React.useRef(0);
   const button7DebounceDelay = 300; // 300ms防抖延迟
   
+  const resetIffState = React.useCallback((reason: string, notifyReset: boolean = true) => {
+    const hadTdcConfirmLine = !!radarStore.lockedTargetId || radarStore.lockScreenX !== undefined || lockedTdcPosition !== null;
+    setIffMode(false);
+    setShowMissionConfirm(false);
+    setMissionCanComplete(false);
+    setMissionResultMessage('');
+    setLockedTdcPosition(null);
+    setLockedAntennaElevation(null);
+    onTargetSelect?.({
+      targetId: undefined,
+      lockX: undefined,
+      action: notifyReset && hadTdcConfirmLine ? 'reset' : undefined,
+    });
+    console.log(`[RadarDisplay] IFF state reset: ${reason}`);
+  }, [onTargetSelect, radarStore.lockedTargetId, radarStore.lockScreenX, lockedTdcPosition]);
+
   // 将重置函数暴露给父组件
   React.useEffect(() => {
     if (resetIFF) {
       resetIFF.current = () => {
-        setIffMode(false);
-        console.log('IFF mode has been reset via ref.');
+        resetIffState('reset ref');
       };
     }
-  }, [resetIFF]);
+  }, [resetIFF, resetIffState]);
+
+  React.useEffect(() => {
+    const previousUserId = previousUserIdRef.current;
+    if (previousUserId && userId && previousUserId !== userId) {
+      resetIffState(`user_id changed from ${previousUserId} to ${userId}`, false);
+      previousButton1Ref.current = button1;
+      previousButton2Ref.current = button2;
+      previousButton7Ref.current = button7;
+    }
+    previousUserIdRef.current = userId;
+  }, [userId, resetIffState, button1, button2, button7]);
   
   // 计算显示区域中心
   const centerX = (framePositions.startX + framePositions.endX) / 2;
@@ -723,7 +755,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   React.useEffect(() => {
     const handleResetIFF = () => {
       console.log('RadarDisplay - 收到重置IFF事件');
-      setIffMode(false);
+      resetIffState('resetIFF event');
       console.log('RadarDisplay - IFF模式已重置');
     };
 
@@ -732,7 +764,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     return () => {
       window.removeEventListener('resetIFF', handleResetIFF);
     };
-  }, []);
+  }, [resetIffState]);
 
   // 处理button2(IFF)（上升沿检测，直接调用handleIffButtonClick）
   // 弹窗显示时优先触发确认，否则触发IFF
@@ -783,6 +815,10 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 添加扫描计数状态
   const [scanCount, setScanCount] = useState(0);
+
+  React.useEffect(() => {
+    setScanCount(0);
+  }, [scanLineResetToken]);
   
   // 处理扫描完成一次循环
   const handleScanCycleComplete = useCallback(() => {
@@ -905,6 +941,7 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               scanControl={scanControl}
               onScanCycleComplete={handleScanCycleComplete}
               isStarted={isStarted}
+              resetToken={scanLineResetToken}
             />
           )}
           
