@@ -74,6 +74,7 @@ interface QuestionnaireModalProps {
   questionnaireApiUrl: string;
   sendMessage?: (message: any) => void;
   onSubmit?: (data: QuestionnaireSubmitData) => void;
+  onVisibilityChange?: (visible: boolean) => void;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -156,6 +157,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       questionnaireApiUrl,
       sendMessage,
       onSubmit,
+      onVisibilityChange,
     },
     ref,
   ) => {
@@ -171,6 +173,10 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     // Track which task_ids already triggered popup (server-driven via show_questionnaire)
     const triggeredRef = useRef<Set<string>>(new Set());
     const lastInfoRef = useRef<Partial<Record<TaskType, RepetitionInfo>>>({});
+
+    useEffect(() => {
+      onVisibilityChange?.(isVisible);
+    }, [isVisible, onVisibilityChange]);
 
     /* ── Fetch questionnaire config ── */
     useEffect(() => {

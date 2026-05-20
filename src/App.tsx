@@ -122,6 +122,7 @@ const App: React.FC = observer(() => {
   const shownQuestionnairesRef = useRef<Set<string>>(new Set());
   const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
+  const [isQuestionnaireVisible, setIsQuestionnaireVisible] = useState(false);
 
   const { radarStore } = useStore();
   const { antennaAdjustmentRequired, targetAntennaElevation } = radarStore;
@@ -139,11 +140,15 @@ const App: React.FC = observer(() => {
     platformTaskConfig,
     platformAutoStart,
     lastMessage,
+    joystickEnabled,
+    button2,
   } = useRadarData();
 
   const [messages, setMessages] = useState<LogMessage[]>([]);
   const [completionNoticeTask, setCompletionNoticeTask] = useState<TaskType | null>(null);
+  const previousCompletionNoticeButton2Ref = useRef(false);
   const messageIdRef = useRef(0);
+  const suppressRadarJoystickActions = !!completionNoticeTask || isQuestionnaireVisible;
 
   const addMessage = useCallback((type: MessageType, content: string) => {
     setMessages(prev => [
@@ -246,6 +251,13 @@ const App: React.FC = observer(() => {
       showCompletionNoticeForTask('SA_THREAT_RESPONSE', source);
     }
   }, [repetitionInfos.RADAR_TARGETING, repetitionInfos.SA_THREAT_RESPONSE, lastMessage, showQuestionnaireForTask, showCompletionNoticeForTask]);
+
+  useEffect(() => {
+    if (completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {
+      setCompletionNoticeTask(null);
+    }
+    previousCompletionNoticeButton2Ref.current = button2;
+  }, [completionNoticeTask, joystickEnabled, button2]);
 
   /* ── 监听 SA 临机事件 ─────────────────────────── */
   useEffect(() => {
@@ -730,6 +742,7 @@ const App: React.FC = observer(() => {
               onAddMessage={addMessage}
               onClearMessages={clearMessages}
               onTaskCompleted={handleRadarTaskCompleted}
+              suppressJoystickActions={suppressRadarJoystickActions}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', width: '100%' }}>
@@ -865,6 +878,7 @@ const App: React.FC = observer(() => {
             const taskLabels: Record<string, string> = { RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务', PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射' };
             addMessage('system', `问卷已提交 · ${taskLabels[data.taskType] ?? data.taskType} · 第 ${data.repetitionCurrent} 次`);
           }}
+          onVisibilityChange={setIsQuestionnaireVisible}
         />
       )}
     </div>

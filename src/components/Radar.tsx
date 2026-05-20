@@ -34,6 +34,7 @@ export interface RadarProps {
   onClearMessages?: () => void; // 添加清空日志功能
   onNavigateToSA?: () => void;
   onTaskCompleted?: () => void;
+  suppressJoystickActions?: boolean;
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -46,6 +47,7 @@ const Radar: React.FC<RadarProps> = (({
   onClearMessages,
   onNavigateToSA,
   onTaskCompleted,
+  suppressJoystickActions = false,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
   const { 
@@ -1072,6 +1074,7 @@ const Radar: React.FC<RadarProps> = (({
             onAddMessage={onAddMessage}
             onClearMessages={onClearMessages}
             cognitiveLoad={cognitiveLoad}
+            suppressJoystickActions={suppressJoystickActions}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}

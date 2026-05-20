@@ -77,6 +77,7 @@ export interface RadarDisplayProps {
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
   cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级：低/中/高
+  suppressJoystickActions?: boolean;
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -107,7 +108,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   onTaskCompleted,
   onAddMessage,
   onClearMessages,
-  cognitiveLoad = 'low'
+  cognitiveLoad = 'low',
+  suppressJoystickActions = false
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -734,7 +736,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 处理button2(IFF)（上升沿检测，直接调用handleIffButtonClick）
   // 弹窗显示时优先触发确认，否则触发IFF
   React.useEffect(() => {
-    if (button2 && !previousButton2Ref.current && joystickEnabled) {
+    if (button2 && !previousButton2Ref.current && joystickEnabled && !suppressJoystickActions) {
       if (showMissionConfirm) {
         console.log('[RadarDisplay] Button2按下，弹窗显示中，触发确认');
         handleConfirmYes();
@@ -744,7 +746,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
     }
     previousButton2Ref.current = button2;
-  }, [button2, joystickEnabled, showMissionConfirm, handleConfirmYes]);
+  }, [button2, joystickEnabled, suppressJoystickActions, showMissionConfirm, handleConfirmYes]);
   
   // 自定义渲染函数，添加IFF按钮的点击事件
   const renderCustomText = (props: any) => {
