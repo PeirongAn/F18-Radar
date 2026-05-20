@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from managers import config_manager, db_manager, TaskScenarioManager, generate_task_id, target_manager, threat_manager
+from managers import config_manager, db_manager, TaskScenarioManager, generate_task_id, target_manager, threat_manager, get_logger
 from network.platform_task_bridge import (
     peek_pending_include_ai,
     consume_pending_for_task_start,
@@ -32,6 +32,7 @@ class MessageHandler:
         self.use_enhanced_protocol = True  # 默认使用增强协议
         # 眼动追踪服务（由 main.py 的 initialize_system 注入，可为 None）
         self._gaze_svc = None
+        self.logger = get_logger("message_handler")
 
     def set_gaze_service(self, gaze_svc) -> None:
         """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
@@ -64,6 +65,40 @@ class MessageHandler:
                 self._gaze_svc.stop_task(task_id=str(resolved))
         except Exception as e:
             print(f"[MessageHandler] gaze stop_task 失败（已跳过）: {e}")
+
+    def _log_task_count_notice(
+        self,
+        phase: str,
+        task_type: str,
+        user_id: str,
+        task_id,
+        repetition_info: Dict[str, Any],
+        event_owner: str = "",
+        platform_id: str = "",
+    ) -> None:
+        """打印醒目的远端任务计数日志。"""
+        rep_info = repetition_info or {}
+        current = rep_info.get("current")
+        total = rep_info.get("total")
+        if current is None and total is None:
+            count_text = "任务次数未知"
+        elif current is None:
+            count_text = f"共{total}次任务"
+        elif total is None:
+            count_text = f"第{current}次任务{phase}"
+        else:
+            count_text = f"共{total}次任务；第{current}次任务{phase}"
+        self.logger.warning(
+            "[REMOTE_TASK_COUNT] ===== %s ===== task_type=%s user=%s task_id=%s "
+            "event_owner=%s platform_id=%s rep_info=%s",
+            count_text,
+            task_type,
+            user_id,
+            task_id,
+            event_owner,
+            platform_id,
+            rep_info,
+        )
     
     async def handle_client_message(self, message_str: str, session_state: Dict[str, Any], 
                                   websocket=None) -> Union[List[Dict[str, Any]], Tuple[Dict[str, Any], bool], bool]:
@@ -149,6 +184,14 @@ class MessageHandler:
         
         # 从管理器获取下一个任务场景
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] radar get_next returned user=%s progress=%s "
+            "scenario=%s rep_info=%s",
+            user_id,
+            progress_key,
+            bool(current_scenario),
+            (current_scenario or {}).get('repetition_info') if isinstance(current_scenario, dict) else current_scenario,
+        )
 
         if current_scenario == "ALL_COMPLETED":
             return [{
@@ -167,13 +210,40 @@ class MessageHandler:
                 "is_practice": bool(is_practice),
             }]
 
+        overlay_source = "pending"
         overlay, platform_meta = consume_pending_for_task_start()
         if not overlay:
+            overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
+        normalized_meta = (platform_meta or {}).get("normalized") or {}
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] radar overlay resolved user=%s task_type=%s progress=%s "
+            "source=%s has_overlay=%s id=%s raw_TaskNumber=%s rep_override=%s "
+            "scenario_rep_before=%s",
+            user_id,
+            task_type,
+            progress_key,
+            overlay_source,
+            bool(overlay),
+            normalized_meta.get("platform_task_id"),
+            normalized_meta.get("task_number"),
+            normalized_meta.get("repetition_total_override"),
+            current_scenario.get('repetition_info') if isinstance(current_scenario, dict) else current_scenario,
+        )
         if overlay:
             task_manager.apply_platform_overlay(overlay)
             current_scenario = task_manager.current_scenario
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
+            self.logger.info(
+                "[REMOTE_TASK_COUNT] radar overlay applied user=%s task_type=%s progress=%s "
+                "event_owner=%s rep_info=%s override=%s",
+                user_id,
+                task_type,
+                progress_key,
+                event_owner,
+                current_scenario.get('repetition_info'),
+                current_scenario.get('max_repetitions_override'),
+            )
         
         self.current_session[f'{task_type}_scenario'] = current_scenario
         existing_task_id = db_manager.find_existing_task_setting_id(
@@ -234,6 +304,25 @@ class MessageHandler:
         }
         if platform_meta:
             init_response["platform_task"] = platform_meta
+        self._log_task_count_notice(
+            "开始",
+            task_type,
+            user_id,
+            task_id,
+            init_response.get("repetition_info"),
+            event_owner=event_owner,
+            platform_id=normalized_meta.get("platform_task_id"),
+        )
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] radar init_response user=%s task_id=%s progress=%s "
+            "event_owner=%s rep_info=%s platform_id=%s",
+            user_id,
+            task_id,
+            progress_key,
+            event_owner,
+            init_response.get("repetition_info"),
+            normalized_meta.get("platform_task_id"),
+        )
         return [init_response]
     
     async def _handle_settings_update(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -378,6 +467,26 @@ class MessageHandler:
         else:
             task_manager = None
 
+        repetition_info = {}
+        event_owner = ""
+        user_id = message.get('user_id') or self.current_session.get('user_id', '')
+        if task_manager and task_manager.current_scenario:
+            repetition_info = task_manager.current_scenario.get('repetition_info') or {}
+            event_owner = 'AI' if task_manager.current_scenario.get('is_ai_active') else 'manual'
+        else:
+            current_scenario = self.current_session.get(f'{task_type}_scenario') if task_type else None
+            if current_scenario:
+                repetition_info = current_scenario.get('repetition_info') or {}
+                event_owner = 'AI' if current_scenario.get('is_ai_active') else 'manual'
+
+        self._log_task_count_notice(
+            "结束",
+            task_type or "",
+            user_id,
+            self.current_session.get('task_id'),
+            repetition_info,
+            event_owner=event_owner,
+        )
         if task_manager:
             task_manager.mark_task_completed()
 
@@ -430,6 +539,14 @@ class MessageHandler:
         event_owner = message.get('event_owner') or ('AI' if is_ai_active_request else 'manual')
         
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] sa get_next returned user=%s progress=%s "
+            "scenario=%s rep_info=%s",
+            user_id,
+            progress_key,
+            bool(current_scenario),
+            (current_scenario or {}).get('repetition_info') if isinstance(current_scenario, dict) else current_scenario,
+        )
 
         if current_scenario == "ALL_COMPLETED":
             return [{
@@ -450,13 +567,40 @@ class MessageHandler:
 
         # 与 _handle_task_start 保持一致：消费外部平台 task_start 留下的 overlay，
         # 把 difficulty/AI/audio 以及 TaskNumber→max_repetitions 灌到 scenario 上。
+        overlay_source = "pending"
         overlay, platform_meta = consume_pending_for_task_start()
         if not overlay:
+            overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
+        normalized_meta = (platform_meta or {}).get("normalized") or {}
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] sa overlay resolved user=%s task_type=%s progress=%s "
+            "source=%s has_overlay=%s id=%s raw_TaskNumber=%s rep_override=%s "
+            "scenario_rep_before=%s",
+            user_id,
+            task_type,
+            progress_key,
+            overlay_source,
+            bool(overlay),
+            normalized_meta.get("platform_task_id"),
+            normalized_meta.get("task_number"),
+            normalized_meta.get("repetition_total_override"),
+            current_scenario.get('repetition_info') if isinstance(current_scenario, dict) else current_scenario,
+        )
         if overlay:
             task_manager.apply_platform_overlay(overlay)
             current_scenario = task_manager.current_scenario
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
+            self.logger.info(
+                "[REMOTE_TASK_COUNT] sa overlay applied user=%s task_type=%s progress=%s "
+                "event_owner=%s rep_info=%s override=%s",
+                user_id,
+                task_type,
+                progress_key,
+                event_owner,
+                current_scenario.get('repetition_info'),
+                current_scenario.get('max_repetitions_override'),
+            )
 
         existing_task_id = db_manager.find_existing_task_setting_id(
             current_scenario,
@@ -551,6 +695,25 @@ class MessageHandler:
             print("[MessageHandler] 增强消息类型:", enhanced_response.get('type'))
             print("[MessageHandler] 增强消息包含字段:", list(enhanced_response.keys()))
             print("[MessageHandler] 威胁详情:", [{'id': t.id, 'type': t.type, 'position': t.position.to_dict()} for t in threat_result.threats])
+            self._log_task_count_notice(
+                "开始",
+                task_type,
+                user_id,
+                task_id,
+                enhanced_response.get("repetition_info"),
+                event_owner=event_owner,
+                platform_id=normalized_meta.get("platform_task_id"),
+            )
+            self.logger.info(
+                "[REMOTE_TASK_COUNT] sa enhanced_response user=%s task_id=%s progress=%s "
+                "event_owner=%s rep_info=%s platform_id=%s",
+                user_id,
+                task_id,
+                progress_key,
+                event_owner,
+                enhanced_response.get("repetition_info"),
+                normalized_meta.get("platform_task_id"),
+            )
             return [enhanced_response]
         else:
             # 使用传统协议
@@ -580,6 +743,25 @@ class MessageHandler:
                         session_state
                     )
                 )
+            self._log_task_count_notice(
+                "开始",
+                task_type,
+                user_id,
+                task_id,
+                response.get("repetition_info"),
+                event_owner=event_owner,
+                platform_id=normalized_meta.get("platform_task_id"),
+            )
+            self.logger.info(
+                "[REMOTE_TASK_COUNT] sa legacy_response user=%s task_id=%s progress=%s "
+                "event_owner=%s rep_info=%s platform_id=%s",
+                user_id,
+                task_id,
+                progress_key,
+                event_owner,
+                response.get("repetition_info"),
+                normalized_meta.get("platform_task_id"),
+            )
             return [response]
     
     async def _handle_joystick_message(self, message: Dict[str, Any], session_state: Dict[str, Any], 

@@ -240,6 +240,33 @@ def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
         "repetition_total_override": rep_override,
         "web_task_kind": _infer_web_task_kind(message),
     }
+    logger.info(
+        "[REMOTE_TASK_COUNT] parsed platform_task id=%s name=%s raw_TaskNumber=%s "
+        "rep_override=%s web_kind=%s mode=%s include_ai=%s level=%s "
+        "difficulty_raw=%s difficulty_key=%s task_mode=%s is_practice=%s",
+        normalized["platform_task_id"],
+        normalized.get("task_name"),
+        normalized.get("task_number"),
+        normalized.get("repetition_total_override"),
+        normalized.get("web_task_kind"),
+        normalized.get("default_control_mode"),
+        normalized.get("include_ai"),
+        normalized.get("current_level"),
+        normalized.get("difficulty_raw"),
+        normalized.get("difficulty_key"),
+        normalized.get("task_mode"),
+        normalized.get("is_practice"),
+    )
+    if normalized.get("repetition_total_override") is not None:
+        logger.warning(
+            "[REMOTE_TASK_COUNT] ===== 远端下发：共%s次任务 ===== id=%s name=%s "
+            "web_kind=%s raw_TaskNumber=%s",
+            normalized.get("repetition_total_override"),
+            normalized["platform_task_id"],
+            normalized.get("task_name"),
+            normalized.get("web_task_kind"),
+            normalized.get("task_number"),
+        )
     overlay = _build_overlay(normalized, cfg)
     _pending = {"raw": raw, "normalized": normalized, "overlay": overlay}
     web_kind = normalized.get("web_task_kind") or ""
@@ -255,6 +282,15 @@ def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
         current_level,
         include_ai,
     )
+    logger.info(
+        "[REMOTE_TASK_COUNT] pending overlay stored id=%s web_kind=%s rep_override=%s "
+        "overlay_total=%s active_overlay_keys=%s",
+        normalized["platform_task_id"],
+        web_kind,
+        normalized.get("repetition_total_override"),
+        overlay.get("repetition_total_override"),
+        list(_active_web_task_overlays.keys()),
+    )
     return normalized
 
 
@@ -268,12 +304,23 @@ def consume_pending_for_task_start() -> Tuple[Optional[Dict[str, Any]], Optional
     """返回 (scenario_overlay, platform_meta)。消费并清除 pending。"""
     global _pending
     if not _pending:
+        logger.info("[REMOTE_TASK_COUNT] consume pending: none")
         return None, None
     overlay = copy.deepcopy(_pending.get("overlay") or {})
     meta = {
         "raw": copy.deepcopy(_pending.get("raw")),
         "normalized": copy.deepcopy(_pending.get("normalized")),
     }
+    normalized = meta.get("normalized") or {}
+    logger.info(
+        "[REMOTE_TASK_COUNT] consume pending id=%s web_kind=%s raw_TaskNumber=%s "
+        "rep_override=%s overlay_total=%s",
+        normalized.get("platform_task_id"),
+        normalized.get("web_task_kind"),
+        normalized.get("task_number"),
+        normalized.get("repetition_total_override"),
+        overlay.get("repetition_total_override"),
+    )
     _pending = None
     return overlay, meta
 
@@ -288,12 +335,31 @@ def get_active_overlay_for_task(user_id: str, task_type: str) -> Tuple[Optional[
     key = (str(user_id), kind)
     entry = _active_web_task_overlays.get(key) or _active_web_task_overlays.get((str(user_id), ""))
     if not entry:
+        logger.info(
+            "[REMOTE_TASK_COUNT] active overlay miss user=%s task_type=%s kind=%s keys=%s",
+            user_id,
+            task_type,
+            kind,
+            list(_active_web_task_overlays.keys()),
+        )
         return None, None
     overlay = copy.deepcopy(entry.get("overlay") or {})
     meta = {
         "raw": copy.deepcopy(entry.get("raw")),
         "normalized": copy.deepcopy(entry.get("normalized")),
     }
+    normalized = meta.get("normalized") or {}
+    logger.info(
+        "[REMOTE_TASK_COUNT] active overlay hit user=%s task_type=%s kind=%s id=%s "
+        "raw_TaskNumber=%s rep_override=%s overlay_total=%s",
+        user_id,
+        task_type,
+        kind,
+        normalized.get("platform_task_id"),
+        normalized.get("task_number"),
+        normalized.get("repetition_total_override"),
+        overlay.get("repetition_total_override"),
+    )
     return overlay, meta
 
 
@@ -302,6 +368,12 @@ def get_progress_key_for_task(user_id: str, task_type: str) -> str:
     _, meta = get_active_overlay_for_task(user_id, task_type)
     normalized = (meta or {}).get("normalized") or {}
     if not normalized:
+        logger.info(
+            "[REMOTE_TASK_COUNT] progress key default user=%s task_type=%s progress_key=%s",
+            user_id,
+            task_type,
+            task_type,
+        )
         return task_type
 
     mode = normalized.get("default_control_mode")
@@ -310,7 +382,18 @@ def get_progress_key_for_task(user_id: str, task_type: str) -> str:
     level = normalized.get("current_level") or normalized.get("ai_autonomy_level") or "L0"
     difficulty = normalized.get("difficulty_key") or ""
     combo = f"{str(mode).strip()}-{str(level).strip()}-{str(difficulty).strip()}"
-    return f"{task_type}::{combo}"
+    progress_key = f"{task_type}::{combo}"
+    logger.info(
+        "[REMOTE_TASK_COUNT] progress key user=%s task_type=%s id=%s raw_TaskNumber=%s "
+        "rep_override=%s progress_key=%s",
+        user_id,
+        task_type,
+        normalized.get("platform_task_id"),
+        normalized.get("task_number"),
+        normalized.get("repetition_total_override"),
+        progress_key,
+    )
+    return progress_key
 
 
 def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[Dict[str, Any]]:
@@ -326,6 +409,15 @@ def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[D
     ts = int(_time.time() * 1000)
     raw = json.dumps(message_data, ensure_ascii=False)
     key = (category, user_id)
+    logger.info(
+        "[REMOTE_TASK_COUNT] external event received category=%s user=%s action=%s "
+        "active_before=%s active_keys=%s",
+        category,
+        user_id,
+        action,
+        _active_external_tasks.get(key),
+        list(_active_external_tasks.keys()),
+    )
 
     if action == "task_start":
         tid = generate_task_id()
@@ -340,11 +432,36 @@ def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[D
         )
         logger.info("external task_start: category=%s user=%s task_id=%s",
                      category, user_id, tid)
+        logger.warning(
+            "[REMOTE_TASK_COUNT] ===== 外部任务开始 ===== category=%s user=%s "
+            "task_id=%s TaskNumber=%s",
+            category,
+            user_id,
+            tid,
+            message_data.get("TaskNumber"),
+        )
+        logger.info(
+            "[REMOTE_TASK_COUNT] external task_start stored category=%s user=%s "
+            "task_id=%s sub_task_seq=%s active_keys=%s",
+            category,
+            user_id,
+            tid,
+            _active_external_tasks[key]["sub_task_seq"],
+            list(_active_external_tasks.keys()),
+        )
         return [{"type": "platform_task_ack", "status": "ok",
                  "task_id": tid, "task_category": category}]
 
     active = _active_external_tasks.get(key)
     if not active:
+        logger.warning(
+            "[REMOTE_TASK_COUNT] external event missing active category=%s user=%s "
+            "action=%s active_keys=%s",
+            category,
+            user_id,
+            action,
+            list(_active_external_tasks.keys()),
+        )
         return [{"type": "platform_task_ack", "status": "error",
                  "message": f"no active {category} task for user {user_id}"}]
     tid = active["task_id"]
@@ -358,6 +475,21 @@ def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[D
             task_name=task_name, gender=gender, sub_task_seq=seq,
         )
         logger.info("external sub_start: task_id=%s seq=%s", tid, seq)
+        logger.warning(
+            "[REMOTE_TASK_COUNT] ===== 第%s次任务开始 ===== category=%s user=%s task_id=%s",
+            seq,
+            category,
+            user_id,
+            tid,
+        )
+        logger.info(
+            "[REMOTE_TASK_COUNT] external sub_start category=%s user=%s task_id=%s "
+            "sub_task_seq=%s",
+            category,
+            user_id,
+            tid,
+            seq,
+        )
         return [{"type": "platform_task_ack", "status": "ok",
                  "task_id": tid, "sub_task_seq": seq}]
 
@@ -369,6 +501,22 @@ def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[D
             task_name=task_name, gender=gender, sub_task_seq=seq,
         )
         logger.info("external sub_end: task_id=%s seq=%s", tid, seq)
+        logger.warning(
+            "[REMOTE_TASK_COUNT] ===== 第%s次任务结束 ===== category=%s user=%s task_id=%s",
+            seq,
+            category,
+            user_id,
+            tid,
+        )
+        logger.info(
+            "[REMOTE_TASK_COUNT] external sub_end category=%s user=%s task_id=%s "
+            "sub_task_seq=%s has_result=%s",
+            category,
+            user_id,
+            tid,
+            seq,
+            isinstance(message_data.get("result"), dict),
+        )
 
         result = message_data.get("result")
         if result and isinstance(result, dict):
@@ -387,6 +535,15 @@ def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[D
                 fire_success_count=sum(1 for f in fire_list if f.get("FireResult")),
             )
             logger.info("external sub_end with result: task_id=%s seq=%s", tid, seq)
+            logger.info(
+                "[REMOTE_TASK_COUNT] external sub_end result metrics task_id=%s seq=%s "
+                "switch_count=%s fire_count=%s fire_success_count=%s",
+                tid,
+                seq,
+                len(switch_list),
+                len(fire_list),
+                sum(1 for f in fire_list if f.get("FireResult")),
+            )
 
         return [{"type": "platform_task_ack", "status": "ok",
                  "task_id": tid, "sub_task_seq": seq}]
@@ -399,6 +556,23 @@ def _handle_external_task(message_data: Dict[str, Any], category: str) -> List[D
         )
         _active_external_tasks.pop(key, None)
         logger.info("external task_end: task_id=%s", tid)
+        logger.warning(
+            "[REMOTE_TASK_COUNT] ===== 外部任务结束 ===== category=%s user=%s "
+            "task_id=%s 共%s次子任务",
+            category,
+            user_id,
+            tid,
+            active.get("sub_task_seq"),
+        )
+        logger.info(
+            "[REMOTE_TASK_COUNT] external task_end category=%s user=%s task_id=%s "
+            "final_sub_task_seq=%s active_keys=%s",
+            category,
+            user_id,
+            tid,
+            active.get("sub_task_seq"),
+            list(_active_external_tasks.keys()),
+        )
         return [{"type": "platform_task_ack", "status": "ok",
                  "task_id": tid, "event_type": "task_end"}]
 
@@ -423,6 +597,14 @@ def handle_platform_task_result_ws(message_data: Dict[str, Any]) -> List[Dict[st
             active = v
             matched_key = k
             break
+    logger.info(
+        "[REMOTE_TASK_COUNT] platform_task_result lookup user=%s matched_key=%s "
+        "active=%s active_keys=%s",
+        user_id,
+        matched_key,
+        active,
+        list(_active_external_tasks.keys()),
+    )
 
     if not active:
         logger.warning("platform_task_result: no active task for user %s, "
@@ -455,6 +637,16 @@ def handle_platform_task_result_ws(message_data: Dict[str, Any]) -> List[Dict[st
         _active_external_tasks.pop(matched_key, None)
 
     logger.info("platform_task_result stored: task_id=%s category=%s", tid, category)
+    logger.info(
+        "[REMOTE_TASK_COUNT] platform_task_result stored task_id=%s category=%s "
+        "switch_count=%s fire_count=%s fire_success_count=%s active_keys=%s",
+        tid,
+        category,
+        len(switch_list),
+        len(fire_list),
+        sum(1 for f in fire_list if f.get("FireResult")),
+        list(_active_external_tasks.keys()),
+    )
     return [{"type": "platform_task_ack", "status": "ok",
              "task_id": tid, "event_type": "task_result"}]
 

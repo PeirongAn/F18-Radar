@@ -438,6 +438,22 @@ class TaskScenarioManager:
         if self.current_scenario is None or not overlay:
             return
 
+        before_rep_info = self.current_scenario.get('repetition_info') or {}
+        before_override = self.current_scenario.get('max_repetitions_override')
+        before_total = self.max_repetitions
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] apply overlay start user=%s task_type=%s progress=%s "
+            "rep=%s/%s existing_override=%s overlay_total=%s overlay_ai=%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+            before_rep_info.get('current', self.repetition_counter),
+            before_rep_info.get('total', before_total),
+            before_override,
+            overlay.get('repetition_total_override'),
+            overlay.get('is_ai_active'),
+        )
+
         if overlay.get('difficulty_name'):
             self.current_scenario['difficulty_name'] = overlay['difficulty_name']
             self.current_scenario['external_difficulty_locked'] = True
@@ -486,6 +502,19 @@ class TaskScenarioManager:
             self.current_scenario.get('difficulty_name'),
             self.current_scenario.get('external_difficulty_display'),
             self.max_repetitions,
+        )
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] apply overlay done user=%s task_type=%s progress=%s "
+            "rep=%s/%s override=%s difficulty=%s display=%s ai=%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+            rep_info.get('current', self.repetition_counter),
+            rep_info.get('total', self.max_repetitions),
+            self.current_scenario.get('max_repetitions_override'),
+            self.current_scenario.get('difficulty_name'),
+            self.current_scenario.get('external_difficulty_display'),
+            self.current_scenario.get('is_ai_active'),
         )
 
     def _refresh_scenario_config(self, scenario: Dict[str, Any]) -> None:
@@ -577,10 +606,35 @@ class TaskScenarioManager:
         """获取下一个场景参数，并自动保存进度"""
         # 实时读取最新配置
         self._refresh_config()
+        start_rep_info = (self.current_scenario or {}).get('repetition_info') or {}
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] get_next start user=%s task_type=%s progress=%s "
+            "requested_ai=%s current_rep=%s/%s max_repetitions=%s override=%s "
+            "ai_queue=%s manual_queue=%s active_queue_set=%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+            is_ai_active_request,
+            start_rep_info.get('current', self.repetition_counter),
+            start_rep_info.get('total', self.max_repetitions),
+            self.max_repetitions,
+            (self.current_scenario or {}).get('max_repetitions_override'),
+            len(self.ai_queue),
+            len(self.manual_queue),
+            self.active_queue is not None,
+        )
         
         # 首先检查上一个任务的完成状态
         print('get_next_task_parameters# 0', is_ai_active_request)
         previous_task_completed = self._check_previous_task_completion_status()
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] previous completion user=%s task_type=%s progress=%s "
+            "previous_task_completed=%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+            previous_task_completed,
+        )
         
         new_queue = self.ai_queue if is_ai_active_request else self.manual_queue
         
@@ -625,9 +679,33 @@ class TaskScenarioManager:
             self.logger.info(f"Current scenario repetitions completed for task '{self.task_type}'")
             # self._update_completion_status(True)  # True = 已完成
         print('get_next_task_parameters# 4need_new_scenario', need_new_scenario)
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] advance decision user=%s task_type=%s progress=%s "
+            "queue_switched=%s need_new_scenario=%s previous_completed=%s "
+            "rep_counter=%s max_repetitions=%s active_queue_len=%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+            queue_switched,
+            need_new_scenario,
+            previous_task_completed,
+            self.repetition_counter,
+            self.max_repetitions,
+            len(self.active_queue or []),
+        )
         if need_new_scenario:
             if not self.active_queue:
                 self.logger.info(f"Active queue empty for task '{self.task_type}', all scenarios completed")
+                self.logger.info(
+                    "[REMOTE_TASK_COUNT] active queue empty user=%s task_type=%s progress=%s "
+                    "ai_queue=%s manual_queue=%s all_completed=%s",
+                    self.user_id,
+                    self.task_type,
+                    self.progress_task_type,
+                    len(self.ai_queue),
+                    len(self.manual_queue),
+                    self.are_all_scenarios_completed(),
+                )
                 if self.is_practice:
                     self._save_to_memory()
                 else:
@@ -683,6 +761,24 @@ class TaskScenarioManager:
                 self._save_to_memory()
             else:
                 self._save_to_db()
+        final_rep_info = (self.current_scenario or {}).get('repetition_info') or {}
+        self.logger.info(
+            "[REMOTE_TASK_COUNT] get_next result user=%s task_type=%s progress=%s "
+            "rep=%s/%s override=%s previous_completed=%s ai=%s difficulty=%s "
+            "engine_difficulty=%s scenario_index=%s/%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+            final_rep_info.get('current'),
+            final_rep_info.get('total'),
+            (self.current_scenario or {}).get('max_repetitions_override'),
+            final_rep_info.get('previous_task_completed'),
+            final_rep_info.get('is_ai_active'),
+            final_rep_info.get('difficulty'),
+            final_rep_info.get('engine_difficulty'),
+            final_rep_info.get('scenario_index'),
+            final_rep_info.get('scenario_total'),
+        )
         return self.current_scenario
 
 def generate_task_id_timestamp() -> int:
