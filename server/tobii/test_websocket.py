@@ -25,7 +25,8 @@ async def test_websocket():
         start_message = {
             "type": "hand",
             "bbox": [[0.0, 0.0, 960, 540], [0.0, 0.0, 960, 540], [0.0, 0.0, 960, 540]],
-            "scream_data": [1920, 1080],
+            "coordinate_space": "physical_pixel",
+            "screen_data": [1920, 1080],
             "system_time": int(time.time() * 1000 * 1000),  # 微秒
             "box_visible": True,
             "user_id": 1,
@@ -71,7 +72,8 @@ async def test_websocket():
             "type": "hand",
             "task_id": task_id,
             "bbox": [[0.0, 0.0, 960, 540], [0.0, 0.0, 960, 540], [0.0, 0.0, 960, 540]],
-            "scream_data": [1920, 1080],
+            "coordinate_space": "physical_pixel",
+            "screen_data": [1920, 1080],
             "system_time": int(time.time() * 1000 * 1000),  # 微秒
             "box_visible": False,
             "user_id": 1,

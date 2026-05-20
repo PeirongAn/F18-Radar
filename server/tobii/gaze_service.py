@@ -38,9 +38,29 @@ import os
 import threading
 from collections import deque
 
+try:
+    from managers import get_logger
+except Exception:
+    get_logger = None
+
 
 # 连续未注视帧数阈值，超过后推送注意力反馈
-OUT_OF_BOX_FALSE_THRESHOLD = 2000
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+OUT_OF_BOX_FALSE_THRESHOLD = _env_int("GAZE_OUT_OF_BOX_FALSE_THRESHOLD", 200)
+GAZE_SCREEN_WIDTH = _env_int("GAZE_SCREEN_WIDTH", 0)
+GAZE_SCREEN_HEIGHT = _env_int("GAZE_SCREEN_HEIGHT", 0)
+GAZE_PROGRESS_LOGS_ENABLED = os.environ.get("GAZE_PROGRESS_LOGS", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # 写入队列中的事件类型标识
 _EVT_GAZE_FRAME = "gaze_frame"
@@ -54,6 +74,9 @@ class GazeService:
     """眼动追踪服务，封装 Tobii 设备与所有业务逻辑。"""
 
     def __init__(self, data_dir: str = None, gaze_window_size: int = 600):
+        self._logger = get_logger("gaze_service") if get_logger else None
+        self._progress_logs_enabled = GAZE_PROGRESS_LOGS_ENABLED
+
         # 文件存储根目录，默认放在本文件旁边的 ../../data/gaze
         if data_dir is None:
             _here = os.path.dirname(os.path.abspath(__file__))
@@ -82,6 +105,7 @@ class GazeService:
         # ── 注意力反馈状态 ────────────────────
         self._consecutive_out_of_box_false: int = 0
         self._out_of_box_feedback_sent: bool = False
+        self._last_out_of_box_log_count: int = 0
 
         # ── WebSocket 广播 ────────────────────
         self._connected_clients: set = set()
@@ -94,6 +118,23 @@ class GazeService:
             target=self._run_writer, daemon=True, name="GazeFileWriter"
         )
         self._writer_thread.start()
+        configured_screen = (
+            (GAZE_SCREEN_WIDTH, GAZE_SCREEN_HEIGHT)
+            if GAZE_SCREEN_WIDTH > 0 and GAZE_SCREEN_HEIGHT > 0
+            else "client_fallback"
+        )
+        self._log_info(
+            "配置已加载: "
+            f"out_of_box_threshold={OUT_OF_BOX_FALSE_THRESHOLD}, "
+            f"progress_logs={self._progress_logs_enabled}, "
+            f"screen_size={configured_screen}"
+        )
+
+    def _log_info(self, message: str):
+        formatted = f"[GazeService] {message}"
+        if self._logger:
+            self._logger.info(message)
+        print(formatted)
 
     # ═══════════════════════════════════════════
     # 设备管理
@@ -180,12 +221,14 @@ class GazeService:
     def start_task(
         self,
         bbox: list,
-        screen_size: tuple,
+        screen_size: tuple | list | None,
         task_id: str | int | None = None,
         user_id: str = "",
         task_source: str = "",
         task_name: str = "",
         system_time: int | None = None,
+        regions: list | None = None,
+        coordinate_space: str | None = None,
     ) -> str:
         """
         记录目标窗口出现、开始新任务，并创建对应的文件存储目录。
@@ -205,8 +248,14 @@ class GazeService:
         if system_time is None:
             system_time = int(time.time() * 1_000_000)
 
-        screen_w, screen_h = screen_size or (1, 1)
-        normalized_bbox = _normalize_bboxes(bbox, screen_w or 1, screen_h or 1)
+        screen_w, screen_h = self._resolve_screen_size(screen_size)
+        normalized_regions = _normalize_regions(
+            regions=regions,
+            bbox=bbox,
+            coordinate_space=coordinate_space,
+            screen_width=screen_w or 1,
+            screen_height=screen_h or 1,
+        )
 
         # 优先使用外部传入的 task_id，回退到生成 UUID
         resolved_task_id = str(task_id) if task_id is not None else str(uuid.uuid4())
@@ -219,7 +268,8 @@ class GazeService:
             self._current_task = {
                 "task_id": resolved_task_id,
                 "task_dir": task_dir,
-                "bbox": normalized_bbox,
+                "bbox": normalized_regions,
+                "regions": normalized_regions,
                 "start_system_time": system_time,
                 "user_id": user_id or "",
                 "task_source": task_source or "",
@@ -238,12 +288,12 @@ class GazeService:
             "VALUES (?, ?, ?, ?, ?, 'active')",
             (resolved_task_id, user_id or "", task_name or "", task_dir, system_time),
         )
-        if normalized_bbox:
+        if normalized_regions:
             self._enqueue_db(
                 "INSERT INTO gaze_targets "
                 "(task_id, bbox_json, normalized_bbox_json, screen_width, screen_height, appear_time_us) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (resolved_task_id, json.dumps(bbox), json.dumps(normalized_bbox),
+                (resolved_task_id, json.dumps(regions if regions is not None else bbox), json.dumps(normalized_regions),
                  int(screen_w), int(screen_h), system_time),
             )
 
@@ -351,11 +401,19 @@ class GazeService:
         """公开接口：获取当前活动任务 ID。"""
         return self._get_active_task_id()
 
+    def get_screen_size(self) -> tuple[int, int] | None:
+        """返回 server 端配置的 gaze 屏幕尺寸；未配置时返回 None。"""
+        if GAZE_SCREEN_WIDTH > 0 and GAZE_SCREEN_HEIGHT > 0:
+            return (GAZE_SCREEN_WIDTH, GAZE_SCREEN_HEIGHT)
+        return None
+
     def set_task_bbox(
         self,
         bbox: list,
-        screen_size: tuple,
+        screen_size: tuple | list | None,
         task_id: str | None = None,
+        regions: list | None = None,
+        coordinate_space: str | None = None,
     ) -> bool:
         """
         更新当前活动任务的注意力区域（bbox）。
@@ -371,17 +429,40 @@ class GazeService:
         Returns:
             True 表示更新成功，False 表示没有匹配的活动任务。
         """
-        screen_w, screen_h = screen_size or (1, 1)
-        normalized_bbox = _normalize_bboxes(bbox, screen_w or 1, screen_h or 1)
+        screen_w, screen_h = self._resolve_screen_size(screen_size)
+        normalized_regions = _normalize_regions(
+            regions=regions,
+            bbox=bbox,
+            coordinate_space=coordinate_space,
+            screen_width=screen_w or 1,
+            screen_height=screen_h or 1,
+        )
+        bbox_count = len(bbox) if isinstance(bbox, list) else 0
+        region_count = len(regions) if isinstance(regions, list) else 0
+        self._log_info(
+            "收到bbox更新请求: "
+            f"task_id={task_id}, bbox_count={bbox_count}, region_count={region_count}, "
+            f"coordinate_space={coordinate_space or 'auto'}, screen_size=({screen_w}, {screen_h})"
+        )
 
         with self._state_lock:
             if not self._task_active or self._current_task is None:
+                self._log_info("bbox更新被忽略: 当前没有活动眼动任务")
                 return False
             if task_id is not None and self._current_task.get("task_id") != str(task_id):
+                self._log_info(
+                    "bbox更新被忽略: task_id不匹配, "
+                    f"request={task_id}, active={self._current_task.get('task_id')}"
+                )
                 return False
             active_task_id = self._current_task["task_id"]
-            self._current_task["bbox"] = normalized_bbox
+            self._current_task["bbox"] = normalized_regions
+            self._current_task["regions"] = normalized_regions
             self._reset_out_of_box_state()
+            self._log_info(
+                "bbox已写入活动任务: "
+                f"task_id={active_task_id}, normalized_regions={normalized_regions}"
+            )
 
         now_us = int(time.time() * 1_000_000)
 
@@ -392,17 +473,18 @@ class GazeService:
             (now_us, active_task_id),
         )
         # 若新 bbox 非空，记录目标出现
-        if bbox:
+        raw_regions = regions if regions is not None else bbox
+        if raw_regions:
             self._enqueue_db(
                 "INSERT INTO gaze_targets "
                 "(task_id, bbox_json, normalized_bbox_json, "
                 "screen_width, screen_height, appear_time_us) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (active_task_id, json.dumps(bbox), json.dumps(normalized_bbox),
+                (active_task_id, json.dumps(raw_regions), json.dumps(normalized_regions),
                  int(screen_w), int(screen_h), now_us),
             )
 
-        print(f"[GazeService] bbox 已更新: {normalized_bbox}")
+        self._log_info(f"bbox数据库记录已更新: task_id={active_task_id}")
         return True
 
     # ═══════════════════════════════════════════
@@ -454,16 +536,21 @@ class GazeService:
     def set_ws_event_loop(self, loop: asyncio.AbstractEventLoop):
         """设置 asyncio 事件循环，用于从 gaze 回调线程触发广播。"""
         self._ws_event_loop = loop
+        self._log_info("WS事件循环已设置，注意力反馈可异步广播")
 
     def register_ws_client(self, websocket):
         """注册一个新的 WebSocket 连接。"""
         with self._clients_lock:
             self._connected_clients.add(websocket)
+            client_count = len(self._connected_clients)
+        self._log_info(f"WS客户端已注册，当前客户端数={client_count}")
 
     def unregister_ws_client(self, websocket):
         """注销一个 WebSocket 连接。"""
         with self._clients_lock:
             self._connected_clients.discard(websocket)
+            client_count = len(self._connected_clients)
+        self._log_info(f"WS客户端已注销，当前客户端数={client_count}")
 
     async def broadcast(self, message_obj: dict):
         """向所有已注册客户端广播 JSON 消息（异步）。"""
@@ -474,7 +561,10 @@ class GazeService:
         stale = []
         for client in clients:
             try:
-                await client.send(message)
+                if hasattr(client, "send_str"):
+                    await client.send_str(message)
+                else:
+                    await client.send(message)
             except Exception:
                 stale.append(client)
 
@@ -482,6 +572,7 @@ class GazeService:
             with self._clients_lock:
                 for c in stale:
                     self._connected_clients.discard(c)
+            self._log_info(f"广播时移除了失效WS客户端: stale_count={len(stale)}")
 
     # ═══════════════════════════════════════════
     # 内部实现
@@ -490,6 +581,15 @@ class GazeService:
     def _reset_out_of_box_state(self):
         self._consecutive_out_of_box_false = 0
         self._out_of_box_feedback_sent = False
+        self._last_out_of_box_log_count = 0
+
+    def _resolve_screen_size(self, screen_size: tuple | list | None) -> tuple:
+        if GAZE_SCREEN_WIDTH > 0 and GAZE_SCREEN_HEIGHT > 0:
+            return (GAZE_SCREEN_WIDTH, GAZE_SCREEN_HEIGHT)
+
+        if isinstance(screen_size, (list, tuple)) and len(screen_size) >= 2:
+            return (screen_size[0] or 1, screen_size[1] or 1)
+        return (1, 1)
 
     def _get_active_task_id(self) -> str | None:
         if self._current_task and isinstance(self._current_task, dict):
@@ -519,9 +619,10 @@ class GazeService:
             task = self._current_task
             task["frame_count"] = task.get("frame_count", 0) + 1
 
-        current_in_box = _point_in_bboxes(gaze_point, task["bbox"])
+        current_in_box = _point_in_regions(gaze_point, task.get("regions") or task.get("bbox"))
         should_push_feedback = False
         feedback_task_id = None
+        feedback_count = 0
 
         # 向文件写入队列发送帧数据
         self._writer_queue.put({
@@ -540,12 +641,38 @@ class GazeService:
 
             if current_in_box is False:
                 self._consecutive_out_of_box_false += 1
+                current_count = self._consecutive_out_of_box_false
+                log_step = max(1, OUT_OF_BOX_FALSE_THRESHOLD // 4)
+                if (
+                    self._progress_logs_enabled and
+                    (current_count == 1 or current_count - self._last_out_of_box_log_count >= log_step)
+                ):
+                    self._last_out_of_box_log_count = current_count
+                    self._log_info(
+                        "注视点在目标框外: "
+                        f"task_id={self._current_task.get('task_id')}, "
+                        f"count={current_count}/{OUT_OF_BOX_FALSE_THRESHOLD}, "
+                        f"gaze={gaze_point}, bbox={task['bbox']}"
+                    )
                 if self._consecutive_out_of_box_false >= OUT_OF_BOX_FALSE_THRESHOLD:
                     should_push_feedback = True
                     feedback_task_id = self._current_task.get("task_id")
+                    feedback_count = self._consecutive_out_of_box_false
+                    self._log_info(
+                        "离框超时，准备触发提醒: "
+                        f"task_id={feedback_task_id}, count={feedback_count}, gaze={gaze_point}"
+                    )
                     self._consecutive_out_of_box_false = 0
+                    self._last_out_of_box_log_count = 0
             else:
+                if self._progress_logs_enabled and self._consecutive_out_of_box_false > 0:
+                    self._log_info(
+                        "注视点回到目标框内: "
+                        f"task_id={self._current_task.get('task_id')}, "
+                        f"cleared_count={self._consecutive_out_of_box_false}, gaze={gaze_point}"
+                    )
                 self._consecutive_out_of_box_false = 0
+                self._last_out_of_box_log_count = 0
 
             if self._flag is False and current_in_box is True:
                 self._flag = True
@@ -556,7 +683,7 @@ class GazeService:
                 self._enqueue_fixation_event(task["task_id"], "fixation_end", system_time_stamp)
 
         if should_push_feedback:
-            self._push_attention_feedback(feedback_task_id, self._consecutive_out_of_box_false)
+            self._push_attention_feedback(feedback_task_id, feedback_count)
 
     def _enqueue_fixation_event(self, task_id: str, event_type: str, ts_us: int):
         """将注视事件放入写入队列。
@@ -578,7 +705,13 @@ class GazeService:
     def _push_attention_feedback(self, task_id: str, consecutive_count: int):
         """从 gaze 回调线程安全地触发前端注意力反馈广播。"""
         if self._ws_event_loop is None:
+            self._log_info(
+                "注意力反馈未广播: WS事件循环未设置, "
+                f"task_id={task_id}, consecutive_count={consecutive_count}"
+            )
             return
+        with self._clients_lock:
+            client_count = len(self._connected_clients)
         payload = {
             "ok": True,
             "type": "attention_feedback",
@@ -590,7 +723,7 @@ class GazeService:
             "task_id": task_id,
             "server_time_ms": int(time.time() * 1000),
         }
-        print(f"[GazeService] 发送注意力反馈: {payload}")
+        self._log_info(f"发送注意力反馈: clients={client_count}, payload={payload}")
         asyncio.run_coroutine_threadsafe(self.broadcast(payload), self._ws_event_loop)
 
     # ═══════════════════════════════════════════
@@ -750,6 +883,134 @@ def _normalize_bboxes(
             ny1, ny2 = max(0.0, min(1.0, ny1)), max(0.0, min(1.0, ny2))
         result.append([nx1, ny1, nx2, ny2])
     return result
+
+
+def _normalize_regions(
+    regions: list | None,
+    bbox: list | None,
+    coordinate_space: str | None,
+    screen_width: float,
+    screen_height: float,
+    clip: bool = True,
+) -> list:
+    raw_regions = regions if isinstance(regions, list) else None
+    if raw_regions is None:
+        raw_regions = [
+            {"shape": "rect", "left": x1, "top": y1, "right": x2, "bottom": y2}
+            for x1, y1, x2, y2 in (bbox or [])
+        ]
+
+    space = _normalize_coordinate_space(coordinate_space) or _infer_coordinate_space(raw_regions)
+    result = []
+    for region in raw_regions:
+        if not isinstance(region, dict):
+            continue
+        shape = str(region.get("shape") or "rect").lower()
+        if shape == "ellipse":
+            cx = _as_float(region.get("cx"))
+            cy = _as_float(region.get("cy"))
+            rx = _as_float(region.get("rx"))
+            ry = _as_float(region.get("ry"))
+            if cx is None or cy is None or rx is None or ry is None or rx <= 0 or ry <= 0:
+                continue
+            if space == "physical_pixel":
+                cx, cy = cx / screen_width, cy / screen_height
+                rx, ry = rx / screen_width, ry / screen_height
+            normalized = {"shape": "ellipse", "cx": cx, "cy": cy, "rx": rx, "ry": ry}
+        else:
+            left = _as_float(region.get("left"))
+            top = _as_float(region.get("top"))
+            right = _as_float(region.get("right"))
+            bottom = _as_float(region.get("bottom"))
+            if left is None or top is None or right is None or bottom is None:
+                continue
+            if space == "physical_pixel":
+                left, right = left / screen_width, right / screen_width
+                top, bottom = top / screen_height, bottom / screen_height
+            left, right = min(left, right), max(left, right)
+            top, bottom = min(top, bottom), max(top, bottom)
+            normalized = {"shape": "rect", "left": left, "top": top, "right": right, "bottom": bottom}
+        if clip:
+            normalized = _clip_region(normalized)
+        result.append(normalized)
+    return result
+
+
+def _infer_coordinate_space(regions: list) -> str:
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        for key in ("left", "top", "right", "bottom", "cx", "cy", "rx", "ry"):
+            value = _as_float(region.get(key))
+            if value is not None and abs(value) > 1:
+                return "physical_pixel"
+    return "display_area_normalized"
+
+
+def _normalize_coordinate_space(coordinate_space: str | None) -> str | None:
+    if not coordinate_space:
+        return None
+    value = str(coordinate_space).lower()
+    if value in {"physical", "physical_pixel", "physical_pixels", "pixel", "pixels"}:
+        return "physical_pixel"
+    if value in {"display_area_normalized", "normalized", "normalised"}:
+        return "display_area_normalized"
+    return None
+
+
+def _as_float(value) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(result) or math.isinf(result):
+        return None
+    return result
+
+
+def _clip01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _clip_region(region: dict) -> dict:
+    if region.get("shape") == "ellipse":
+        return {
+            **region,
+            "cx": _clip01(region["cx"]),
+            "cy": _clip01(region["cy"]),
+            "rx": max(0.0, min(1.0, region["rx"])),
+            "ry": max(0.0, min(1.0, region["ry"])),
+        }
+    return {
+        **region,
+        "left": _clip01(region["left"]),
+        "top": _clip01(region["top"]),
+        "right": _clip01(region["right"]),
+        "bottom": _clip01(region["bottom"]),
+    }
+
+
+def _point_in_regions(point: tuple, regions: list) -> bool:
+    if point is None or not regions:
+        return False
+    x, y = point
+    for region in regions:
+        if isinstance(region, dict):
+            shape = str(region.get("shape") or "rect").lower()
+            if shape == "ellipse":
+                cx = region.get("cx")
+                cy = region.get("cy")
+                rx = region.get("rx")
+                ry = region.get("ry")
+                if rx and ry and ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1:
+                    return True
+            elif region.get("left") <= x <= region.get("right") and region.get("top") <= y <= region.get("bottom"):
+                return True
+        else:
+            x1, y1, x2, y2 = region
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return True
+    return False
 
 
 def _point_in_bboxes(point: tuple, bboxes: list) -> bool:

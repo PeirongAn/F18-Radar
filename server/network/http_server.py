@@ -64,6 +64,7 @@ class HTTPServer:
         # 眼动追踪路由
         self.app.router.add_post('/tobii/hand', self.tobii_hand_handler)
         self.app.router.add_get('/tobii/gaze_point', self.tobii_gaze_point_handler)
+        self.app.router.add_get('/tobii/gaze_data', self.tobii_gaze_data_handler)
 
         # 静态文件路由
         self._setup_static_routes()
@@ -205,6 +206,12 @@ class HTTPServer:
             except Exception as e:
                 self.logger.error(f"首次连接延迟初始化失败: {e}")
 
+        gaze_client_registered = False
+        if self._gaze_svc is not None:
+            self._gaze_svc.set_ws_event_loop(asyncio.get_running_loop())
+            self._gaze_svc.register_ws_client(ws)
+            gaze_client_registered = True
+
         try:
             # 发送初始数据
             initial_data = target_manager.get_radar_data(include_targets=False)
@@ -290,6 +297,13 @@ class HTTPServer:
                             }, ensure_ascii=False))
                         continue
 
+                    # tobii_hand：当前前端连接的是 HTTP 服务器上的 /ws，
+                    # 这里复用独立 WebSocketServer 的眼动 bbox 处理逻辑。
+                    if message_type == 'tobii_hand':
+                        reply = await websocket_server._handle_tobii_hand(message_data)
+                        await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                        continue
+
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'joystick_connect' and not self.joystick_handler:
                         try:
@@ -346,6 +360,8 @@ class HTTPServer:
         except Exception as e:
             self.logger.error(f"WebSocket处理错误: {e}", exc_info=True)
         finally:
+            if gaze_client_registered and self._gaze_svc is not None:
+                self._gaze_svc.unregister_ws_client(ws)
             websocket_server.remove_client(client_id)
             self.logger.info(f"WebSocket客户端已断开连接: {client_id}")
             
@@ -383,8 +399,7 @@ class HTTPServer:
         不重新创建任务——任务已由主服务器在 task_start 时创建。
 
         请求体示例（出现）:
-            {"box_visible": true, "task_id": 123, "bbox": [[x1,y1,x2,y2]],
-             "scream_data": [1920, 1080]}
+            {"box_visible": true, "task_id": 123, "bbox": [[x1,y1,x2,y2]]}
         请求体示例（消失）:
             {"box_visible": false, "task_id": 123}
         """
@@ -404,15 +419,17 @@ class HTTPServer:
 
         if box_visible:
             bbox = data.get("bbox") or []
-            scream_data = data.get("scream_data") or [1, 1]
-            if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
-                scream_data = [1, 1]
-            screen_size = (scream_data[0] or 1, scream_data[1] or 1)
-
+            regions = data.get("regions")
+            coordinate_space = data.get("coordinate_space")
+            screen_data = data.get("screen_data")
+            if not isinstance(screen_data, (list, tuple)) or len(screen_data) < 2:
+                screen_data = None
             updated = self._gaze_svc.set_task_bbox(
                 bbox=bbox,
-                screen_size=screen_size,
+                screen_size=screen_data,
                 task_id=str(task_id) if task_id is not None else None,
+                regions=regions if isinstance(regions, list) else None,
+                coordinate_space=coordinate_space if isinstance(coordinate_space, str) else None,
             )
             active_id = self._gaze_svc.get_active_task_id()
             return web.json_response({
@@ -425,7 +442,7 @@ class HTTPServer:
             # box_visible=False：清空 bbox（目标框消失，gaze 任务本身由主服务器驱动结束）
             updated = self._gaze_svc.set_task_bbox(
                 bbox=[],
-                screen_size=(1, 1),
+                screen_size=None,
                 task_id=str(task_id) if task_id is not None else None,
             )
             return web.json_response({
@@ -437,12 +454,59 @@ class HTTPServer:
     async def tobii_gaze_point_handler(self, request: web.Request) -> web.Response:
         """GET /tobii/gaze_point — 返回最新注视点坐标（供 visible_gaze.py 轮询）。"""
         if self._gaze_svc is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"眼动服务延迟初始化失败: {e}", exc_info=True)
+
+        if self._gaze_svc is None:
             return web.json_response({"ok": False, "msg": "眼动追踪服务未启动"}, status=503)
 
         point, ts = self._gaze_svc.get_latest_gaze_point()
         if point is None:
             return web.json_response({"ok": False, "msg": "注视点数据不可用或已过期"}, status=404)
         return web.json_response({"ok": True, "gaze_point": point, "timestamp": ts})
+
+    async def tobii_gaze_data_handler(self, request: web.Request) -> web.Response:
+        """GET /tobii/gaze_data — 返回最新注视点、活动任务和近期注视窗口。"""
+        if self._gaze_svc is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"眼动服务延迟初始化失败: {e}", exc_info=True)
+
+        if self._gaze_svc is None:
+            return web.json_response({"ok": False, "msg": "眼动追踪服务未启动"}, status=503)
+
+        def _query_int(name: str, default: int, min_value: int, max_value: int) -> int:
+            try:
+                value = int(request.query.get(name, str(default)))
+            except (TypeError, ValueError):
+                value = default
+            return max(min_value, min(max_value, value))
+
+        max_age_ms = _query_int("max_age_ms", 1000, 1, 60000)
+        limit = _query_int("limit", 60, 0, 600)
+
+        point, ts = self._gaze_svc.get_latest_gaze_point(max_age_ms=max_age_ms)
+        window = self._gaze_svc.get_gaze_window_snapshot()
+        if limit:
+            window = window[-limit:]
+
+        screen_size = self._gaze_svc.get_screen_size()
+        return web.json_response({
+            "ok": point is not None,
+            "msg": None if point is not None else "注视点数据不可用或已过期",
+            "gaze_point": point,
+            "timestamp": ts,
+            "active_task_id": self._gaze_svc.get_active_task_id(),
+            "screen_size": list(screen_size) if screen_size else None,
+            "window": window,
+            "window_count": len(window),
+            "max_age_ms": max_age_ms,
+        })
 
     async def start_server(self):
         """启动HTTP服务器"""

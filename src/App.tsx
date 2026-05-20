@@ -4,6 +4,7 @@ import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
 import ThreatList from './components/ThreatList';
+import GazePointOverlay, { type GazePointDebug } from './components/GazePointOverlay';
 import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
@@ -88,6 +89,8 @@ const App: React.FC = observer(() => {
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
   const [isStarted, setIsStarted] = useState<boolean>(false);
+  const [showGazePoint, setShowGazePoint] = useState<boolean>(false);
+  const [gazePointDebug, setGazePointDebug] = useState<GazePointDebug | null>(null);
   const [useJoystick, setUseJoystick] = useState<boolean>(false);
   const joystickInitedRef = useRef<boolean>(false);
   const lastStartRequestRef = useRef<{ key: string; timestamp: number } | null>(null);
@@ -457,6 +460,7 @@ const App: React.FC = observer(() => {
           },
         }}
       />
+      <GazePointOverlay enabled={showGazePoint} onGazePointChange={setGazePointDebug} />
       {/* ── Startup Modal ──────────────────────────────── */}
       {!isStarted && (
         <div style={{
@@ -651,6 +655,48 @@ const App: React.FC = observer(() => {
         )}
 
         {/* 右侧任务标签 */}
+        <Sep />
+        <button
+          type="button"
+          aria-pressed={showGazePoint}
+          onClick={() => setShowGazePoint(prev => !prev)}
+          style={{
+            margin: '0 14px',
+            padding: '4px 12px',
+            border: `1px solid ${showGazePoint ? '#1ccf7a' : '#1a5530'}`,
+            borderRadius: '3px',
+            background: showGazePoint ? 'rgba(0, 220, 120, 0.16)' : 'rgba(0, 40, 16, 0.35)',
+            color: showGazePoint ? '#84ffd0' : '#2aaa55',
+            fontFamily: "'SimHei', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+            fontSize: '13px',
+            letterSpacing: '0.12em',
+            lineHeight: 1.3,
+            cursor: 'pointer',
+            transition: 'all 0.18s ease',
+            boxShadow: showGazePoint ? '0 0 14px rgba(0, 255, 130, 0.18)' : 'none',
+          }}
+          title={showGazePoint ? '关闭注视点渲染' : '开启注视点渲染'}
+        >
+          注视点 {showGazePoint ? 'ON' : 'OFF'}
+        </button>
+
+        {showGazePoint && (
+          <div
+            style={{
+              padding: '0 8px',
+              color: gazePointDebug ? '#ffdd66' : '#6a5530',
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: '12px',
+              letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {gazePointDebug
+              ? `GAZE ${gazePointDebug.normalizedX.toFixed(3)},${gazePointDebug.normalizedY.toFixed(3)} | PX ${Math.round(gazePointDebug.pixelX)},${Math.round(gazePointDebug.pixelY)}`
+              : 'GAZE --,-- | PX --,--'}
+          </div>
+        )}
+
         <div style={{ marginLeft: 'auto', padding: '0 20px', fontSize: '13px', letterSpacing: '0.1em', color: '#3a7a48' }}>
           {displayLabel}
         </div>

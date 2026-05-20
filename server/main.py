@@ -13,6 +13,9 @@ import argparse
 # 添加当前目录到Python路径
 sys.path.insert(0, os.path.dirname(__file__))
 
+from env_loader import load_server_env
+load_server_env()
+
 from managers import config_manager, db_manager, info, error
 from network import websocket_server
 from joystick.joystick_event_handler import JoystickEventHandler
@@ -158,4 +161,4 @@ if __name__ == "__main__":
     info("雷达系统服务器 v2.0 - 模块化架构", "main")
     info("支持静态文件服务和WebSocket连接", "main")
     info("=" * 50, "main")
-    asyncio.run(main()) 
+    asyncio.run(main())

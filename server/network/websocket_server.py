@@ -325,7 +325,8 @@ class WebSocketServer:
 
         消息格式（目标出现）:
             {"type": "tobii_hand", "box_visible": true, "task_id": 123,
-             "bbox": [[x1,y1,x2,y2]], "scream_data": [1920, 1080]}
+             "coordinate_space": "display_area_normalized",
+             "regions": [{"shape": "rect", "left": x1, "top": y1, "right": x2, "bottom": y2}]}
         消息格式（目标消失）:
             {"type": "tobii_hand", "box_visible": false, "task_id": 123}
 
@@ -343,15 +344,18 @@ class WebSocketServer:
 
         if box_visible:
             bbox = data.get("bbox") or []
-            scream_data = data.get("scream_data") or [1, 1]
-            if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
-                scream_data = [1, 1]
-            screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+            regions = data.get("regions")
+            coordinate_space = data.get("coordinate_space")
+            screen_data = data.get("screen_data")
+            if not isinstance(screen_data, (list, tuple)) or len(screen_data) < 2:
+                screen_data = None
 
             updated = self._gaze_svc.set_task_bbox(
                 bbox=bbox,
-                screen_size=screen_size,
+                screen_size=screen_data,
                 task_id=str(task_id) if task_id is not None else None,
+                regions=regions if isinstance(regions, list) else None,
+                coordinate_space=coordinate_space if isinstance(coordinate_space, str) else None,
             )
             active_id = self._gaze_svc.get_active_task_id()
             return {
@@ -363,7 +367,7 @@ class WebSocketServer:
         else:
             updated = self._gaze_svc.set_task_bbox(
                 bbox=[],
-                screen_size=(1, 1),
+                screen_size=None,
                 task_id=str(task_id) if task_id is not None else None,
             )
             return {

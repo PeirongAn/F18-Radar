@@ -27,3 +27,4 @@ radar_env/
 .claude/
 server/venv/
 server/data/
+server/.env

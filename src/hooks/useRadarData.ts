@@ -171,6 +171,15 @@ class GlobalWebSocketManager {
         });
         return; // 提前返回，不执行后续的雷达数据处理逻辑
       }
+
+      if (rawData.type === 'attention_feedback') {
+        console.log('【全局WS】收到眼动注意力反馈:', rawData);
+        this.lastMessage = rawData;
+        this.updateState({
+          ...this.state,
+        });
+        return;
+      }
       
       // 添加调试日志 - 检查消息类型
       console.log('【调试】消息类型:', rawData.type);
@@ -195,6 +204,8 @@ class GlobalWebSocketManager {
       } else if (rawData.type === 'platform_task_config') {
         const pid = rawData.normalized?.platform_task_id ?? rawData.raw?.ID;
         messageId += '_' + String(pid ?? Date.now());
+      } else if (rawData.type === 'attention_feedback' && rawData.server_time_ms) {
+        messageId += '_' + rawData.server_time_ms;
       }
       
       // 如果这个消息已经处理过，则跳过
@@ -509,15 +520,23 @@ const useRadarData = (
     const top = promptPosition?.top ?? 0.0;
     const right = promptPosition?.right ?? left;
     const bottom = promptPosition?.bottom ?? top;
-    const screenWidth = typeof window !== 'undefined' ? window.screen?.width ?? 0 : 0;
-    const screenHeight = typeof window !== 'undefined' ? window.screen?.height ?? 0 : 0;
-
     // bbox 预留为集合，当前先上报一个提示框
     const bbox = [[left, top, right, bottom]];
+    const coordinateSpace = promptPosition?.gazeCoordinateSpace === 'physical'
+      ? 'physical_pixel'
+      : (promptPosition?.gazeCoordinateSpace || 'display_area_normalized');
+    const regions = [{ shape: 'rect', left, top, right, bottom }];
 
     return {
       bbox,
-      scream_data: [screenWidth, screenHeight],
+      regions,
+      coordinate_space: coordinateSpace,
+      ...(coordinateSpace === 'physical_pixel' ? {
+        screen_data: [
+          typeof window !== 'undefined' ? window.screen?.width ?? 0 : 0,
+          typeof window !== 'undefined' ? window.screen?.height ?? 0 : 0,
+        ],
+      } : {}),
       system_time: Date.now() * 1000, // 微秒
       box_visible: boxVisible,
       user_id: radarStore.userId || 1,
@@ -529,9 +548,14 @@ const useRadarData = (
   // gazerelation: 将提示框坐标统一转换为物理像素坐标（CSS像素 * DPR）
   const toPhysicalPromptPosition = useCallback((promptPosition: any) => {
     if (!promptPosition) return promptPosition;
-    if (promptPosition?.gazeCoordinateSpace === 'physical') return promptPosition;
+    if (
+      promptPosition?.gazeCoordinateSpace === 'physical' ||
+      promptPosition?.gazeCoordinateSpace === 'physical_pixel' ||
+      promptPosition?.gazeCoordinateSpace === 'display_area_normalized'
+    ) return promptPosition;
 
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const viewportWidth = typeof window !== 'undefined' ? Math.max(1, window.innerWidth || 1) : 1;
+    const viewportHeight = typeof window !== 'undefined' ? Math.max(1, window.innerHeight || 1) : 1;
     const left = Number(promptPosition.left ?? 0);
     const top = Number(promptPosition.top ?? 0);
     const right = Number(promptPosition.right ?? left);
@@ -541,16 +565,15 @@ const useRadarData = (
 
     return {
       ...promptPosition,
-      x: Math.round(left * dpr),
-      y: Math.round(top * dpr),
-      left: Math.round(left * dpr),
-      top: Math.round(top * dpr),
-      right: Math.round(right * dpr),
-      bottom: Math.round(bottom * dpr),
-      width: Math.round(width * dpr),
-      height: Math.round(height * dpr),
-      gazeCoordinateSpace: 'physical',
-      gazeDpr: dpr,
+      x: left / viewportWidth,
+      y: top / viewportHeight,
+      left: left / viewportWidth,
+      top: top / viewportHeight,
+      right: right / viewportWidth,
+      bottom: bottom / viewportHeight,
+      width: width / viewportWidth,
+      height: height / viewportHeight,
+      gazeCoordinateSpace: 'display_area_normalized',
     };
   }, []);
 
@@ -1097,6 +1120,12 @@ const useRadarData = (
 
     console.log('[useRadarData] Processing message:', message);
 
+    if (message.type === 'attention_feedback') {
+      console.log('[useRadarData] Processing gaze attention feedback:', message);
+      handleAntennaStatusResponse(message);
+      return;
+    }
+
     // 处理操纵杆数据消息
     if (message.type === 'joystick_data' && joystickEnabled) {
       console.log('[useRadarData] Processing joystick_data:', message.data);
@@ -1276,7 +1305,7 @@ const useRadarData = (
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 
-  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled]);
+  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled, handleAntennaStatusResponse]);
   
   const confirmAntennaAdjustmentHandled = useCallback(() => {
     console.log('Confirming to backend that antenna adjustment has been handled.');
@@ -1310,18 +1339,19 @@ const useRadarData = (
       // 处理雷达数据更新
       if (state.radarData) {
         setRadarData(state.radarData);
-        
-        // Process the most recent message that formed this radarData state IF it's new for the hook
-        const latestMsgFromGlobal = globalWS.getLastMessage();
-        if (latestMsgFromGlobal) {
-            let currentMsgId = latestMsgFromGlobal.type; // Simple ID for now, could be enhanced
-            if (latestMsgFromGlobal.timestamp) currentMsgId += '_' + latestMsgFromGlobal.timestamp;
+      }
 
-            if (currentMsgId !== lastProcessedMessageIdForHook.current) {
-                handleHookMessage(latestMsgFromGlobal);
-                lastProcessedMessageIdForHook.current = currentMsgId;
-            }
-        }
+      // Process the most recent message from the global WS, including non-radar broadcasts.
+      const latestMsgFromGlobal = globalWS.getLastMessage();
+      if (latestMsgFromGlobal) {
+          let currentMsgId = latestMsgFromGlobal.type; // Simple ID for now, could be enhanced
+          if (latestMsgFromGlobal.timestamp) currentMsgId += '_' + latestMsgFromGlobal.timestamp;
+          if (latestMsgFromGlobal.server_time_ms) currentMsgId += '_' + latestMsgFromGlobal.server_time_ms;
+
+          if (currentMsgId !== lastProcessedMessageIdForHook.current) {
+              handleHookMessage(latestMsgFromGlobal);
+              lastProcessedMessageIdForHook.current = currentMsgId;
+          }
       }
     };
     

@@ -79,21 +79,24 @@ class HTTPServer:
 
             if box_visible:
                 bbox = data.get("bbox") or []
-                scream_data = data.get("scream_data") or [1, 1]
-                if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
-                    scream_data = [1, 1]
-                screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+                regions = data.get("regions")
+                coordinate_space = data.get("coordinate_space")
+                screen_data = data.get("screen_data")
+                if not isinstance(screen_data, (list, tuple)) or len(screen_data) < 2:
+                    screen_data = None
                 # 优先使用前端传入的主服务器 task_id，不传则自动生成
                 external_task_id = data.get("task_id")
 
                 task_id = svc.start_task(
                     bbox=bbox,
-                    screen_size=screen_size,
+                    screen_size=screen_data,
                     task_id=external_task_id,
                     user_id=user_id,
                     task_source=task_source,
                     task_name=task_name,
                     system_time=system_time,
+                    regions=regions if isinstance(regions, list) else None,
+                    coordinate_space=coordinate_space if isinstance(coordinate_space, str) else None,
                 )
                 return jsonify({"ok": True, "msg": "窗口出现，任务开始", "task_id": task_id})
 
@@ -178,21 +181,24 @@ class WebSocketServer:
                 if box_visible:
                     print("[WS] 目标出现:", data)
                     bbox = data.get("bbox") or []
-                    scream_data = data.get("scream_data") or [1, 1]
-                    if not isinstance(scream_data, (list, tuple)) or len(scream_data) < 2:
-                        scream_data = [1, 1]
-                    screen_size = (scream_data[0] or 1, scream_data[1] or 1)
+                    regions = data.get("regions")
+                    coordinate_space = data.get("coordinate_space")
+                    screen_data = data.get("screen_data")
+                    if not isinstance(screen_data, (list, tuple)) or len(screen_data) < 2:
+                        screen_data = None
                     # 优先使用前端传入的主服务器 task_id，不传则自动生成
                     external_task_id = data.get("task_id")
 
                     task_id = svc.start_task(
                         bbox=bbox,
-                        screen_size=screen_size,
+                        screen_size=screen_data,
                         task_id=external_task_id,
                         user_id=user_id,
                         task_source=task_source,
                         task_name=task_name,
                         system_time=system_time,
+                        regions=regions if isinstance(regions, list) else None,
+                        coordinate_space=coordinate_space if isinstance(coordinate_space, str) else None,
                     )
                     await websocket.send(json.dumps({
                         "ok": True, "msg": "窗口出现，任务开始", "task_id": task_id

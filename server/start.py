@@ -12,6 +12,9 @@ import traceback
 # 添加当前目录到Python路径
 sys.path.insert(0, os.path.dirname(__file__))
 
+from env_loader import load_server_env
+load_server_env()
+
 def print_banner():
     """打印启动横幅"""
     print("=" * 60)
@@ -99,4 +102,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

@@ -28,7 +28,8 @@ BASE_URL = "http://127.0.0.1:8081/tobii/hand"
 def send_box_start():
     payload = {
         "bbox":  [[0.0, 0.0, 960, 540],[0.0, 0.0, 960, 540],[0.0, 0.0, 960, 540]],
-        "scream_data": [1920, 1080],
+        "coordinate_space": "physical_pixel",
+        "screen_data": [1920, 1080],
         "system_time": int(time.time() * 1000 * 1000),  # 微秒，和 Tobii system_time_stamp 对齐
         "box_visible": True,
         "user_id": 1,
@@ -55,7 +56,8 @@ def send_box_end(task_id):
     payload = {
         "task_id": task_id,
         "bbox":  [[0.0, 0.0, 960, 540],[0.0, 0.0, 960, 540],[0.0, 0.0, 960, 540]],
-        "scream_data": [1920, 1080],
+        "coordinate_space": "physical_pixel",
+        "screen_data": [1920, 1080],
         "system_time": int(time.time() * 1000 *1000 ),  # 微秒
         "box_visible": False,
         "user_id": 1,
