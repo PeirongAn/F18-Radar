@@ -409,10 +409,10 @@ class TaskScenarioManager:
         self.logger.debug("Config refreshed from file")
 
     def apply_repetition_override(self, n: int) -> None:
-        """外部平台 TaskNumber 注入：把当前场景的总重复次数扩容到 n。
+        """外部平台 TaskNumber 注入：把当前场景的总重复次数调整到 n。
 
-        语义：只允许增加总次数，保留当前 repetition_counter；较小或相同
-        的 TaskNumber 不回退进度，也不缩短任务。
+        语义：允许增加或减少总次数，但不能小于当前 repetition_counter。
+        这样既能保留已完成进度，也能让平台在仍未达到新总数时缩短任务。
         """
         if self.current_scenario is None:
             return
@@ -425,11 +425,14 @@ class TaskScenarioManager:
             current_total = max(1, int(existing_override if existing_override is not None else self.max_repetitions))
         except (TypeError, ValueError):
             current_total = self.max_repetitions
-        if n_int <= current_total:
+        current_rep = max(0, int(self.repetition_counter or 0))
+        if n_int < current_rep:
             self.logger.info(
-                "Ignored repetition override n=%s for user '%s' progress '%s' because current total is %s",
-                n_int, self.user_id, self.progress_task_type, current_total,
+                "Ignored repetition override n=%s for user '%s' progress '%s' because current repetition is %s",
+                n_int, self.user_id, self.progress_task_type, current_rep,
             )
+            return
+        if n_int == current_total:
             return
         self.current_scenario['max_repetitions_override'] = n_int
         self.max_repetitions = n_int
@@ -442,7 +445,7 @@ class TaskScenarioManager:
         else:
             self._save_to_db()
         self.logger.info(
-            "Expanded repetition override from %s to %s for user '%s' progress '%s'",
+            "Adjusted repetition override from %s to %s for user '%s' progress '%s'",
             current_total, n_int, self.user_id, self.progress_task_type,
         )
 
@@ -494,30 +497,32 @@ class TaskScenarioManager:
                     1,
                     int(existing_override if existing_override is not None else self.max_repetitions),
                 )
-                if n_int > current_total:
+                current_rep = max(0, int(self.repetition_counter or 0))
+                if n_int >= current_rep and n_int != current_total:
                     self.current_scenario['max_repetitions_override'] = n_int
                     self.max_repetitions = n_int
                     self.logger.info(
-                        "[REMOTE_TASK_COUNT] expanded total user=%s task_type=%s progress=%s "
+                        "[REMOTE_TASK_COUNT] adjusted total user=%s task_type=%s progress=%s "
                         "from=%s to=%s current_rep=%s",
                         self.user_id,
                         self.task_type,
                         self.progress_task_type,
                         current_total,
                         n_int,
-                        self.repetition_counter,
+                        current_rep,
                     )
                 else:
                     self.max_repetitions = current_total
                     self.logger.info(
                         "[REMOTE_TASK_COUNT] kept total user=%s task_type=%s progress=%s "
-                        "current_total=%s incoming_total=%s current_rep=%s",
+                        "current_total=%s incoming_total=%s current_rep=%s reason=%s",
                         self.user_id,
                         self.task_type,
                         self.progress_task_type,
                         current_total,
                         n_int,
-                        self.repetition_counter,
+                        current_rep,
+                        "below_current_progress" if n_int < current_rep else "unchanged",
                     )
             except (TypeError, ValueError):
                 pass

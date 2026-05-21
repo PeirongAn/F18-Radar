@@ -85,13 +85,37 @@ def test_tasknumber_can_expand_without_resetting_progress():
     assert next_scenario["max_repetitions_override"] == 5
 
 
-def test_tasknumber_does_not_shrink_existing_total():
+def test_tasknumber_can_shrink_when_new_total_keeps_current_progress():
     manager = make_manager()
     seed_completed_manual_scenario(manager, current=3, total=5)
 
-    manager.apply_platform_overlay({"repetition_total_override": 2})
+    manager.apply_platform_overlay({"repetition_total_override": 4})
 
     assert manager.repetition_counter == 3
+    assert manager.max_repetitions == 4
+    assert manager.current_scenario["repetition_info"]["total"] == 4
+    assert manager.current_scenario["max_repetitions_override"] == 4
+
+
+def test_tasknumber_can_shrink_to_current_progress_boundary():
+    manager = make_manager()
+    seed_completed_manual_scenario(manager, current=3, total=5)
+
+    manager.apply_platform_overlay({"repetition_total_override": 3})
+
+    assert manager.repetition_counter == 3
+    assert manager.max_repetitions == 3
+    assert manager.current_scenario["repetition_info"]["total"] == 3
+    assert manager.current_scenario["max_repetitions_override"] == 3
+
+
+def test_tasknumber_does_not_shrink_below_current_progress():
+    manager = make_manager()
+    seed_completed_manual_scenario(manager, current=4, total=5)
+
+    manager.apply_platform_overlay({"repetition_total_override": 3})
+
+    assert manager.repetition_counter == 4
     assert manager.max_repetitions == 5
     assert manager.current_scenario["repetition_info"]["total"] == 5
     assert manager.current_scenario["max_repetitions_override"] == 5
