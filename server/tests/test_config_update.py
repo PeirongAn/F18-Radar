@@ -33,9 +33,6 @@ DEFAULT_PAYLOAD = {
 async def send_config_update(payload: dict):
     print(f"连接 {WS_URL} ...")
     async with websockets.connect(WS_URL) as ws:
-        init_data = await ws.recv()
-        print(f"收到初始数据 ({len(init_data)} bytes)，跳过")
-
         msg = {"type": "config_update", **payload}
         print(f"发送:\n{json.dumps(msg, ensure_ascii=False, indent=2)}")
         await ws.send(json.dumps(msg))

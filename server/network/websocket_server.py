@@ -182,12 +182,6 @@ class WebSocketServer:
                 self.logger.error(f"首次连接延迟初始化失败: {e}")
 
         try:
-            # 初始连接时发送不包含目标数据的基础数据
-            initial_data = target_manager.get_radar_data(include_targets=False)
-            initial_json = json.dumps(initial_data)
-            await self._send_raw_message(websocket, initial_json)
-            self.logger.info(f"已发送基础数据（不含目标），长度: {len(initial_json)}")
-            
             # 接收并处理客户端消息
             while True:
                 try:

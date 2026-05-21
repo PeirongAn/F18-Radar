@@ -213,10 +213,6 @@ class HTTPServer:
             gaze_client_registered = True
 
         try:
-            # 发送初始数据
-            initial_data = target_manager.get_radar_data(include_targets=False)
-            await ws.send_str(json.dumps(initial_data))
-            self.logger.info(f"已发送WebSocket初始数据")
             # 消息处理循环
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:

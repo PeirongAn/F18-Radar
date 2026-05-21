@@ -186,6 +186,15 @@ class MessageHandler:
             progress_key=progress_key,
         )
         session_state['task_manager'] = task_manager
+
+        overlay_source = "pending"
+        overlay, platform_meta = consume_pending_for_task_start()
+        if not overlay:
+            overlay_source = "active"
+            overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
+        normalized_meta = (platform_meta or {}).get("normalized") or {}
+        if overlay and task_manager.current_scenario:
+            task_manager.apply_platform_overlay(overlay)
         
         # 从管理器获取下一个任务场景
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
@@ -215,12 +224,6 @@ class MessageHandler:
                 "is_practice": bool(is_practice),
             }]
 
-        overlay_source = "pending"
-        overlay, platform_meta = consume_pending_for_task_start()
-        if not overlay:
-            overlay_source = "active"
-            overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
-        normalized_meta = (platform_meta or {}).get("normalized") or {}
         self.logger.info(
             "[REMOTE_TASK_COUNT] radar overlay resolved user=%s task_type=%s progress=%s "
             "source=%s has_overlay=%s id=%s raw_TaskNumber=%s rep_override=%s "
@@ -329,7 +332,13 @@ class MessageHandler:
             init_response.get("repetition_info"),
             normalized_meta.get("platform_task_id"),
         )
-        return [init_response]
+        initial_radar_data = target_manager.get_radar_data(include_targets=False)
+        initial_radar_data.update({
+            "type": "radar_data",
+            "task_id": task_id,
+            "task_type": task_type,
+        })
+        return [init_response, initial_radar_data]
     
     async def _handle_settings_update(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                     client_event_owner: str) -> List[Dict[str, Any]]:
@@ -588,6 +597,15 @@ class MessageHandler:
         )
         session_state['sa_task_manager'] = task_manager
         event_owner = message.get('event_owner') or ('AI' if is_ai_active_request else 'manual')
+
+        overlay_source = "pending"
+        overlay, platform_meta = consume_pending_for_task_start()
+        if not overlay:
+            overlay_source = "active"
+            overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
+        normalized_meta = (platform_meta or {}).get("normalized") or {}
+        if overlay and task_manager.current_scenario:
+            task_manager.apply_platform_overlay(overlay)
         
         current_scenario = task_manager.get_next_task_parameters(is_ai_active_request)
         self.logger.info(
@@ -618,12 +636,6 @@ class MessageHandler:
 
         # 与 _handle_task_start 保持一致：消费外部平台 task_start 留下的 overlay，
         # 把 difficulty/AI/audio 以及 TaskNumber→max_repetitions 灌到 scenario 上。
-        overlay_source = "pending"
-        overlay, platform_meta = consume_pending_for_task_start()
-        if not overlay:
-            overlay_source = "active"
-            overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
-        normalized_meta = (platform_meta or {}).get("normalized") or {}
         self.logger.info(
             "[REMOTE_TASK_COUNT] sa overlay resolved user=%s task_type=%s progress=%s "
             "source=%s has_overlay=%s id=%s raw_TaskNumber=%s rep_override=%s "

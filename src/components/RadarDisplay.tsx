@@ -134,16 +134,12 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     return radarRepetitionInfo && typeof radarRepetitionInfo !== 'string' ? !!(radarRepetitionInfo as any).is_ai_active : false;
   }, [repetitionInfos]);
 
-  const isAllTasksCompleted = useMemo(() => {
+  const hasReachedRadarTaskTotal = useMemo(() => {
     const info = repetitionInfos['RADAR_TARGETING'];
     if (info === 'ALL_COMPLETED') return true;
     if (!info || typeof info === 'string') return false;
     const ri = info as any;
-    const repsDone = ri.current >= ri.total;
-    const scenariosDone = ri.scenario_index != null && ri.scenario_total != null
-      ? ri.scenario_index >= ri.scenario_total
-      : true;
-    return repsDone && scenariosDone;
+    return Number(ri.current) >= Number(ri.total);
   }, [repetitionInfos]);
 
   // 添加任务确认弹窗状态
@@ -168,6 +164,39 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const previousButton7Ref = React.useRef(false);
   const previousUserIdRef = React.useRef<string | undefined>(userId);
   const previousSubYRef = React.useRef<number>(0);
+  const completedRadarTaskKeysRef = React.useRef<Set<string>>(new Set());
+
+  const getCurrentRadarTaskKey = React.useCallback(() => {
+    if (radarStore.taskId !== null && radarStore.taskId !== undefined) {
+      return String(radarStore.taskId);
+    }
+
+    const info = repetitionInfos['RADAR_TARGETING'];
+    if (!info || typeof info === 'string') {
+      return null;
+    }
+
+    const ri = info as any;
+    return [
+      'pending',
+      userId ?? '',
+      ri.current ?? '',
+      ri.total ?? '',
+      ri.scenario_index ?? '',
+      ri.scenario_total ?? '',
+      ri.is_ai_active ? 'ai' : 'manual',
+      ri.is_practice ? 'practice' : 'formal',
+    ].join(':');
+  }, [repetitionInfos, userId, radarStore.taskId]);
+
+  const isCurrentRadarTaskAlreadyHandled = React.useCallback(() => {
+    if (repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED') {
+      return true;
+    }
+
+    const taskKey = getCurrentRadarTaskKey();
+    return !!taskKey && completedRadarTaskKeysRef.current.has(taskKey);
+  }, [getCurrentRadarTaskKey, repetitionInfos]);
   
   // 摇杆控制天线高度相关状态
   const [lockedAntennaElevation, setLockedAntennaElevation] = React.useState<number | null>(null);
@@ -205,6 +234,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     const previousUserId = previousUserIdRef.current;
     if (previousUserId && userId && previousUserId !== userId) {
       resetIffState(`user_id changed from ${previousUserId} to ${userId}`, false);
+      completedRadarTaskKeysRef.current.clear();
       previousButton1Ref.current = button1;
       previousButton2Ref.current = button2;
       previousButton7Ref.current = button7;
@@ -591,6 +621,20 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       onClearMessages();
     }
 
+    const taskKey = getCurrentRadarTaskKey();
+    if (taskKey && completedRadarTaskKeysRef.current.has(taskKey)) {
+      setShowMissionConfirm(false);
+      setIffMode(false);
+      console.log('[RadarDisplay] IFF confirm ignored because current radar task was already completed:', taskKey);
+      if (hasReachedRadarTaskTotal) {
+        onTaskCompleted?.();
+      }
+      return;
+    }
+    if (taskKey) {
+      completedRadarTaskKeysRef.current.add(taskKey);
+    }
+
     sendMessage?.({
       type: 'task_result_confirmed',
       task_type: 'RADAR_TARGETING',
@@ -598,10 +642,10 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       timestamp: Date.now(),
     });
 
-    if (isAllTasksCompleted) {
+    if (hasReachedRadarTaskTotal) {
       setShowMissionConfirm(false);
       onTaskCompleted?.();
-      console.log('[RadarDisplay] 所有任务轮次已完成，不再重置，等待问卷弹窗');
+      console.log('[RadarDisplay] Radar task total reached; showing completion notice.');
       return;
     }
 
@@ -614,7 +658,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [missionCanComplete, onClearMessages, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, isAllTasksCompleted]);
+  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
@@ -708,6 +752,17 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {
+    if (isCurrentRadarTaskAlreadyHandled()) {
+      setShowMissionConfirm(false);
+      setMissionCanComplete(false);
+      setIffMode(false);
+      console.log('[RadarDisplay] IFF click ignored because current radar task is already completed.');
+      if (hasReachedRadarTaskTotal) {
+        onTaskCompleted?.();
+      }
+      return;
+    }
+
     if (lockedTargetObject) {
       const targetInfo = calculateTargetInfo(lockedTargetObject);
       

@@ -75,8 +75,12 @@ class TaskScenarioManager:
         
         # 获取现有的 is_completed 状态（如果存在）
         current_is_completed = False  # 默认为未完成
+        current_is_ai_completed = False
+        current_is_manual_completed = False
         if cache_key in self._practice_memory_cache:
             current_is_completed = self._practice_memory_cache[cache_key].get('is_completed', False)
+            current_is_ai_completed = self._practice_memory_cache[cache_key].get('is_ai_completed', False)
+            current_is_manual_completed = self._practice_memory_cache[cache_key].get('is_manual_completed', False)
         
         self._practice_memory_cache[cache_key] = {
             'current_scenario': self.current_scenario,
@@ -85,6 +89,8 @@ class TaskScenarioManager:
             'manual_queue': self.manual_queue.copy(),
             'is_completed': current_is_completed  # 保持现有的完成状态，不自动修改
         }
+        self._practice_memory_cache[cache_key]['is_ai_completed'] = current_is_ai_completed
+        self._practice_memory_cache[cache_key]['is_manual_completed'] = current_is_manual_completed
         self.logger.debug(f"Practice mode progress saved to memory for user '{self.user_id}', progress '{self.progress_task_type}'")
 
     def _load_from_db(self, is_ai_active_request: bool) -> bool:
@@ -403,29 +409,41 @@ class TaskScenarioManager:
         self.logger.debug("Config refreshed from file")
 
     def apply_repetition_override(self, n: int) -> None:
-        """外部平台 TaskNumber 注入：把当前场景的总重复次数锁定为 n。
+        """外部平台 TaskNumber 注入：把当前场景的总重复次数扩容到 n。
 
-        语义：以"第一次设置"为准——若当前场景已有 override，则忽略本次。
-        会同时更新 self.max_repetitions 并把 override 持久化到当前场景，
-        以便下一次 task_start 创建新的 manager 时仍能加载到。
+        语义：只允许增加总次数，保留当前 repetition_counter；较小或相同
+        的 TaskNumber 不回退进度，也不缩短任务。
         """
         if self.current_scenario is None:
-            return
-        if self.current_scenario.get('max_repetitions_override') is not None:
             return
         try:
             n_int = max(1, int(n))
         except (TypeError, ValueError):
             return
+        existing_override = self.current_scenario.get('max_repetitions_override')
+        try:
+            current_total = max(1, int(existing_override if existing_override is not None else self.max_repetitions))
+        except (TypeError, ValueError):
+            current_total = self.max_repetitions
+        if n_int <= current_total:
+            self.logger.info(
+                "Ignored repetition override n=%s for user '%s' progress '%s' because current total is %s",
+                n_int, self.user_id, self.progress_task_type, current_total,
+            )
+            return
         self.current_scenario['max_repetitions_override'] = n_int
         self.max_repetitions = n_int
+        rep_info = self.current_scenario.get('repetition_info') or {}
+        if rep_info:
+            rep_info['total'] = n_int
+            self.current_scenario['repetition_info'] = rep_info
         if self.is_practice:
             self._save_to_memory()
         else:
             self._save_to_db()
         self.logger.info(
-            "Applied repetition override n=%s for user '%s' progress '%s'",
-            n_int, self.user_id, self.progress_task_type,
+            "Expanded repetition override from %s to %s for user '%s' progress '%s'",
+            current_total, n_int, self.user_id, self.progress_task_type,
         )
 
     def apply_platform_overlay(self, overlay: Dict[str, Any]) -> None:
@@ -469,13 +487,40 @@ class TaskScenarioManager:
             self.current_scenario['autonomy_level'] = overlay.get('autonomy_level')
 
         if overlay.get('repetition_total_override') is not None:
-            if self.current_scenario.get('max_repetitions_override') is None:
-                try:
-                    n_int = max(1, int(overlay['repetition_total_override']))
+            try:
+                n_int = max(1, int(overlay['repetition_total_override']))
+                existing_override = self.current_scenario.get('max_repetitions_override')
+                current_total = max(
+                    1,
+                    int(existing_override if existing_override is not None else self.max_repetitions),
+                )
+                if n_int > current_total:
                     self.current_scenario['max_repetitions_override'] = n_int
                     self.max_repetitions = n_int
-                except (TypeError, ValueError):
-                    pass
+                    self.logger.info(
+                        "[REMOTE_TASK_COUNT] expanded total user=%s task_type=%s progress=%s "
+                        "from=%s to=%s current_rep=%s",
+                        self.user_id,
+                        self.task_type,
+                        self.progress_task_type,
+                        current_total,
+                        n_int,
+                        self.repetition_counter,
+                    )
+                else:
+                    self.max_repetitions = current_total
+                    self.logger.info(
+                        "[REMOTE_TASK_COUNT] kept total user=%s task_type=%s progress=%s "
+                        "current_total=%s incoming_total=%s current_rep=%s",
+                        self.user_id,
+                        self.task_type,
+                        self.progress_task_type,
+                        current_total,
+                        n_int,
+                        self.repetition_counter,
+                    )
+            except (TypeError, ValueError):
+                pass
 
         rep_info = self.current_scenario.get('repetition_info') or {}
         rep_info['total'] = self.max_repetitions

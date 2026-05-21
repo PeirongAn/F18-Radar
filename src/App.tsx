@@ -878,7 +878,7 @@ const App: React.FC = observer(() => {
               letterSpacing: '0.12em',
               color: '#00cc55',
             }}>
-              本次任务已结束
+              本次任务结束
             </p>
             <button
               onClick={handleCompletionNoticeConfirm}
