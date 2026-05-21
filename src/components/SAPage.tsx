@@ -168,6 +168,28 @@ const iconColors = [
   '#ffff00', // SecondaryNavalIcon
 ];
 
+interface FanThreatPosition {
+  x: number;
+  y: number;
+  rank: number;
+  angle: number;
+  radius: number;
+}
+
+interface TobiiPromptPosition {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  gazeCoordinateSpace: 'physical_pixel';
+}
+
+const FAN_START_ANGLE = -132;
+const FAN_END_ANGLE = -48;
+const FAN_ANGLE_SPAN = FAN_END_ANGLE - FAN_START_ANGLE;
+
+const degToRad = (angle: number) => (angle * Math.PI) / 180;
+
 const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
@@ -195,12 +217,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
   const saCanvasRef = useRef<HTMLDivElement | null>(null);
   const endSaTobiiRoundRef = useRef(endSaTobiiRound);// 存储 endSaTobiiRound 函数的引用
-  const getHighestThreatPromptPositionRef = useRef<(() => {
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } | null) | null>(null);
+  const getHighestThreatPromptPositionRef = useRef<(() => TobiiPromptPosition | null) | null>(null);
+  const getSaTobiiPromptPositionRef = useRef<(() => TobiiPromptPosition | null) | null>(null);
+  const aiSelectedThreatRef = useRef<any | null>(null);
   const attentionIntervalRef = useRef<number | null>(null);
   const attentionTimeoutRef = useRef<number | null>(null);
   const [highestThreatAttentionVisible, setHighestThreatAttentionVisible] = useState(false);
@@ -249,6 +268,26 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 计算第二个圆的半径，使其与底部白线相切
   // 底部线的位置约在stageHeight减去一定边距，这里设置为高度的90%
   const bottomLineY = height * 0.9;
+  const fanGeometry = useMemo(() => {
+    const apexX = config.centerX;
+    const apexY = config.centerY - 50;
+    const outerRadius = Math.min(width, height) * 0.48;
+    const innerRadius = outerRadius * 0.62;
+    const pointAt = (radius: number, angle: number) => ({
+      x: apexX + radius * Math.cos(degToRad(angle)),
+      y: apexY + radius * Math.sin(degToRad(angle)),
+    });
+
+    return {
+      apexX,
+      apexY,
+      outerRadius,
+      innerRadius,
+      leftOuter: pointAt(outerRadius, FAN_START_ANGLE),
+      rightOuter: pointAt(outerRadius, FAN_END_ANGLE),
+      labelPoint: pointAt(outerRadius + 26, FAN_START_ANGLE + FAN_ANGLE_SPAN / 2),
+    };
+  }, [config.centerX, height, width]);
   const radius2 = bottomLineY - config.centerY; // 使第二个圆与底部线相切
   const radius3 = radius2 * 1.7; // 第三个圆的半径，原来是1.5倍，现在增大到1.6倍
   
@@ -264,6 +303,46 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 添加动态旋转角度状态
   const [dynamicRotation, setDynamicRotation] = React.useState(0);
+  const fanScanGeometry = useMemo(() => {
+    const startAngle = FAN_START_ANGLE + dynamicRotation;
+    const endAngle = FAN_END_ANGLE + dynamicRotation;
+    const pointAt = (radius: number, angle: number) => ({
+      x: fanGeometry.apexX + radius * Math.cos(degToRad(angle)),
+      y: fanGeometry.apexY + radius * Math.sin(degToRad(angle)),
+    });
+
+    return {
+      ...fanGeometry,
+      startAngle,
+      endAngle,
+      leftOuter: pointAt(fanGeometry.outerRadius, startAngle),
+      rightOuter: pointAt(fanGeometry.outerRadius, endAngle),
+      centerOuter: pointAt(fanGeometry.outerRadius, startAngle + FAN_ANGLE_SPAN / 2),
+      labelPoint: pointAt(fanGeometry.outerRadius + 26, startAngle + FAN_ANGLE_SPAN / 2),
+    };
+  }, [dynamicRotation, fanGeometry]);
+  const fanSweepGeometry = useMemo(() => {
+    const centerAngle = fanScanGeometry.startAngle + FAN_ANGLE_SPAN / 2;
+    const sweepWidth = 7;
+    const pointAt = (radius: number, angle: number) => ({
+      x: fanScanGeometry.apexX + radius * Math.cos(degToRad(angle)),
+      y: fanScanGeometry.apexY + radius * Math.sin(degToRad(angle)),
+    });
+    const makeWedge = (angle: number, width: number) => ({
+      left: pointAt(fanScanGeometry.outerRadius, angle - width / 2),
+      center: pointAt(fanScanGeometry.outerRadius, angle),
+      right: pointAt(fanScanGeometry.outerRadius, angle + width / 2),
+    });
+
+    return {
+      beam: makeWedge(centerAngle, sweepWidth),
+      trail: [1, 2, 3, 4, 5].map(index => ({
+        ...makeWedge(centerAngle - index * 6, sweepWidth + index * 2),
+        opacity: 0.18 / index,
+      })),
+      pulse: 0.32 + 0.12 * Math.sin(degToRad(dynamicRotation * 8)),
+    };
+  }, [dynamicRotation, fanScanGeometry]);
 
   // 方向字母和短线（E S W N，顺时针，带出头短线）
   const directionLabels = [
@@ -458,7 +537,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       });
 
       stopAutoStartSaTobiiRef.current = true;
-      const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      const promptPosition = getSaTobiiPromptPositionRef.current?.();
       console.log('gazerelation:查看结果按钮点击了,发送结束Tobii请求', promptPosition);
       beginSATobiiServe.current = false;
       endSaTobiiRound(promptPosition || undefined);
@@ -540,7 +619,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
    
       // 清除用户选择状态
-      setUserSelection(null);
+      // Keep the selected target solid while the result dialog is visible.
     }
   };
 
@@ -642,6 +721,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setShowTaskComplete(false); // 关闭任务完成弹窗
     setResult(undefined); // 清空已完成威胁
     setUserSelection(null); // 清空用户选择
+    aiSelectedThreatRef.current = null;
     setDynamicRotation(0); // 重置仪表盘旋转
     // 通知父组件重置详细信息显示状态
     if (onShowDetailedInfoChange) {
@@ -705,6 +785,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         setShowTaskComplete(false); // 关闭任务完成弹窗
         setResult(undefined); // 清空已完成威胁
         setUserSelection(null); // 清空用户选择
+        aiSelectedThreatRef.current = null;
         setDynamicRotation(0); // 重置仪表盘旋转
         // 通知父组件重置详细信息显示状态
         if (onShowDetailedInfoChange) {
@@ -817,8 +898,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       // 简化的位置分布：均匀分布在圆圈中
       const angle = (index / saThreats.length) * 2 * Math.PI;
       const r = radius2 + (index % 2) * 50; // 交替分布在内外圈
-      const x = config.centerX + r * Math.cos(angle) - ICON_SIZE / 2;
-      const y = (config.centerY - 50) + r * Math.sin(angle) - ICON_SIZE / 2;
+      const x = config.centerX + r * Math.cos(angle);
+      const y = (config.centerY - 50) + r * Math.sin(angle);
       
       return {
         x: Math.max(ICON_SIZE, Math.min(width - ICON_SIZE, x)),
@@ -1000,6 +1081,58 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 将对"选中"和"最高优先级"目标的引用移动到这里
   const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
   const selectedThreatId = useMemo(() => userSelection?.threat?.id, [userSelection]);
+  const eyeFeedbackThreatId = agentStore.isAIActive ? aiSelectedThreatRef.current?.id : null;
+  const fanThreatPositions = useMemo(() => {
+    const positions = new Map<string, FanThreatPosition>();
+    const clampPosition = (id: string, rawX: number, rawY: number) => {
+      const x = Math.max(ICON_SIZE, Math.min(width - ICON_SIZE, rawX));
+      const y = Math.max(ICON_SIZE, Math.min(height - ICON_SIZE, rawY));
+      const dx = x - fanScanGeometry.apexX;
+      const dy = y - fanScanGeometry.apexY;
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      const radius = Math.sqrt(dx * dx + dy * dy);
+
+      positions.set(id, {
+        x,
+        y,
+        rank: threatIdToSortedIndexMap.get(id) ?? 0,
+        angle,
+        radius,
+      });
+    };
+
+    if (useEnhancedProtocol && enhancedThreats.length > 0) {
+      enhancedThreats.forEach(threat => {
+        if (threat.position) {
+          clampPosition(threat.id, threat.position.x, threat.position.y);
+        }
+      });
+    } else {
+      saThreats.forEach((threat: any, index: number) => {
+        const position = threatPositions[index];
+        if (position) {
+          clampPosition(threat.id, position.x, position.y);
+        }
+      });
+    }
+
+    missiles.forEach(missile => {
+      clampPosition(missile.id, missile.x, missile.y);
+    });
+
+    return positions;
+  }, [enhancedThreats, fanScanGeometry.apexX, fanScanGeometry.apexY, height, missiles, saThreats, threatIdToSortedIndexMap, threatPositions, useEnhancedProtocol, width]);
+  const isPointInFanScan = useCallback((position: { x: number; y: number }) => {
+    const dx = position.x - fanScanGeometry.apexX;
+    const dy = position.y - fanScanGeometry.apexY;
+    const radius = Math.sqrt(dx * dx + dy * dy);
+    if (radius > fanScanGeometry.outerRadius) return false;
+
+    const angle = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    const start = (fanScanGeometry.startAngle + 360) % 360;
+    const delta = (angle - start + 360) % 360;
+    return delta <= FAN_ANGLE_SPAN;
+  }, [fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.outerRadius, fanScanGeometry.startAngle]);
   //gazerelation: 判断是否在增强逻辑后发送
   const beginSATobiiServe = useRef(false);
 
@@ -1026,37 +1159,43 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }, durationMs);
   }, []);
 
-  const getHighestThreatPromptPosition = useCallback((): {
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } | null => {
-    if (!highestPriorityThreat) return null;
+  const getThreatPromptPosition = useCallback((threat: any): TobiiPromptPosition | null => {
+    if (!threat) return null;
     const containerRect = saCanvasRef.current?.getBoundingClientRect();
     if (!containerRect) return null;
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     let centerX: number | null = null;
     let centerY: number | null = null;
     let boxSize = ICON_SIZE;
+    const isMissileThreat =
+      Boolean(threat.isMissile) ||
+      threat.type === 'MissileUp' ||
+      threat.type === 'MissileDown' ||
+      String(threat.type || '').toLowerCase().includes('missile');
+    const fanPosition = fanThreatPositions.get(threat.id);
+    if (fanPosition) {
+      centerX = fanPosition.x;
+      centerY = fanPosition.y;
+      boxSize = isMissileThreat ? 34 : ICON_SIZE;
+    }
 
-    if (highestPriorityThreat.isMissile) {
-      const missile = missiles.find(m => m.id === highestPriorityThreat.id);
+    if (centerX === null && centerY === null && isMissileThreat) {
+      const missile = missiles.find(m => m.id === threat.id);
       if (missile) {
         centerX = missile.x;
         centerY = missile.y;
         boxSize = 34;
       }
-    } else if (useEnhancedProtocol) {
+    } else if (centerX === null && centerY === null && useEnhancedProtocol) {
       const enhancedThreat = enhancedThreats.find(
-        t => !t.is_missile && t.id === highestPriorityThreat.id
+        t => !t.is_missile && t.id === threat.id
       );
       if (enhancedThreat?.position) {
         centerX = enhancedThreat.position.x;
         centerY = enhancedThreat.position.y;
       }
-    } else {
-      const threatIndex = saThreats.findIndex((t: any) => t.id === highestPriorityThreat.id);
+    } else if (centerX === null && centerY === null) {
+      const threatIndex = saThreats.findIndex((t: any) => t.id === threat.id);
       if (threatIndex >= 0) {
         const pos = threatPositions[threatIndex];
         if (pos) {
@@ -1095,11 +1234,24 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       top: physicalTop,
       right: physicalRight,
       bottom: physicalBottom,
+      gazeCoordinateSpace: 'physical_pixel',
     };
-  }, [highestPriorityThreat, missiles, useEnhancedProtocol, enhancedThreats, saThreats, threatPositions]);
+  }, [fanThreatPositions, missiles, useEnhancedProtocol, enhancedThreats, saThreats, threatPositions]);
+
+  const getHighestThreatPromptPosition = useCallback((): TobiiPromptPosition | null => {
+    return getThreatPromptPosition(highestPriorityThreat);
+  }, [getThreatPromptPosition, highestPriorityThreat]);
+
+  const getSaTobiiPromptPosition = useCallback((): TobiiPromptPosition | null => {
+    if (agentStore.isAIActive && aiSelectedThreatRef.current) {
+      return getThreatPromptPosition(aiSelectedThreatRef.current);
+    }
+    return getHighestThreatPromptPosition();
+  }, [getHighestThreatPromptPosition, getThreatPromptPosition]);
 
   useEffect(() => {
     const handleSaAttentionEvent = (event: Event) => {
+      if (!agentStore.isAIActive || !aiSelectedThreatRef.current) return;
       const customEvent = event as CustomEvent<{ durationMs?: number }>;
       const durationMs = Number(customEvent?.detail?.durationMs) || 3000;
       triggerHighestThreatAttention(durationMs);
@@ -1116,21 +1268,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     if (currentHighestThreatId !== lastHighestThreatIdRef.current) {
       // 进入新一轮威胁（或清空）时，允许重新自动开启Tobii回合
       stopAutoStartSaTobiiRef.current = false;
+      if (aiSelectedThreatRef.current?.id !== currentHighestThreatId) {
+        aiSelectedThreatRef.current = null;
+      }
       lastHighestThreatIdRef.current = currentHighestThreatId;
     }
   }, [highestPriorityThreat?.id]);
-
-  useEffect(() => {
-    const promptPosition = getHighestThreatPromptPosition();
-    console.log("gazerelation:highestPriorityThreat变换了");
-    if (!promptPosition) return;
-    if (stopAutoStartSaTobiiRef.current) return;
-    if(beginSATobiiServe.current) {
-        startSaTobiiRound(promptPosition);
-        console.log('gazerelation:startSaTobiiRound', promptPosition);
-        beginSATobiiServe.current = false;
-    }
-  }, [highestPriorityThreat, startSaTobiiRound]);
 
   useEffect(() => {
     endSaTobiiRoundRef.current = endSaTobiiRound;
@@ -1138,14 +1281,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   useEffect(() => {
     getHighestThreatPromptPositionRef.current = getHighestThreatPromptPosition;
-  }, [getHighestThreatPromptPosition]);
+    getSaTobiiPromptPositionRef.current = getSaTobiiPromptPosition;
+  }, [getHighestThreatPromptPosition, getSaTobiiPromptPosition]);
 
 
   // gazerelation: 监听页面卸载事件刷新，尝试结束 SA Tobii 回合
   useEffect(() => {
     const handleBeforeUnload = () => {
       // 尝试结束 SA Tobii 回合
-      const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      const promptPosition = getSaTobiiPromptPositionRef.current?.();
       endSaTobiiRoundRef.current(promptPosition || undefined);
     };
 
@@ -1158,7 +1302,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   }, []);
   useEffect(() => {
     return () => {
-      const promptPosition = getHighestThreatPromptPositionRef.current?.();
+      const promptPosition = getSaTobiiPromptPositionRef.current?.();
       console.log('gazerelation:生命周期结束，发送结束Tobii请求', promptPosition);
       endSaTobiiRoundRef.current(promptPosition || undefined);
       if (attentionIntervalRef.current) {
@@ -1223,6 +1367,18 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       isCorrect: !!isClickedHighestPriority
     });
 
+    if (eventOwner === 'AI') {
+      aiSelectedThreatRef.current = threat;
+      if (agentStore.isAIActive && beginSATobiiServe.current && !stopAutoStartSaTobiiRef.current) {
+        const promptPosition = getThreatPromptPosition(threat);
+        if (promptPosition) {
+          startSaTobiiRound(promptPosition);
+          beginSATobiiServe.current = false;
+          console.log('gazerelation:startSaTobiiRound AI selected target', promptPosition);
+        }
+      }
+    }
+
     // 注意：不在这里启用详细信息显示，只有点击"查看结果"时才显示分数
     // if (onShowDetailedInfoChange) {
     //   onShowDetailedInfoChange(true);
@@ -1251,7 +1407,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
       onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
-  }, [getCurrentHighestPriorityThreat, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef]);
+  }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -1259,14 +1415,16 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const Icon = missile.type === 'MissileUp' ? MissileUpIcon : MissileDownIcon;
       const isSelected = missile.id === selectedThreatId;
       const isHighestPriority = missile.id === highestPriorityThreat?.id;
-      const shouldAttentionBlink = isHighestPriority && highestThreatAttentionVisible;
+      const shouldAttentionBlink = missile.id === eyeFeedbackThreatId && highestThreatAttentionVisible;
+      const position = fanThreatPositions.get(missile.id) || { x: missile.x, y: missile.y };
+      const isScanned = isPointInFanScan(position);
 
       return (
-        <Group key={missile.id} onClick={() => handleThreatIconClick(missile, 'manual')}>
+        <Group key={missile.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(missile, 'manual')}>
           {shouldAttentionBlink && (
             <Rect
-              x={missile.x - 26}
-              y={missile.y - 31}
+              x={position.x - 26}
+              y={position.y - 31}
               width={52}
               height={62}
               stroke="#ff3333"
@@ -1278,8 +1436,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           {/* 用户选择的答案边框（黄色） */}
           {hasSelectionBeenMade && isSelected && (
             <Rect
-              x={missile.x - 20}
-              y={missile.y - 25}
+              x={position.x - 20}
+              y={position.y - 25}
               width={30 + 10} // missile icon size is 30
               height={30 + 20}
               stroke={showTaskComplete && isHighestPriority ? '#00ff00' : '#ffd700'} // 如果选择正确显示绿色，否则黄色
@@ -1291,8 +1449,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           {/* 正确答案边框（红色） */}
           {showTaskComplete && isHighestPriority && !isSelected && (
             <Rect
-              x={missile.x - 22}
-              y={missile.y - 27}
+              x={position.x - 22}
+              y={position.y - 27}
               width={30 + 14} // 稍微大一点以区分
               height={30 + 24}
               stroke='#ff4136' // 红色表示正确答案
@@ -1301,17 +1459,26 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               cornerRadius={5}
             />
           )}
+          {isSelected && (
+            <Circle
+              x={position.x}
+              y={position.y}
+              radius={16}
+              fill={showTaskComplete && isHighestPriority ? '#00ff66' : '#ffd700'}
+              opacity={0.48}
+            />
+          )}
           <Icon
-            x={missile.x}
-            y={missile.y}
+            x={position.x}
+            y={position.y}
             size={30}
             color="#ff0000"
             strokeWidth={3}
           />
           {/* 导弹图标中心点标记 - 黄色小圆点 */}
           <Circle
-            x={missile.x} // 导弹图标大小是30，所以中心点是 + 15
-            y={missile.y}
+            x={position.x} // 导弹图标大小是30，所以中心点是 + 15
+            y={position.y}
             radius={3}
             fill="#ffff00"
             stroke="#000000"
@@ -1433,6 +1600,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       missiles.forEach(missile => {
         allThreats.push({ threat: missile, pos: { x: missile.x, y: missile.y } });
       });
+      const fanThreats: { threat: any; pos: { x: number; y: number } }[] = [];
+      threatsWithScore.forEach(({ threat }) => {
+        const pos = fanThreatPositions.get(threat.id);
+        if (pos) {
+          fanThreats.push({ threat, pos });
+        }
+      });
+      allThreats = fanThreats;
 
       // 找最近目标
       let closest: any = null;
@@ -1456,7 +1631,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     }
     prevButton1Ref.current = button1;
-  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA]);
+  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, threatsWithScore, fanThreatPositions]);
 
   // 摇杆 button2：弹窗期间触发确认，否则触发"查看结果"
   React.useEffect(() => {
@@ -1785,6 +1960,108 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             
             <Stage width={width} height={height}>
               <Layer>
+                <Group>
+                  <Line
+                    points={[
+                      fanScanGeometry.apexX, fanScanGeometry.apexY,
+                      fanScanGeometry.leftOuter.x, fanScanGeometry.leftOuter.y,
+                      fanScanGeometry.rightOuter.x, fanScanGeometry.rightOuter.y,
+                    ]}
+                    closed
+                    fill="rgba(0, 60, 18, 0.035)"
+                  />
+                  {fanSweepGeometry.trail.map((trail, trailIndex) => (
+                    <Line
+                      key={`fan-sweep-trail-${trailIndex}`}
+                      points={[
+                        fanScanGeometry.apexX, fanScanGeometry.apexY,
+                        trail.left.x, trail.left.y,
+                        trail.center.x, trail.center.y,
+                        trail.right.x, trail.right.y,
+                      ]}
+                      closed
+                      fill="#00ff66"
+                      opacity={trail.opacity}
+                    />
+                  ))}
+                  <Line
+                    points={[
+                      fanScanGeometry.apexX, fanScanGeometry.apexY,
+                      fanSweepGeometry.beam.left.x, fanSweepGeometry.beam.left.y,
+                      fanSweepGeometry.beam.center.x, fanSweepGeometry.beam.center.y,
+                      fanSweepGeometry.beam.right.x, fanSweepGeometry.beam.right.y,
+                    ]}
+                    closed
+                    fill="#00ff66"
+                    opacity={fanSweepGeometry.pulse}
+                    shadowColor="#00ff66"
+                    shadowBlur={24}
+                  />
+                  {[0.35, 0.55, 0.75, 0.95].map((ratio, sweepIndex) => (
+                    <Arc
+                      key={`fan-sweep-range-${sweepIndex}`}
+                      x={fanScanGeometry.apexX}
+                      y={fanScanGeometry.apexY}
+                      radius={fanScanGeometry.outerRadius * ratio}
+                      angle={FAN_ANGLE_SPAN}
+                      rotation={fanScanGeometry.startAngle}
+                      stroke="#00ff66"
+                      strokeWidth={1}
+                      opacity={0.16 + sweepIndex * 0.03}
+                    />
+                  ))}
+                  <Arc
+                    x={fanScanGeometry.apexX}
+                    y={fanScanGeometry.apexY}
+                    radius={fanScanGeometry.outerRadius}
+                    angle={FAN_ANGLE_SPAN}
+                    rotation={fanScanGeometry.startAngle}
+                    stroke={config.lineColor}
+                    strokeWidth={2}
+                  />
+                  <Arc
+                    x={fanScanGeometry.apexX}
+                    y={fanScanGeometry.apexY}
+                    radius={fanScanGeometry.innerRadius}
+                    angle={FAN_ANGLE_SPAN}
+                    rotation={fanScanGeometry.startAngle}
+                    stroke={config.lineColor}
+                    strokeWidth={1}
+                  />
+                  <Line
+                    points={[fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.leftOuter.x, fanScanGeometry.leftOuter.y]}
+                    stroke={config.lineColor}
+                    strokeWidth={2}
+                  />
+                  <Line
+                    points={[fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.rightOuter.x, fanScanGeometry.rightOuter.y]}
+                    stroke={config.lineColor}
+                    strokeWidth={2}
+                  />
+                  <Line
+                    points={[fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.centerOuter.x, fanScanGeometry.centerOuter.y]}
+                    stroke={config.lineColor}
+                    strokeWidth={1}
+                    dash={[10, 8]}
+                    opacity={0.55}
+                  />
+                  <Circle
+                    x={fanScanGeometry.apexX}
+                    y={fanScanGeometry.apexY}
+                    radius={4}
+                    fill={config.lineColor}
+                  />
+                  <Text
+                    x={fanScanGeometry.labelPoint.x - 20}
+                    y={fanScanGeometry.labelPoint.y - 20}
+                    text="T0"
+                    fill={config.lineColor}
+                    fontSize={30}
+                    fontFamily="monospace"
+                    fontStyle="bold"
+                  />
+                </Group>
+                <Group visible={false}>
                 {/* 第一个圆（中心圆） */}
                 <Circle
                   x={config.centerX }
@@ -1870,6 +2147,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                 
                 {/* 刻度数值标记 */}
                 {renderScaleValues()}
+                </Group>
                 
                 {/* 底部横线 */}
                 <Line
@@ -1934,20 +2212,21 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   
                   const isSelected = threat.id === selectedThreatId;
                   const isHighestPriority = threat.id === highestPriorityThreat?.id;
-                  const shouldAttentionBlink = isHighestPriority && highestThreatAttentionVisible;
+                  const shouldAttentionBlink = threat.id === eyeFeedbackThreatId && highestThreatAttentionVisible;
                   
                   // 获取位置数据
-                  const position = threat.position // 如果威胁对象有position字段，直接使用
+                  const position = fanThreatPositions.get(threat.id) || (threat.position // 如果威胁对象有position字段，直接使用
                     ? threat.position 
-                    : threatPositions[idx]; // 否则使用计算的位置
+                    : threatPositions[idx]); // 否则使用计算的位置
                   
                   if (!position) {
                     console.warn(`⚠️ 威胁 ${threat.id} 没有位置数据`);
                     return null;
                   }
                   
+                  const isScanned = isPointInFanScan(position);
                   return (
-                    <Group key={threat.id} onClick={() => handleThreatIconClick(threat, 'manual')}>
+                    <Group key={threat.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(threat, 'manual')}>
                       {shouldAttentionBlink && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 12}
@@ -1985,6 +2264,27 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                           dash={[8, 4]} // 不同的虚线样式
                           cornerRadius={5}
                         />
+                      )}
+                      {isSelected && (
+                        threat.type?.includes('Air') ? (
+                          <Rect
+                            x={position.x - ICON_SIZE * 0.36}
+                            y={position.y - ICON_SIZE * 0.18}
+                            width={ICON_SIZE * 0.72}
+                            height={ICON_SIZE * 0.36}
+                            fill={showTaskComplete && isHighestPriority ? '#00ff66' : '#ffd700'}
+                            opacity={0.42}
+                            cornerRadius={2}
+                          />
+                        ) : (
+                          <Circle
+                            x={position.x}
+                            y={position.y}
+                            radius={ICON_SIZE * 0.3}
+                            fill={showTaskComplete && isHighestPriority ? '#00ff66' : '#ffd700'}
+                            opacity={0.42}
+                          />
+                        )
                       )}
                       <IconComp
                         x={position.x - ICON_SIZE / 2}
@@ -2139,9 +2439,10 @@ interface ArcProps {
   rotation?: number;
   stroke: string;
   strokeWidth: number;
+  opacity?: number;
 }
 
-const Arc: React.FC<ArcProps> = ({ x, y, radius, angle, rotation = 0, stroke, strokeWidth }) => {
+const Arc: React.FC<ArcProps> = ({ x, y, radius, angle, rotation = 0, stroke, strokeWidth, opacity = 1 }) => {
   // 转换角度为弧度
   const angleRad = (angle * Math.PI) / 180;
   const rotationRad = (rotation * Math.PI) / 180;
@@ -2162,6 +2463,7 @@ const Arc: React.FC<ArcProps> = ({ x, y, radius, angle, rotation = 0, stroke, st
       points={points}
       stroke={stroke}
       strokeWidth={strokeWidth}
+      opacity={opacity}
       lineCap="round"
     />
   );

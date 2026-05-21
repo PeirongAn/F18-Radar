@@ -698,16 +698,7 @@ class GazeService:
             if not self._task_active or self._current_task is None:
                 return
 
-            if not gaze_valid:
-                if self._progress_logs_enabled and self._consecutive_out_of_box_false > 0:
-                    self._log_info(
-                        "注视点无效，清除离框计数: "
-                        f"task_id={self._current_task.get('task_id')}, "
-                        f"cleared_count={self._consecutive_out_of_box_false}"
-                    )
-                self._consecutive_out_of_box_false = 0
-                self._last_out_of_box_log_count = 0
-            elif current_in_region is False:
+            if not gaze_valid or current_in_region is False:
                 self._consecutive_out_of_box_false += 1
                 current_count = self._consecutive_out_of_box_false
                 log_step = max(1, OUT_OF_BOX_FALSE_THRESHOLD // 4)
@@ -716,19 +707,21 @@ class GazeService:
                     (current_count == 1 or current_count - self._last_out_of_box_log_count >= log_step)
                 ):
                     self._last_out_of_box_log_count = current_count
+                    miss_reason = "invalid_gaze" if not gaze_valid else "outside_target"
                     self._log_info(
-                        "注视点在目标框外: "
+                        "注视点未命中目标: "
                         f"task_id={self._current_task.get('task_id')}, "
                         f"count={current_count}/{OUT_OF_BOX_FALSE_THRESHOLD}, "
-                        f"gaze={gaze_point}, bbox={task['bbox']}"
+                        f"reason={miss_reason}, gaze={gaze_point}, bbox={task['bbox']}"
                     )
                 if self._consecutive_out_of_box_false >= OUT_OF_BOX_FALSE_THRESHOLD:
                     should_push_feedback = True
                     feedback_task_id = self._current_task.get("task_id")
                     feedback_count = self._consecutive_out_of_box_false
                     self._log_info(
-                        "离框超时，准备触发提醒: "
-                        f"task_id={feedback_task_id}, count={feedback_count}, gaze={gaze_point}"
+                        "未命中目标超时，准备触发提醒: "
+                        f"task_id={feedback_task_id}, count={feedback_count}, "
+                        f"reason={'invalid_gaze' if not gaze_valid else 'outside_target'}, gaze={gaze_point}"
                     )
                     self._consecutive_out_of_box_false = 0
                     self._last_out_of_box_log_count = 0
@@ -753,7 +746,7 @@ class GazeService:
             "action": "flash_mode",
             "should_flash": True,
             "duration_ms": 3000,
-            "reason": "consecutive_out_of_box_false",
+            "reason": "consecutive_not_in_target",
             "consecutive_false_count": consecutive_count,
             "task_id": task_id,
             "server_time_ms": int(time.time() * 1000),

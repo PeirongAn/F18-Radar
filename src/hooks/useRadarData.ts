@@ -526,6 +526,7 @@ const useRadarData = (
       ? 'physical_pixel'
       : (promptPosition?.gazeCoordinateSpace || 'display_area_normalized');
     const regions = [{ shape: 'rect', left, top, right, bottom }];
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
     return {
       bbox,
@@ -533,8 +534,8 @@ const useRadarData = (
       coordinate_space: coordinateSpace,
       ...(coordinateSpace === 'physical_pixel' ? {
         screen_data: [
-          typeof window !== 'undefined' ? window.screen?.width ?? 0 : 0,
-          typeof window !== 'undefined' ? window.screen?.height ?? 0 : 0,
+          typeof window !== 'undefined' ? Math.round((window.screen?.width ?? 0) * dpr) : 0,
+          typeof window !== 'undefined' ? Math.round((window.screen?.height ?? 0) * dpr) : 0,
         ],
       } : {}),
       system_time: Date.now() * 1000, // 微秒
