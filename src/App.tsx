@@ -3,7 +3,7 @@ import Radar from './components/Radar';
 import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
-import ThreatList from './components/ThreatList';
+import ThreatList, { type ThreatListData } from './components/ThreatList';
 import GazePointOverlay, { type GazePointDebug } from './components/GazePointOverlay';
 import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
@@ -109,7 +109,7 @@ const App: React.FC = observer(() => {
   const lastEmergencyIdRef = useRef<string>('');
 
   // 威胁列表
-  const [threatListData, setThreatListData] = useState<any[]>([]);
+  const [threatListData, setThreatListData] = useState<ThreatListData>({ threats: [], attacks: [] });
   const [showDetailedInfo, setShowDetailedInfo] = useState(false);
 
   // 问卷弹出控制：外部可通过 WebSocket 消息 { type:'set_questionnaire_popup', enabled:bool } 修改
@@ -451,7 +451,7 @@ const App: React.FC = observer(() => {
   }, [sendResetSA, clearMessages]);
 
   /* ── 威胁列表 ─────────────────────────────────── */
-  const handleThreatListUpdate = useCallback((threatData: any[]) => {
+  const handleThreatListUpdate = useCallback((threatData: ThreatListData) => {
     setThreatListData(threatData);
   }, []);
 
@@ -798,7 +798,7 @@ const App: React.FC = observer(() => {
               />
               {activeDisplay === 'sa' && (
                 <div style={{ width: '800px', borderTop: '1px solid #0a2010' }}>
-                  <ThreatList threats={threatListData} showDetailedInfo={showDetailedInfo} />
+                  <ThreatList threats={threatListData.threats} attacks={threatListData.attacks} showDetailedInfo={showDetailedInfo} />
                 </div>
               )}
             </div>

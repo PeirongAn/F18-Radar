@@ -7,6 +7,8 @@ interface MissileDownIconProps {
   size?: number;
   color?: string;
   strokeWidth?: number;
+  fillColor?: string;
+  fillOpacity?: number;
 }
 
 const MissileDownIcon: React.FC<MissileDownIconProps> = ({
@@ -15,6 +17,8 @@ const MissileDownIcon: React.FC<MissileDownIconProps> = ({
   size = 20,
   color = '#ff0000',
   strokeWidth = 3,
+  fillColor,
+  fillOpacity = 1,
 }) => {
   // 计算导弹主体尺寸
   const bodyWidth = size * 0.4;
@@ -41,6 +45,8 @@ const MissileDownIcon: React.FC<MissileDownIconProps> = ({
         closed
         stroke={color}
         strokeWidth={strokeWidth}
+        fill={fillColor}
+        opacity={fillColor ? fillOpacity : 1}
       />
       
       {/* 导弹头部 */}
@@ -53,6 +59,8 @@ const MissileDownIcon: React.FC<MissileDownIconProps> = ({
         closed
         stroke={color}
         strokeWidth={strokeWidth}
+        fill={fillColor}
+        opacity={fillColor ? fillOpacity : 1}
       />
       
       {/* 导弹尾部 */}
@@ -65,6 +73,8 @@ const MissileDownIcon: React.FC<MissileDownIconProps> = ({
         closed
         stroke={color}
         strokeWidth={strokeWidth}
+        fill={fillColor}
+        opacity={fillColor ? fillOpacity : 1}
       />
       
       {/* 导弹尾焰 */}

@@ -1,11 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Stage, Layer, Circle, Line, Group, Text, Rect } from 'react-konva';
-import PrimaryAirIcon from '../icons/PrimaryAirIcon';
-import SecondaryAirIcon from '../icons/SecondaryAirIcon';
-import PrimaryAntiAircraftArtilleryIcon from '../icons/PrimaryAntiAircraftArtilleryIcon';
-import SecondaryAntiAircraftArtilleryIcon from '../icons/SecondaryAntiAircraftArtilleryIcon';
-import PrimaryNavalIcon from '../icons/PrimaryNavalIcon';
-import SecondaryNavalIcon from '../icons/SecondaryNavalIcon';
 import MissileUpIcon from '../icons/MissileUpIcon';
 import MissileDownIcon from '../icons/MissileDownIcon';
 import useRadarData from '../hooks/useRadarData';
@@ -16,6 +10,7 @@ import { observer } from 'mobx-react-lite';
 import radarStore from '../stores/RadarStore';
 import audioManager from '../managers/AudioManager';
 import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+import type { ThreatListData } from './ThreatList';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -26,7 +21,7 @@ interface SAPageProps {
   userId?: string;
   onResetSA?: () => void;
   onResetTargets?: () => void;
-  onThreatListUpdate?: (threatData: any[]) => void; // 新增：威胁数据回调
+  onThreatListUpdate?: (threatData: ThreatListData) => void; // 新增：威胁数据回调
   onShowDetailedInfoChange?: (showDetailed: boolean) => void; // 新增：详细信息显示状态回调
   onResultConfirmed?: () => void;
 }
@@ -51,6 +46,7 @@ interface MissileData {
   label: string;
   score: number;
   distance_from_center: number;
+  creation_timestamp?: number;
 }
 
 // 增强威胁位置接口
@@ -151,22 +147,78 @@ interface ButtonProps {
   };
 
 const ICON_SIZE = 48;
-const ICON_MAP = {
-  PrimaryAir: PrimaryAirIcon,
-  SecondaryAir: SecondaryAirIcon,
-  PrimaryAntiAircraftArtillery: PrimaryAntiAircraftArtilleryIcon,
-  SecondaryAntiAircraftArtillery: SecondaryAntiAircraftArtilleryIcon,
-  PrimaryNaval: PrimaryNavalIcon,
-  SecondaryNaval: SecondaryNavalIcon,
+const PRIMARY_THREAT_COLOR = '#ff3333';
+const SECONDARY_THREAT_COLOR = '#ffff00';
+const SELECTED_FILL_COLOR = '#ffd700';
+const RECOMMENDATION_COLOR = '#00ff66';
+const CORRECT_ANSWER_COLOR = '#ff4136';
+
+const getThreatStrokeColor = (type?: string, priority?: string): string => {
+  if (priority === 'high' || type?.includes('Primary')) return PRIMARY_THREAT_COLOR;
+  return SECONDARY_THREAT_COLOR;
 };
-const iconColors = [
-  '#ff0000', // PrimaryAirIcon
-  '#ffff00', // SecondaryAirIcon
-  '#ff0000', // PrimaryAntiAircraftArtilleryIcon
-  '#ffff00', // SecondaryAntiAircraftArtilleryIcon
-  '#ff0000', // PrimaryNavalIcon
-  '#ffff00', // SecondaryNavalIcon
-];
+
+interface StandardThreatIconProps {
+  x: number;
+  y: number;
+  size?: number;
+  stroke: string;
+  fill?: string;
+  label?: string;
+}
+
+const StandardThreatIcon: React.FC<StandardThreatIconProps> = ({ x, y, size = ICON_SIZE, stroke, fill, label }) => {
+  const totalWidth = size * 0.86;
+  const bodyWidth = size * 0.58;
+  const tipWidth = totalWidth - bodyWidth;
+  const bodyHeight = size * 0.38;
+  const startX = x - totalWidth / 2;
+  const startY = y - bodyHeight / 2;
+  const tipStartX = startX + bodyWidth;
+  const fillProps = fill ? { fill, opacity: 0.72 } : {};
+
+  return (
+    <Group>
+      <Rect
+        x={startX}
+        y={startY}
+        width={bodyWidth}
+        height={bodyHeight}
+        stroke={stroke}
+        strokeWidth={3}
+        fillEnabled={!!fill}
+        {...fillProps}
+      />
+      <Line
+        points={[
+          tipStartX, startY,
+          tipStartX + tipWidth, y,
+          tipStartX, startY + bodyHeight,
+        ]}
+        closed
+        stroke={stroke}
+        strokeWidth={3}
+        fillEnabled={!!fill}
+        {...fillProps}
+      />
+      {label && (
+        <Text
+          text={label}
+          x={startX}
+          y={startY}
+          width={bodyWidth}
+          height={bodyHeight}
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.max(10, bodyHeight * 0.58)}
+          fill={fill ? '#071000' : stroke}
+          fontFamily="monospace"
+          fontStyle="bold"
+        />
+      )}
+    </Group>
+  );
+};
 
 interface FanThreatPosition {
   x: number;
@@ -187,8 +239,36 @@ interface TobiiPromptPosition {
 const FAN_START_ANGLE = -132;
 const FAN_END_ANGLE = -48;
 const FAN_ANGLE_SPAN = FAN_END_ANGLE - FAN_START_ANGLE;
+const FAN_EDGE_COLOR = '#ffffff';
+const ATTACK_SOURCES = ['雷达', '友机', '装订'] as const;
 
 const degToRad = (angle: number) => (angle * Math.PI) / 180;
+
+const stableHash = (value: string): number => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+};
+
+const formatClockTime = (timestamp?: number, fallbackKey = ''): string => {
+  if (typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0) {
+    return new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false });
+  }
+
+  const hash = stableHash(fallbackKey || 'sa-threat');
+  const hour = String(hash % 24).padStart(2, '0');
+  const minute = String(Math.floor(hash / 24) % 60).padStart(2, '0');
+  const second = String(Math.floor(hash / 1440) % 60).padStart(2, '0');
+  return `${hour}:${minute}:${second}`;
+};
+
+const getStableAttackSource = (threat: any): string => {
+  if (ATTACK_SOURCES.includes(threat?.attackSource)) return threat.attackSource;
+  if (ATTACK_SOURCES.includes(threat?.attack_source)) return threat.attack_source;
+  return ATTACK_SOURCES[stableHash(String(threat?.id ?? threat?.label ?? 'attack')) % ATTACK_SOURCES.length];
+};
 
 const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed }) => {
   // 删除本地 mock threats
@@ -821,6 +901,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               score: data.missile_threat.score,
               label: data.missile_threat.label,
               distance_from_center: data.missile_threat.distance_from_center,
+              creation_timestamp: data.missile_threat.creation_timestamp,
             };
             
             setMissiles(prev => [...prev, enhancedMissile]);
@@ -1418,62 +1499,56 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const shouldAttentionBlink = missile.id === eyeFeedbackThreatId && highestThreatAttentionVisible;
       const position = fanThreatPositions.get(missile.id) || { x: missile.x, y: missile.y };
       const isScanned = isPointInFanScan(position);
+      const showRecommendationFrame = !showTaskComplete && shouldAttentionBlink;
+      const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
+      const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
 
       return (
         <Group key={missile.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(missile, 'manual')}>
-          {shouldAttentionBlink && (
+          {showRecommendationFrame && (
             <Rect
               x={position.x - 26}
               y={position.y - 31}
               width={52}
               height={62}
-              stroke="#ff3333"
+              stroke={RECOMMENDATION_COLOR}
               strokeWidth={3}
               dash={[4, 4]}
               cornerRadius={6}
             />
           )}
           {/* 用户选择的答案边框（黄色） */}
-          {hasSelectionBeenMade && isSelected && (
+          {showIncorrectSelectionFrame && (
             <Rect
               x={position.x - 20}
               y={position.y - 25}
               width={30 + 10} // missile icon size is 30
               height={30 + 20}
-              stroke={showTaskComplete && isHighestPriority ? '#00ff00' : '#ffd700'} // 如果选择正确显示绿色，否则黄色
+              stroke={SELECTED_FILL_COLOR}
               strokeWidth={2}
-              dash={[6, 3]} // 虚线样式
               cornerRadius={5}
             />
           )}
           {/* 正确答案边框（红色） */}
-          {showTaskComplete && isHighestPriority && !isSelected && (
+          {showCorrectAnswerFrame && (
             <Rect
               x={position.x - 22}
               y={position.y - 27}
               width={30 + 14} // 稍微大一点以区分
               height={30 + 24}
-              stroke='#ff4136' // 红色表示正确答案
+              stroke={CORRECT_ANSWER_COLOR}
               strokeWidth={3}
-              dash={[8, 4]} // 不同的虚线样式
               cornerRadius={5}
-            />
-          )}
-          {isSelected && (
-            <Circle
-              x={position.x}
-              y={position.y}
-              radius={16}
-              fill={showTaskComplete && isHighestPriority ? '#00ff66' : '#ffd700'}
-              opacity={0.48}
             />
           )}
           <Icon
             x={position.x}
             y={position.y}
             size={30}
-            color="#ff0000"
+            color={PRIMARY_THREAT_COLOR}
             strokeWidth={3}
+            fillColor={isSelected ? PRIMARY_THREAT_COLOR : undefined}
+            fillOpacity={0.72}
           />
           {/* 导弹图标中心点标记 - 黄色小圆点 */}
           <Circle
@@ -1888,16 +1963,22 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       ...allBaseThreats.filter((baseThreat: any) => !threatList.some(t => t.id === baseThreat.id)) // 剩余威胁在后
     ].map((threat, index) => {
       const { distance, score } = calculateThreatInfo(threat, index);
+      const displayType = TYPE_MAP[threat.type] || threat.type || '未知威胁';
+      const target = threat.target || threat.label || threat.source || '未知目标';
+      const creationTimestamp = Number(threat.creation_timestamp ?? threat._enhanced?.creation_timestamp);
       
       // 创建符合 ThreatData 接口的干净对象
       const cleanThreatData = {
         id: threat.id,
         type: threat.type,
-        label: threat.label || threat.source || '未知威胁',
+        label: target,
+        target,
+        rank: index + 1,
         index: index + 1,
         distance: distance || 0,
         score: score || 0,
-        displayType: TYPE_MAP[threat.type] || threat.type || '未知威胁',
+        displayType,
+        time: formatClockTime(creationTimestamp, String(threat.id ?? target)),
         priorityLevel: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : 
                       (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低',
         priorityColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : 
@@ -1906,19 +1987,28 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       
       return cleanThreatData;
     });
+    const attackRows = allThreats.map((threat, index) => ({
+      id: `attack-${threat.id}`,
+      number: `A-${String(index + 1).padStart(2, '0')}`,
+      type: threat.displayType || threat.type || '未知类型',
+      distance: threat.distance,
+      source: getStableAttackSource(threat),
+    }));
     
     console.log('【威胁列表】最终威胁列表数量:', allThreats.length);
     if (allThreats.length > 0) {
       console.log('【威胁列表】威胁详情:', allThreats.map(t => ({
         id: t.id, 
+        rank: t.rank,
         displayType: t.displayType,
         distance: t.distance, 
+        time: t.time,
         score: t.score?.toFixed(2),
         priority: t.priorityLevel
       })));
     }
     
-    onThreatListUpdate(allThreats);
+    onThreatListUpdate({ threats: allThreats, attacks: attackRows });
   }, [saThreats, missiles, threatPositions, config.centerX, config.centerY, onThreatListUpdate, 
       useEnhancedProtocol, enhancedThreats, threatList]); // 保持threatList以确保显示顺序更新
 
@@ -1960,6 +2050,28 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             
             <Stage width={width} height={height}>
               <Layer>
+                <Group>
+                  <Circle
+                    x={fanScanGeometry.apexX}
+                    y={fanScanGeometry.apexY}
+                    radius={fanScanGeometry.outerRadius}
+                    fill="rgba(0, 42, 12, 0.035)"
+                    stroke={config.lineColor}
+                    strokeWidth={1}
+                    opacity={0.72}
+                  />
+                  {[0.35, 0.62].map((ratio, index) => (
+                    <Circle
+                      key={`fan-base-ring-${index}`}
+                      x={fanScanGeometry.apexX}
+                      y={fanScanGeometry.apexY}
+                      radius={fanScanGeometry.outerRadius * ratio}
+                      stroke={config.lineColor}
+                      strokeWidth={1}
+                      opacity={0.28}
+                    />
+                  ))}
+                </Group>
                 <Group>
                   <Line
                     points={[
@@ -2016,7 +2128,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                     radius={fanScanGeometry.outerRadius}
                     angle={FAN_ANGLE_SPAN}
                     rotation={fanScanGeometry.startAngle}
-                    stroke={config.lineColor}
+                    stroke={FAN_EDGE_COLOR}
                     strokeWidth={2}
                   />
                   <Arc
@@ -2025,17 +2137,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                     radius={fanScanGeometry.innerRadius}
                     angle={FAN_ANGLE_SPAN}
                     rotation={fanScanGeometry.startAngle}
-                    stroke={config.lineColor}
+                    stroke={FAN_EDGE_COLOR}
                     strokeWidth={1}
                   />
                   <Line
                     points={[fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.leftOuter.x, fanScanGeometry.leftOuter.y]}
-                    stroke={config.lineColor}
+                    stroke={FAN_EDGE_COLOR}
                     strokeWidth={2}
                   />
                   <Line
                     points={[fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.rightOuter.x, fanScanGeometry.rightOuter.y]}
-                    stroke={config.lineColor}
+                    stroke={FAN_EDGE_COLOR}
                     strokeWidth={2}
                   />
                   <Line
@@ -2200,7 +2312,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   
                   return threatsToRender;
                 })().map((threat: any, idx: number) => {
-                  const IconComp = ICON_MAP[threat.type as keyof typeof ICON_MAP];
+                  const threatStrokeColor = getThreatStrokeColor(threat.type, threat.priority);
+                  const IconComp = StandardThreatIcon;
                   
                   // 添加调试信息
                   if (!IconComp) {
@@ -2225,72 +2338,53 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   }
                   
                   const isScanned = isPointInFanScan(position);
+                  const showRecommendationFrame = !showTaskComplete && shouldAttentionBlink;
+                  const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
+                  const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
                   return (
                     <Group key={threat.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(threat, 'manual')}>
-                      {shouldAttentionBlink && (
+                      {showRecommendationFrame && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 12}
                           y={position.y  - ICON_SIZE / 2 - 12}
                           width={ICON_SIZE + 24}
                           height={ICON_SIZE + 24}
-                          stroke="#ff3333"
+                          stroke={RECOMMENDATION_COLOR}
                           strokeWidth={3}
                           dash={[4, 4]}
                           cornerRadius={8}
                         />
                       )}
                       {/* 用户选择的答案边框（黄色/绿色） */}
-                      {hasSelectionBeenMade && isSelected && (
+                      {showIncorrectSelectionFrame && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 5}
                           y={position.y  - ICON_SIZE / 2 - 5}
                           width={ICON_SIZE + 10}
                           height={ICON_SIZE + 10}
-                          stroke={showTaskComplete && isHighestPriority ? '#00ff00' : '#ffd700'} // 如果选择正确显示绿色，否则黄色
+                          stroke={SELECTED_FILL_COLOR}
                           strokeWidth={2}
-                          dash={[6, 3]} // 虚线样式
                           cornerRadius={5}
                         />
                       )}
                       {/* 正确答案边框（红色） */}
-                      {showTaskComplete && isHighestPriority && !isSelected && (
+                      {showCorrectAnswerFrame && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 7}
                           y={position.y  - ICON_SIZE / 2 - 7}
                           width={ICON_SIZE + 14}
                           height={ICON_SIZE + 14}
-                          stroke='#ff4136' // 红色表示正确答案
+                          stroke={CORRECT_ANSWER_COLOR}
                           strokeWidth={3}
-                          dash={[8, 4]} // 不同的虚线样式
                           cornerRadius={5}
                         />
                       )}
-                      {isSelected && (
-                        threat.type?.includes('Air') ? (
-                          <Rect
-                            x={position.x - ICON_SIZE * 0.36}
-                            y={position.y - ICON_SIZE * 0.18}
-                            width={ICON_SIZE * 0.72}
-                            height={ICON_SIZE * 0.36}
-                            fill={showTaskComplete && isHighestPriority ? '#00ff66' : '#ffd700'}
-                            opacity={0.42}
-                            cornerRadius={2}
-                          />
-                        ) : (
-                          <Circle
-                            x={position.x}
-                            y={position.y}
-                            radius={ICON_SIZE * 0.3}
-                            fill={showTaskComplete && isHighestPriority ? '#00ff66' : '#ffd700'}
-                            opacity={0.42}
-                          />
-                        )
-                      )}
                       <IconComp
-                        x={position.x - ICON_SIZE / 2}
-                        y={position.y - ICON_SIZE / 2}
+                        x={position.x}
+                        y={position.y}
                         size={ICON_SIZE}
-                        color={iconColors[Object.keys(ICON_MAP).indexOf(threat.type as keyof typeof ICON_MAP)]}
+                        stroke={threatStrokeColor}
+                        fill={isSelected ? SELECTED_FILL_COLOR : undefined}
                         label={threat.label}
                       />
                       {/* 威胁图标中心点标记 - 黄色小圆点 */}

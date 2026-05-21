@@ -1,19 +1,32 @@
 import React from 'react';
 
-interface ThreatData {
+export interface ThreatRow {
   id: string;
   type: string;
+  target: string;
   label: string;
+  rank: number;
   index: number;
   distance: number;
-  score: number;
+  time: string;
   displayType: string;
-  priorityLevel: string;
   priorityColor: string;
 }
 
-interface ThreatListProps {
-  threats: ThreatData[];
+export interface AttackRow {
+  id: string;
+  number: string;
+  type: string;
+  distance: number;
+  source: string;
+}
+
+export interface ThreatListData {
+  threats: ThreatRow[];
+  attacks: AttackRow[];
+}
+
+interface ThreatListProps extends ThreatListData {
   showDetailedInfo?: boolean;
 }
 
@@ -21,185 +34,191 @@ const MONO: React.CSSProperties = {
   fontFamily: "'Share Tech Mono', monospace",
 };
 
-const ThreatList: React.FC<ThreatListProps> = ({ threats, showDetailedInfo = false }) => {
-  // grid columns: index | type | label | [distance] | [score] | priority-dot
-  const cols = showDetailedInfo
-    ? '28px 1fr 1fr 62px 58px 52px'
-    : '28px 1fr 1fr 52px';
-
-  const headerCellStyle: React.CSSProperties = {
-    ...MONO,
+const headerCellStyle: React.CSSProperties = {
+  ...MONO,
   fontSize: '12px',
-  letterSpacing: '0.18em',
-    color: '#4aaa60',
-    textTransform: 'uppercase',
-    padding: '4px 4px',
-  };
+  letterSpacing: '0.12em',
+  color: '#4aaa60',
+  padding: '5px 4px',
+};
 
-  const rowBase: React.CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: cols,
-    alignItems: 'center',
-    padding: '5px 4px',
-    borderBottom: '1px solid #071a0a',
-    gap: '4px',
-  };
+const cellBase: React.CSSProperties = {
+  ...MONO,
+  fontSize: '13px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const formatDistance = (distance: number) => (
+  typeof distance === 'number' && Number.isFinite(distance) && distance >= 0
+    ? distance.toFixed(1)
+    : '--'
+);
+
+const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedInfo = false }) => {
+  void showDetailedInfo;
+
+  const renderEmpty = (text: string) => (
+    <div style={{
+      ...MONO,
+      fontSize: '14px',
+      color: '#4a9a55',
+      textAlign: 'center',
+      padding: '12px 0',
+      letterSpacing: '0.1em',
+    }}>
+      {text}
+    </div>
+  );
 
   return (
     <div style={{
       padding: '10px 14px 12px',
       background: 'rgba(0,8,3,0.9)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px',
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)',
+      gap: '12px',
     }}>
-
-      {/* ── Panel title ── */}
-      <div className="panel-label">威胁列表</div>
-
-      {(!threats || threats.length === 0) ? (
-        <div style={{
-          ...MONO,
-      fontSize: '14px',
-      color: '#4a9a55',
-      textAlign: 'center',
-      padding: '12px 0',
-          letterSpacing: '0.1em',
-        }}>
-          暂无威胁数据
-        </div>
-      ) : (
-        <div style={{
-          border: '1px solid #0d2a10',
-          borderRadius: '2px',
-          overflow: 'hidden',
-        }}>
-
-          {/* ── Header ── */}
+      <section style={{ minWidth: 0 }}>
+        <div className="panel-label">威胁列表</div>
+        {(!threats || threats.length === 0) ? renderEmpty('暂无威胁数据') : (
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: cols,
-            gap: '4px',
-            background: 'rgba(0,20,8,0.8)',
-            borderBottom: '1px solid #0d3018',
-            padding: '0 4px',
+            border: '1px solid #0d2a10',
+            borderRadius: '2px',
+            overflow: 'hidden',
           }}>
-            <div style={{ ...headerCellStyle, textAlign: 'center' }}>#</div>
-            <div style={headerCellStyle}>类型</div>
-            <div style={headerCellStyle}>标签</div>
-            {showDetailedInfo && <div style={{ ...headerCellStyle, textAlign: 'right' }}>距离</div>}
-            {showDetailedInfo && <div style={{ ...headerCellStyle, textAlign: 'right' }}>得分</div>}
-            <div style={{ ...headerCellStyle, textAlign: 'center' }}>优先</div>
-          </div>
-
-          {/* ── Rows ── */}
-          <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-            {threats.map((threat, idx) => {
-              const isFirst = idx === 0;
-              return (
-                <div
-                  key={threat.id}
-                  style={{
-                    ...rowBase,
-                    background: isFirst
-                      ? 'rgba(0,30,10,0.7)'
-                      : idx % 2 === 0
-                        ? 'rgba(0,10,4,0.6)'
-                        : 'rgba(0,6,2,0.5)',
-                    borderLeft: isFirst ? `2px solid ${threat.priorityColor}` : '2px solid transparent',
-                  }}
-                >
-                  {/* # */}
-                  <div style={{
-                    ...MONO,
-    fontSize: '13px',
-    color: isFirst ? '#00cc55' : '#4a9a55',
-    textAlign: 'center',
-                    fontWeight: isFirst ? 'bold' : 'normal',
-                  }}>
-                    {threat.index}
-                  </div>
-
-                  {/* 类型 */}
-                  <div style={{
-                    ...MONO,
-    fontSize: '14px',
-    color: isFirst ? '#00cc55' : '#4db87a',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    fontWeight: isFirst ? 'bold' : 'normal',
-                  }} title={threat.displayType}>
-                    {threat.displayType}
-                  </div>
-
-                  {/* 标签 */}
-                  <div style={{
-                    ...MONO,
-    fontSize: '14px',
-    color: isFirst ? '#c8a800' : '#8aaa66',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }} title={threat.label}>
-                    {threat.label}
-                  </div>
-
-                  {/* 距离 */}
-                  {showDetailedInfo && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '72px 1fr 1fr 60px 78px',
+              gap: '4px',
+              background: 'rgba(0,20,8,0.8)',
+              borderBottom: '1px solid #0d3018',
+              padding: '0 4px',
+            }}>
+              <div style={{ ...headerCellStyle, textAlign: 'center' }}>威胁排序</div>
+              <div style={headerCellStyle}>目标</div>
+              <div style={headerCellStyle}>类型</div>
+              <div style={{ ...headerCellStyle, textAlign: 'right' }}>距离</div>
+              <div style={{ ...headerCellStyle, textAlign: 'center' }}>时间</div>
+            </div>
+            <div style={{ maxHeight: '190px', overflowY: 'auto' }}>
+              {threats.map((threat, idx) => {
+                const isFirst = idx === 0;
+                return (
+                  <div
+                    key={threat.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '72px 1fr 1fr 60px 78px',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '5px 4px',
+                      borderBottom: '1px solid #071a0a',
+                      background: isFirst
+                        ? 'rgba(0,30,10,0.7)'
+                        : idx % 2 === 0
+                          ? 'rgba(0,10,4,0.6)'
+                          : 'rgba(0,6,2,0.5)',
+                      borderLeft: isFirst ? `2px solid ${threat.priorityColor}` : '2px solid transparent',
+                    }}
+                  >
                     <div style={{
-                      ...MONO,
-                      fontSize: '13px',
+                      ...cellBase,
+                      color: isFirst ? '#00cc55' : '#4a9a55',
+                      textAlign: 'center',
+                      fontWeight: isFirst ? 'bold' : 'normal',
+                    }}>
+                      {threat.rank}
+                    </div>
+                    <div style={{
+                      ...cellBase,
+                      color: isFirst ? '#c8a800' : '#8aaa66',
+                    }} title={threat.target}>
+                      {threat.target}
+                    </div>
+                    <div style={{
+                      ...cellBase,
+                      color: isFirst ? '#00cc55' : '#4db87a',
+                      fontWeight: isFirst ? 'bold' : 'normal',
+                    }} title={threat.displayType}>
+                      {threat.displayType}
+                    </div>
+                    <div style={{
+                      ...cellBase,
                       color: '#4db87a',
                       textAlign: 'right',
                     }}>
-                      {typeof threat.distance === 'number' && threat.distance >= 0
-                        ? threat.distance.toFixed(1)
-                        : '--'}
+                      {formatDistance(threat.distance)}
                     </div>
-                  )}
-
-                  {/* 得分 */}
-                  {showDetailedInfo && (
                     <div style={{
-                      ...MONO,
-                      fontSize: '13px',
-                      color: isFirst ? '#c8a800' : '#aa8833',
-                      textAlign: 'right',
-                      fontWeight: isFirst ? 'bold' : 'normal',
+                      ...cellBase,
+                      color: isFirst ? '#cccccc' : '#778877',
+                      textAlign: 'center',
                     }}>
-                      {typeof threat.score === 'number' && threat.score >= 0
-                        ? threat.score.toFixed(2)
-                        : '--'}
+                      {threat.time}
                     </div>
-                  )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </section>
 
-                  {/* 优先级 */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                    <span style={{
-                      display: 'inline-block',
-                      width: '6px',
-                      height: '6px',
-                      borderRadius: '50%',
-                      backgroundColor: threat.priorityColor,
-                      boxShadow: `0 0 4px ${threat.priorityColor}`,
-                      flexShrink: 0,
-                    }} />
-                    <span style={{
-                      ...MONO,
-                    fontSize: '13px',
-                    color: isFirst ? '#cccccc' : '#778877',
-                    }}>
-                      {threat.priorityLevel}
-                    </span>
+      <section style={{ minWidth: 0 }}>
+        <div className="panel-label">攻击列表</div>
+        {(!attacks || attacks.length === 0) ? renderEmpty('暂无攻击数据') : (
+          <div style={{
+            border: '1px solid #0d2a10',
+            borderRadius: '2px',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '58px 1fr 60px 56px',
+              gap: '4px',
+              background: 'rgba(0,20,8,0.8)',
+              borderBottom: '1px solid #0d3018',
+              padding: '0 4px',
+            }}>
+              <div style={{ ...headerCellStyle, textAlign: 'center' }}>编号</div>
+              <div style={headerCellStyle}>类型</div>
+              <div style={{ ...headerCellStyle, textAlign: 'right' }}>距离</div>
+              <div style={{ ...headerCellStyle, textAlign: 'center' }}>来源</div>
+            </div>
+            <div style={{ maxHeight: '190px', overflowY: 'auto' }}>
+              {attacks.map((attack, idx) => (
+                <div
+                  key={attack.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '58px 1fr 60px 56px',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '5px 4px',
+                    borderBottom: '1px solid #071a0a',
+                    background: idx % 2 === 0 ? 'rgba(0,10,4,0.6)' : 'rgba(0,6,2,0.5)',
+                  }}
+                >
+                  <div style={{ ...cellBase, color: '#4a9a55', textAlign: 'center' }}>
+                    {attack.number}
+                  </div>
+                  <div style={{ ...cellBase, color: '#4db87a' }} title={attack.type}>
+                    {attack.type}
+                  </div>
+                  <div style={{ ...cellBase, color: '#4db87a', textAlign: 'right' }}>
+                    {formatDistance(attack.distance)}
+                  </div>
+                  <div style={{ ...cellBase, color: '#c8a800', textAlign: 'center' }}>
+                    {attack.source}
                   </div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
-
-        </div>
-      )}
+        )}
+      </section>
     </div>
   );
 };
