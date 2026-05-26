@@ -27,6 +27,7 @@ class HTTPServer:
         self._routes_setup = False
         self.joystick_handler = None
         self._gaze_svc = None
+        self._physio_svc = None
         self._setup_routes()
         self.seen_users = set()
         # 新增
@@ -48,6 +49,10 @@ class HTTPServer:
     def set_gaze_service(self, gaze_svc) -> None:
         """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
         self._gaze_svc = gaze_svc
+
+    def set_physio_service(self, physio_svc) -> None:
+        """Inject the optional physiological recording service."""
+        self._physio_svc = physio_svc
     
     def _setup_routes(self):
         """设置路由"""
@@ -62,9 +67,15 @@ class HTTPServer:
         self.app.router.add_post('/api/questionnaire', self.questionnaire_submit_handler)
 
         # 眼动追踪路由
+        self.app.router.add_get('/tobii/test-ui', self.tobii_test_ui_handler)
         self.app.router.add_post('/tobii/hand', self.tobii_hand_handler)
+        self.app.router.add_post('/tobii/marker', self.tobii_marker_handler)
         self.app.router.add_get('/tobii/gaze_point', self.tobii_gaze_point_handler)
         self.app.router.add_get('/tobii/gaze_data', self.tobii_gaze_data_handler)
+        self.app.router.add_get('/physio/check', self.physio_check_handler)
+        self.app.router.add_get('/physio/dashboard', self.physio_dashboard_handler)
+        self.app.router.add_get('/api/physio/status', self.physio_status_handler)
+        self.app.router.add_post('/api/physio/export', self.physio_export_handler)
 
         # 静态文件路由
         self._setup_static_routes()
@@ -91,7 +102,7 @@ class HTTPServer:
         """SPA fallback处理器，为所有未找到的路由返回index.html"""
         # 检查请求的路径是否是API或WebSocket路径
         path = request.path
-        if path.startswith('/ws') or path.startswith('/api'):
+        if path.startswith('/ws') or path.startswith('/api') or path.startswith('/physio'):
             raise web.HTTPNotFound()
         
         # 检查是否请求的是静态资源文件（有文件扩展名）
@@ -301,6 +312,11 @@ class HTTPServer:
                         continue
 
                     # 收到 joystick_connect 时触发延迟初始化
+                    if message_type == 'tobii_marker':
+                        reply = await websocket_server._handle_tobii_marker(message_data)
+                        await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                        continue
+
                     if message_type == 'joystick_connect' and not self.joystick_handler:
                         try:
                             from main import initialize_system
@@ -369,6 +385,81 @@ class HTTPServer:
             
         return ws
     
+    async def physio_check_handler(self, request: web.Request) -> web.Response:
+        """GET /physio/check - standalone pre-task physio service check page."""
+        from physio.pages import check_page_html
+
+        return web.Response(text=check_page_html(), content_type="text/html")
+
+    async def physio_dashboard_handler(self, request: web.Request) -> web.Response:
+        """GET /physio/dashboard - live physio monitor page."""
+        from physio.pages import dashboard_html
+
+        return web.Response(text=dashboard_html(), content_type="text/html")
+
+    async def physio_status_handler(self, request: web.Request) -> web.Response:
+        """GET /api/physio/status."""
+        if self._physio_svc is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"Physio service delayed initialization failed: {e}", exc_info=True)
+
+        if self._physio_svc is None:
+            return web.json_response({
+                "ok": False,
+                "enabled": False,
+                "running": False,
+                "error": "physio ring service is disabled or failed to initialize",
+                "state": {},
+                "collector": {"streams": {}, "warnings": ["Physio service is not available."]},
+                "sample_storage": None,
+                "sample_file": {},
+                "formal_sample_count": 0,
+            })
+        try:
+            return web.json_response(self._physio_svc.status_payload())
+        except Exception as e:
+            self.logger.error(f"Physio status failed: {e}", exc_info=True)
+            return web.json_response({
+                "ok": False,
+                "enabled": True,
+                "running": False,
+                "error": str(e),
+                "state": {},
+                "collector": {"streams": {}, "warnings": [str(e)]},
+                "sample_storage": None,
+                "sample_file": {},
+                "formal_sample_count": 0,
+            }, status=500)
+
+    async def physio_export_handler(self, request: web.Request) -> web.Response:
+        """POST /api/physio/export."""
+        if self._physio_svc is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"Physio service delayed initialization failed: {e}", exc_info=True)
+
+        if self._physio_svc is None:
+            return web.json_response({"ok": False, "msg": "physio ring service is not available"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        try:
+            result = self._physio_svc.export_data(
+                subject_id=data.get("subject_id"),
+                run_id=data.get("run_id"),
+                trial_id=data.get("trial_id"),
+            )
+            return web.json_response({"ok": True, **result})
+        except Exception as e:
+            self.logger.error(f"Physio export failed: {e}", exc_info=True)
+            return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
     async def questionnaire_submit_handler(self, request: web.Request) -> web.Response:
         """POST /api/questionnaire — 保存问卷提交到数据库"""
         try:
@@ -390,6 +481,45 @@ class HTTPServer:
         except Exception as e:
             self.logger.error(f"保存问卷失败: {e}", exc_info=True)
             return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
+    async def tobii_test_ui_handler(self, request: web.Request) -> web.Response:
+        """GET /tobii/test-ui - standalone Tobii gaze test console."""
+        from tobii.test_ui import tobii_test_ui_html
+
+        return web.Response(text=tobii_test_ui_html(), content_type="text/html")
+
+    async def tobii_marker_handler(self, request: web.Request) -> web.Response:
+        """POST /tobii/marker - record a Tobii gaze marker."""
+        if self._gaze_svc is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"Tobii marker delayed initialization failed: {e}", exc_info=True)
+
+        if self._gaze_svc is None:
+            return web.json_response({"ok": False, "msg": "Tobii gaze service is not available"}, status=503)
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "msg": "request body must be JSON"}, status=400)
+
+        try:
+            marker = self._gaze_svc.record_marker(
+                name=data.get("name") or data.get("marker") or data.get("event") or "",
+                payload=data.get("payload") if isinstance(data.get("payload"), dict) else {},
+                task_id=data.get("task_id"),
+                user_id=data.get("user_id", ""),
+                system_time=data.get("system_time"),
+            )
+        except ValueError as e:
+            return web.json_response({"ok": False, "msg": str(e)}, status=400)
+        except Exception as e:
+            self.logger.error(f"Tobii marker failed: {e}", exc_info=True)
+            return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
+        return web.json_response({"ok": True, "type": "tobii_marker_result", "marker": marker})
 
     async def tobii_hand_handler(self, request: web.Request) -> web.Response:
         """

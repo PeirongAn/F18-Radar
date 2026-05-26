@@ -24,13 +24,14 @@ from network.http_server import http_server
 _initialized = False
 _joystick_handler = None
 _gaze_svc = None  # 全局 GazeService 实例，供 main() finally 块清理
+_physio_svc = None
 
 # 眼动数据存储目录（相对本文件）
 _GAZE_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "gaze")
 
 async def initialize_system():
     """初始化系统组件（延迟调用，首次客户端连接时触发）"""
-    global _initialized, _joystick_handler, _gaze_svc
+    global _initialized, _joystick_handler, _gaze_svc, _physio_svc
     if _initialized:
         return _joystick_handler
     _initialized = True
@@ -81,6 +82,28 @@ async def initialize_system():
             except Exception:
                 pass
             _gaze_svc = None
+
+    info("6. 初始化手环/指环生理记录服务...", "main")
+    try:
+        from physio import create_physio_service_from_env
+        from core import message_handler as _mh
+
+        _physio_svc = create_physio_service_from_env()
+        if _physio_svc is None:
+            info("手环/指环记录服务已通过 PHYSIO_RING_ENABLED 关闭", "main")
+        else:
+            _physio_svc.start()
+            _mh.set_physio_service(_physio_svc)
+            http_server.set_physio_service(_physio_svc)
+            info("手环/指环记录服务已启动", "main")
+    except Exception as e:
+        error(f"手环/指环记录服务初始化失败（已跳过）: {e}", "main", exc_info=True)
+        if _physio_svc is not None:
+            try:
+                _physio_svc.stop()
+            except Exception:
+                pass
+            _physio_svc = None
 
     info("=== 系统初始化完成 ===", "main")
     
@@ -156,6 +179,14 @@ async def main():
                 info("✅ 眼动追踪服务已关闭", "main")
             except Exception as e:
                 error(f"关闭眼动追踪服务时出错: {e}", "main")
+
+        if _physio_svc is not None:
+            info("正在关闭手环/指环记录服务...", "main")
+            try:
+                _physio_svc.stop()
+                info("手环/指环记录服务已关闭", "main")
+            except Exception as e:
+                error(f"关闭手环/指环记录服务时出错: {e}", "main")
 
 if __name__ == "__main__":
     info("雷达系统服务器 v2.0 - 模块化架构", "main")

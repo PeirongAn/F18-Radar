@@ -227,6 +227,11 @@ class WebSocketServer:
                         continue
 
                     # 收到 joystick_connect 时触发延迟初始化
+                    if message_type == 'tobii_marker':
+                        reply = await self._handle_tobii_marker(message_data)
+                        await self.send_message(websocket, reply)
+                        continue
+
                     if message_type == 'joystick_connect' and not self.joystick_handler:
                         try:
                             from main import initialize_system
@@ -376,6 +381,27 @@ class WebSocketServer:
                 "msg": "目标框消失，bbox 已清空",
                 "task_id": self._gaze_svc.get_active_task_id(),
             }
+
+    async def _handle_tobii_marker(self, data: dict) -> dict:
+        """Handle a WebSocket Tobii marker message."""
+        if self._gaze_svc is None:
+            return {"type": "tobii_marker_result", "ok": False, "msg": "Tobii gaze service is not available"}
+
+        try:
+            marker = self._gaze_svc.record_marker(
+                name=data.get("name") or data.get("marker") or data.get("event") or "",
+                payload=data.get("payload") if isinstance(data.get("payload"), dict) else {},
+                task_id=data.get("task_id"),
+                user_id=data.get("user_id", ""),
+                system_time=data.get("system_time"),
+            )
+        except ValueError as e:
+            return {"type": "tobii_marker_result", "ok": False, "msg": str(e)}
+        except Exception as e:
+            self.logger.error(f"Tobii marker failed: {e}", exc_info=True)
+            return {"type": "tobii_marker_result", "ok": False, "msg": str(e)}
+
+        return {"type": "tobii_marker_result", "ok": True, "marker": marker}
 
     async def start_server(self) -> None:
         """启动WebSocket服务器"""

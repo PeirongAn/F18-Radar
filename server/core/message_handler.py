@@ -33,11 +33,16 @@ class MessageHandler:
         self.use_enhanced_protocol = True  # 默认使用增强协议
         # 眼动追踪服务（由 main.py 的 initialize_system 注入，可为 None）
         self._gaze_svc = None
+        self._physio_svc = None
         self.logger = get_logger("message_handler")
 
     def set_gaze_service(self, gaze_svc) -> None:
         """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
         self._gaze_svc = gaze_svc
+
+    def set_physio_service(self, physio_svc) -> None:
+        """注入手环/指环生理记录服务（可为 None）。"""
+        self._physio_svc = physio_svc
 
     def _gaze_start(self, task_id, user_id: str = "", task_name: str = "", task_source: str = "") -> None:
         """任务开始时启动 gaze 追踪（无 Tobii 设备时静默跳过）。"""
@@ -68,6 +73,103 @@ class MessageHandler:
                 self._gaze_svc.stop_task(task_id=str(resolved), end_trigger="task_result_confirmed")
         except Exception as e:
             print(f"[MessageHandler] gaze stop_task 失败（已跳过）: {e}")
+
+    def _physio_should_record(self, session_state: Dict[str, Any]) -> bool:
+        return self._physio_svc is not None and not session_state.get('is_practice', False)
+
+    def _physio_task_metadata(
+        self,
+        task_type: str,
+        user_id: str,
+        task_id,
+        event_owner: str,
+        current_scenario: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        scenario = current_scenario or {}
+        return {
+            "source": "F18-Radar",
+            "f18_task_id": task_id,
+            "task_type": task_type,
+            "user_id": user_id,
+            "event_owner": event_owner,
+            "is_ai_active": bool(scenario.get("is_ai_active")),
+            "difficulty_config": scenario.get("difficulty_config"),
+            "ai_level": scenario.get("ai_level_name"),
+            "audio_enabled": scenario.get("audio_enabled"),
+            "repetition_info": scenario.get("repetition_info"),
+        }
+
+    def _physio_start_task(
+        self,
+        task_type: str,
+        user_id: str,
+        task_id,
+        event_owner: str,
+        current_scenario: Optional[Dict[str, Any]],
+        session_state: Dict[str, Any],
+    ) -> None:
+        if not self._physio_should_record(session_state):
+            return
+        try:
+            metadata = self._physio_task_metadata(task_type, user_id, task_id, event_owner, current_scenario)
+            self._physio_svc.set_subject(user_id, {"source": "F18-Radar", "last_task_type": task_type})
+            self._physio_svc.start_task(task_type, metadata)
+            self._physio_svc.marker("task_start", metadata)
+        except Exception as e:
+            self.logger.warning("physio start_task failed: %s", e, exc_info=True)
+
+    def _physio_marker(
+        self,
+        name: str,
+        message: Dict[str, Any],
+        session_state: Dict[str, Any],
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not self._physio_should_record(session_state):
+            return
+        try:
+            payload = {
+                "source": "F18-Radar",
+                "f18_task_id": self.current_session.get("task_id"),
+                "task_type": message.get("task_type"),
+                "user_id": message.get("user_id") or self.current_session.get("user_id", ""),
+                "event_owner": message.get("event_owner", ""),
+                "timestamp": message.get("timestamp"),
+                "receive_timestamp": message.get("receive_timestamp"),
+                "message": message,
+            }
+            if extra:
+                payload.update(extra)
+            self._physio_svc.marker(name, payload)
+        except Exception as e:
+            self.logger.warning("physio marker failed: name=%s error=%s", name, e, exc_info=True)
+
+    def _physio_stop_task(
+        self,
+        task_type: str,
+        user_id: str,
+        task_id,
+        event_owner: str,
+        repetition_info: Dict[str, Any],
+        message: Dict[str, Any],
+        session_state: Dict[str, Any],
+    ) -> None:
+        if not self._physio_should_record(session_state):
+            return
+        try:
+            self._physio_svc.marker("task_result_confirmed", {
+                "source": "F18-Radar",
+                "f18_task_id": task_id,
+                "task_type": task_type,
+                "user_id": user_id,
+                "event_owner": event_owner,
+                "repetition_info": repetition_info,
+                "message": message,
+            })
+            self._physio_svc.stop_task()
+            self._physio_svc.clear_subject()
+        except Exception as e:
+            self.logger.warning("physio stop_task failed: %s", e, exc_info=True)
 
     def _log_task_count_notice(
         self,
@@ -298,6 +400,7 @@ class MessageHandler:
 
         # 启动眼动追踪（有 Tobii 时生效，否则静默跳过）
         self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
+        self._physio_start_task(task_type, user_id, task_id, event_owner, current_scenario, session_state)
 
         init_response = {
             "type": "init_settings",
@@ -371,6 +474,13 @@ class MessageHandler:
             else:
                 print("练习模式，跳过 settings_update 数据库记录。")
 
+            self._physio_marker("settings_update", message, session_state, {
+                "operation": "settings_update",
+                "task_type": "RADAR_TARGETING",
+                "range": client_range,
+                "scanAngle": client_scan_angle,
+            })
+
             validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
             antenna_command = self._generate_antenna_adjustment()
             return [validation_response, antenna_command]
@@ -402,6 +512,12 @@ class MessageHandler:
                 db_manager.record_operation(operation, session_state.get('is_practice', False))
             else:
                 print("练习模式，跳过 antenna_adjusted 数据库记录。")
+
+            self._physio_marker("antenna_adjusted", message, session_state, {
+                "operation": "antenna_adjusted",
+                "task_type": "RADAR_TARGETING",
+                "elevation": message.get("elevation"),
+            })
 
             return validation_response, True
         else:
@@ -438,6 +554,15 @@ class MessageHandler:
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         else:
             print("练习模式，跳过 target_selected 数据库记录。")
+
+        self._physio_marker("target_selected", message, session_state, {
+            "operation": "target_selected",
+            "task_type": "RADAR_TARGETING",
+            "target_id": target_id,
+            "iff_mode": iff_mode,
+            "is_enemy": is_enemy,
+            "is_correct": (is_enemy and not iff_mode) or False,
+        })
         
         return []
     
@@ -469,6 +594,13 @@ class MessageHandler:
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         else:
             print("练习模式，跳过 threat_clicked 数据库记录。")
+
+        self._physio_marker("threat_clicked", message, session_state, {
+            "operation": "threat_clicked",
+            "task_type": "SA_THREAT_RESPONSE",
+            "threat_id": message.get("threat_id"),
+            "is_highest_priority": message.get("is_highest_priority"),
+        })
         
         return []
 
@@ -550,6 +682,15 @@ class MessageHandler:
         if task_manager:
             task_manager.mark_task_completed()
 
+        self._physio_stop_task(
+            task_type or "",
+            user_id,
+            current_task_id,
+            event_owner,
+            repetition_info,
+            message,
+            session_state,
+        )
         self._gaze_stop(current_task_id)
         return []
     
@@ -684,6 +825,7 @@ class MessageHandler:
 
         # 启动眼动追踪
         self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
+        self._physio_start_task(task_type, user_id, task_id, event_owner, current_scenario, session_state)
 
         # 记录操作
         should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task

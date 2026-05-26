@@ -29,6 +29,7 @@ from flask import Flask, request, jsonify
 import websockets
 
 from gaze_service import GazeService
+from test_ui import tobii_test_ui_html
 
 # 眼动数据默认存储目录（相对于本文件向上两级到 server/data/gaze）
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,10 @@ class HTTPServer:
         @self.app.route("/")
         def index():
             return "Tobii Server Running"
+
+        @self.app.route("/tobii/test-ui", methods=["GET"])
+        def tobii_test_ui():
+            return tobii_test_ui_html()
 
         @self.app.route("/tobii/test", methods=["POST"])
         def tobii_test():
@@ -123,12 +128,59 @@ class HTTPServer:
                     "task_info": result["task_info"],
                 })
 
+        @self.app.route("/tobii/marker", methods=["POST"])
+        def tobii_marker():
+            data = request.get_json()
+            if data is None:
+                return jsonify({"ok": False, "msg": "request body must be JSON"}), 400
+            try:
+                marker = svc.record_marker(
+                    name=data.get("name") or data.get("marker") or data.get("event") or "",
+                    payload=data.get("payload") if isinstance(data.get("payload"), dict) else {},
+                    task_id=data.get("task_id"),
+                    user_id=data.get("user_id", ""),
+                    system_time=data.get("system_time"),
+                )
+            except ValueError as e:
+                return jsonify({"ok": False, "msg": str(e)}), 400
+            except Exception as e:
+                return jsonify({"ok": False, "msg": str(e)}), 500
+            return jsonify({"ok": True, "type": "tobii_marker_result", "marker": marker})
+
         @self.app.route("/tobii/gaze_point", methods=["GET"])
         def get_gaze_point():
             point, ts = svc.get_latest_gaze_point()
             if point is None:
                 return jsonify({"ok": False, "msg": "注视点数据不可用或已过期"}), 404
             return jsonify({"ok": True, "gaze_point": point, "timestamp": ts})
+
+        @self.app.route("/tobii/gaze_data", methods=["GET"])
+        def get_gaze_data():
+            def query_int(name, default, min_value, max_value):
+                try:
+                    value = int(request.args.get(name, str(default)))
+                except (TypeError, ValueError):
+                    value = default
+                return max(min_value, min(max_value, value))
+
+            max_age_ms = query_int("max_age_ms", 1000, 1, 60000)
+            limit = query_int("limit", 60, 0, 600)
+            point, ts = svc.get_latest_gaze_point(max_age_ms=max_age_ms)
+            window = svc.get_gaze_window_snapshot()
+            if limit:
+                window = window[-limit:]
+            screen_size = svc.get_screen_size()
+            return jsonify({
+                "ok": point is not None,
+                "msg": None if point is not None else "gaze point unavailable or expired",
+                "gaze_point": point,
+                "timestamp": ts,
+                "active_task_id": svc.get_active_task_id(),
+                "screen_size": list(screen_size) if screen_size else None,
+                "window": window,
+                "window_count": len(window),
+                "max_age_ms": max_age_ms,
+            })
 
     def start(self):
         print(f"[HTTPServer] 启动于 {self.host}:{self.port}")
@@ -229,6 +281,24 @@ class WebSocketServer:
                         "task_id": result["task_id"],
                         "task_info": result["task_info"],
                     }))
+
+            elif msg_type in {"marker", "tobii_marker"}:
+                try:
+                    marker = svc.record_marker(
+                        name=data.get("name") or data.get("marker") or data.get("event") or "",
+                        payload=data.get("payload") if isinstance(data.get("payload"), dict) else {},
+                        task_id=data.get("task_id"),
+                        user_id=data.get("user_id", ""),
+                        system_time=data.get("system_time"),
+                    )
+                except ValueError as e:
+                    await websocket.send(json.dumps({"type": "tobii_marker_result", "ok": False, "msg": str(e)}))
+                    return
+                await websocket.send(json.dumps({
+                    "type": "tobii_marker_result",
+                    "ok": True,
+                    "marker": marker,
+                }))
 
             elif msg_type == "gaze_point":
                 point, ts = svc.get_latest_gaze_point()

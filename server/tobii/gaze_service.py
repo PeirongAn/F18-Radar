@@ -64,6 +64,7 @@ GAZE_PROGRESS_LOGS_ENABLED = os.environ.get("GAZE_PROGRESS_LOGS", "").lower() in
 # 写入队列中的事件类型标识
 _EVT_GAZE_FRAME = "gaze_frame"
 _EVT_TASK_SUMMARY = "task_summary"
+_EVT_MARKER = "marker"
 _EVT_STOP_WRITER = "stop_writer"
 _EVT_DB_EXEC = "db_exec"
 
@@ -502,6 +503,72 @@ class GazeService:
     # 眼动数据库辅助方法
     # ═══════════════════════════════════════════
 
+    def record_marker(
+        self,
+        name: str,
+        payload: dict | None = None,
+        task_id: str | int | None = None,
+        user_id: str = "",
+        system_time: int | None = None,
+    ) -> dict:
+        """Record a manual gaze marker in SQLite and, when active, task files."""
+        marker_name = str(name or "").strip()
+        if not marker_name:
+            raise ValueError("marker name is required")
+        if system_time is None:
+            system_time = int(time.time() * 1_000_000)
+
+        requested_task_id = str(task_id) if task_id is not None else None
+        marker_id = uuid.uuid4().hex
+        payload_obj = payload if isinstance(payload, dict) else {}
+        task_dir = None
+        resolved_task_id = requested_task_id
+        resolved_user_id = user_id or ""
+
+        with self._state_lock:
+            active_task = self._current_task if self._task_active else None
+            if active_task:
+                active_task_id = str(active_task.get("task_id"))
+                if requested_task_id is not None and requested_task_id != active_task_id:
+                    raise ValueError(
+                        f"marker task_id mismatch: request={requested_task_id}, active={active_task_id}"
+                    )
+                resolved_task_id = active_task_id
+                resolved_user_id = resolved_user_id or active_task.get("user_id", "")
+                task_dir = active_task.get("task_dir")
+
+        record = {
+            "marker_id": marker_id,
+            "task_id": resolved_task_id,
+            "user_id": resolved_user_id,
+            "name": marker_name,
+            "event_time_us": int(system_time),
+            "payload": payload_obj,
+        }
+        self._enqueue_db(
+            "INSERT INTO gaze_markers "
+            "(marker_id, task_id, user_id, name, event_time_us, payload_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                marker_id,
+                resolved_task_id or "",
+                resolved_user_id or "",
+                marker_name,
+                int(system_time),
+                json.dumps(payload_obj, ensure_ascii=False),
+            ),
+        )
+        if task_dir:
+            self._writer_queue.put({
+                "evt": _EVT_MARKER,
+                "task_dir": task_dir,
+                "data": record,
+            })
+        self._log_info(
+            f"marker recorded: marker_id={marker_id}, task_id={resolved_task_id or ''}, name={marker_name}"
+        )
+        return record
+
     def _enqueue_db(self, sql: str, params: tuple = ()):
         """向后台写入线程发送 DB 写操作（线程安全）。"""
         self._writer_queue.put({"evt": _EVT_DB_EXEC, "sql": sql, "params": params})
@@ -553,6 +620,17 @@ class GazeService:
                 payload_json TEXT,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (task_id) REFERENCES gaze_tasks(task_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS gaze_markers (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                marker_id   TEXT    NOT NULL UNIQUE,
+                task_id     TEXT    DEFAULT '',
+                user_id     TEXT    DEFAULT '',
+                name        TEXT    NOT NULL,
+                event_time_us INTEGER NOT NULL,
+                payload_json TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         _ensure_column(conn, "gaze_tasks", "task_source", "TEXT DEFAULT ''")
@@ -876,6 +954,12 @@ class GazeService:
                 if evt == _EVT_GAZE_FRAME:
                     handles = _get_handles(task_dir)
                     handles["gaze"].write(json.dumps(data, ensure_ascii=False) + "\n")
+
+                elif evt == _EVT_MARKER:
+                    os.makedirs(task_dir, exist_ok=True)
+                    marker_path = os.path.join(task_dir, "markers.jsonl")
+                    with open(marker_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
                 elif evt == _EVT_TASK_SUMMARY:
                     # flush & close 之前打开的帧文件句柄，再写 summary
