@@ -10,6 +10,14 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, target_manager, get_logger
+from network.netlog import (
+    duration_ms,
+    log_ws_connect,
+    log_ws_disconnect,
+    log_ws_message,
+    now_ms,
+    remote_from_websocket,
+)
 # 延迟导入 message_handler 以避免循环导入
 
 class WebSocketServer:
@@ -29,6 +37,7 @@ class WebSocketServer:
 
         # 眼动追踪服务（延迟注入）
         self._gaze_svc = None
+        self._physio_svc = None
     
     def set_joystick_handler(self, handler):
         """设置操纵杆事件处理器"""
@@ -38,19 +47,40 @@ class WebSocketServer:
     def set_gaze_service(self, gaze_svc) -> None:
         """注入 GazeService 实例，用于处理 tobii_hand 消息。"""
         self._gaze_svc = gaze_svc
+
+    def set_physio_service(self, physio_svc) -> None:
+        self._physio_svc = physio_svc
     
     def generate_client_id(self) -> str:
         """生成唯一的客户端ID"""
         return str(uuid.uuid4())
     
-    def add_client(self, client_id: str, websocket: websockets.WebSocketServerProtocol):
+    def add_client(
+        self,
+        client_id: str,
+        websocket: websockets.WebSocketServerProtocol,
+        log_event: bool = True,
+        endpoint: str = None,
+        remote: str = None,
+    ):
         """添加客户端连接"""
         self.clients[client_id] = websocket
-        self.client_sessions[client_id] = {}
-        self.logger.info(f"客户端 {client_id} 已连接")
+        endpoint = endpoint or f"ws://{self.host}:{self.port}"
+        remote = remote or remote_from_websocket(websocket)
+        self.client_sessions[client_id] = {
+            "_connected_at_ms": now_ms(),
+            "_endpoint": endpoint,
+            "_remote": remote,
+        }
+        if log_event:
+            log_ws_connect(self.logger, client_id, endpoint, remote, self.get_client_count())
     
-    def remove_client(self, client_id: str):
+    def remove_client(self, client_id: str, log_event: bool = True):
         """移除客户端连接"""
+        session = self.client_sessions.get(client_id, {})
+        endpoint = session.get("_endpoint", f"ws://{self.host}:{self.port}")
+        remote = session.get("_remote", "-")
+        connected_at_ms = session.get("_connected_at_ms")
         if client_id in self.clients:
             del self.clients[client_id]
         if client_id in self.client_sessions:
@@ -60,7 +90,16 @@ class WebSocketServer:
         if self.joystick_handler:
             self.joystick_handler.remove_client(client_id)
         
-        self.logger.info(f"客户端 {client_id} 已断开连接")
+        if log_event:
+            elapsed_ms = duration_ms(connected_at_ms) if connected_at_ms is not None else None
+            log_ws_disconnect(
+                self.logger,
+                client_id,
+                endpoint,
+                remote,
+                elapsed_ms,
+                self.get_client_count(),
+            )
     
     async def send_to_client(self, client_id: str, message: Dict[str, Any]) -> bool:
         """向指定客户端发送消息"""
@@ -112,6 +151,18 @@ class WebSocketServer:
     def get_client_count(self) -> int:
         """获取当前连接的客户端数量"""
         return len(self.clients)
+
+    async def close_clients(self, timeout: float = 1.0) -> None:
+        """Close registered websocket clients before service teardown."""
+        for client_id, websocket in list(self.clients.items()):
+            try:
+                close_result = websocket.close()
+                if asyncio.iscoroutine(close_result):
+                    await asyncio.wait_for(close_result, timeout=timeout)
+            except Exception as e:
+                self.logger.debug("Error while closing websocket client %s: %s", client_id, e)
+            finally:
+                self.remove_client(client_id)
     
     async def _send_raw_message(self, websocket, json_str: str) -> bool:
         """发送原始JSON字符串到WebSocket"""
@@ -148,25 +199,8 @@ class WebSocketServer:
 
     def _log_ws_request(self, client_id: str, message: str, message_data=None) -> None:
         """记录收到的 WebSocket 请求摘要到统一日志。"""
-        message_bytes = len(message.encode('utf-8')) if isinstance(message, str) else len(message)
-        message_type = ""
-        task_id = ""
-        user_id = ""
-        if isinstance(message_data, dict):
-            message_type = message_data.get('type', '') or message_data.get('TaskName', '') or 'unknown'
-            task_id = message_data.get('task_id', message_data.get('ID', ''))
-            user_id = message_data.get('user_id', message_data.get('userId', ''))
-        else:
-            message_type = "invalid_json"
-
-        self.logger.info(
-            "收到WebSocket请求: client_id=%s type=%s bytes=%s task_id=%s user_id=%s",
-            client_id,
-            message_type,
-            message_bytes,
-            task_id,
-            user_id,
-        )
+        endpoint = self.client_sessions.get(client_id, {}).get("_endpoint", f"ws://{self.host}:{self.port}")
+        log_ws_message(self.logger, client_id, endpoint, message, message_data)
     
     async def handle_client(self, websocket) -> None:
         """处理单个客户端连接"""
@@ -210,13 +244,23 @@ class WebSocketServer:
                     )
                     if is_platform_packet:
                         from network.platform_task_bridge import handle_platform_task_ws
-                        for reply in await handle_platform_task_ws(self, client_id, message_data):
+                        for reply in await handle_platform_task_ws(
+                            self,
+                            client_id,
+                            message_data,
+                            gaze_svc=self._gaze_svc,
+                            physio_svc=self._physio_svc,
+                        ):
                             await self.send_message(websocket, reply)
                         continue
 
                     if message_type == 'platform_task_result':
                         from network.platform_task_bridge import handle_platform_task_result_ws
-                        for reply in handle_platform_task_result_ws(message_data):
+                        for reply in handle_platform_task_result_ws(
+                            message_data,
+                            gaze_svc=self._gaze_svc,
+                            physio_svc=self._physio_svc,
+                        ):
                             await self.send_message(websocket, reply)
                         continue
 
@@ -292,6 +336,7 @@ class WebSocketServer:
 
                             # 现在准备并发送主数据帧
                             data = target_manager.get_radar_data(include_targets=include_targets)
+                            data["type"] = "radar_data"
                             data["_timestamp"] = time.time()
                             data_json = json.dumps(data)
 
@@ -313,11 +358,11 @@ class WebSocketServer:
                 except asyncio.TimeoutError:
                     pass
                 except websockets.exceptions.ConnectionClosed:
-                    self.logger.info("客户端连接已关闭")
+                    self.logger.debug("WebSocket connection closed by client")
                     break
                     
         except websockets.exceptions.ConnectionClosed:
-            self.logger.info("客户端已断开连接")
+            self.logger.debug("WebSocket client disconnected")
         except Exception as e:
             self.logger.error(f"WebSocket处理时出错: {e}", exc_info=True)
         finally:

@@ -24,6 +24,8 @@ class DatabaseManager:
         self._pending_task_setting_keys: Set[Tuple[Any, ...]] = set()
         self._operation_lock = threading.Lock()
         self._pending_operation_keys: Set[Tuple[Any, ...]] = set()
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_requested = False
         self._start_db_worker()
         atexit.register(self._cleanup_db_thread)
 
@@ -80,15 +82,35 @@ class DatabaseManager:
             except Exception as e:
                 self.logger.error(f"Failed to execute DB operation: {e}", exc_info=True)
                 
+        try:
+            conn.commit()
+        except sqlite3.Error:
+            pass
+        for sql in ("PRAGMA wal_checkpoint(TRUNCATE)", "PRAGMA journal_mode=DELETE"):
+            try:
+                conn.execute(sql).fetchall()
+            except sqlite3.Error:
+                pass
         conn.close()
         self.logger.info("DB worker thread stopped and connection closed.")
     
     def _cleanup_db_thread(self) -> None:
         """清理数据库线程"""
+        self.shutdown()
+
+    def shutdown(self, timeout: float = 5) -> None:
+        """Stop the background SQLite writer before process-level WAL cleanup."""
+        with self._shutdown_lock:
+            if self._shutdown_requested:
+                return
+            self._shutdown_requested = True
+
         self.logger.info("Requesting DB worker thread to shut down...")
         self.writer_queue.put((None, None))
         if self.db_thread:
-            self.db_thread.join(timeout=5)
+            self.db_thread.join(timeout=timeout)
+            if self.db_thread.is_alive():
+                self.logger.warning("DB worker thread did not stop within %.1f seconds.", timeout)
         self.logger.info("DB worker thread has been shut down.")
     
     @contextmanager
@@ -321,9 +343,9 @@ class DatabaseManager:
                 
                 # 检查并创建 user_progress 表
                 self._create_user_progress_table(cursor, conn)
-
-                # 检查并创建 platform_external_tasks 表
-                self._create_platform_external_tasks_table(cursor, conn)
+                self._create_task_runs_table(cursor, conn)
+                self._create_task_events_table(cursor, conn)
+                self._create_task_subtask_results_table(cursor, conn)
 
                 # 检查并创建 questionnaire_responses 表
                 self._create_questionnaire_responses_table(cursor, conn)
@@ -569,6 +591,307 @@ class DatabaseManager:
             conn.commit()
             self.logger.info("manual_repetition_counter 列添加成功")
 
+    def _create_task_runs_table(self, cursor, conn) -> None:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_runs'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE task_runs (
+                    task_id INTEGER PRIMARY KEY,
+                    task_type TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    expected_subtasks INTEGER,
+                    completed_subtasks INTEGER DEFAULT 0,
+                    current_subtask_seq INTEGER DEFAULT 0,
+                    started_at_ms INTEGER NOT NULL,
+                    completed_at_ms INTEGER,
+                    config_json TEXT,
+                    last_raw_message_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX idx_task_runs_active ON task_runs(user_id, task_type, status, started_at_ms)")
+            conn.commit()
+        else:
+            self._update_task_runs_table(cursor, conn)
+
+    def _update_task_runs_table(self, cursor, conn) -> None:
+        cursor.execute("PRAGMA table_info(task_runs)")
+        columns = {row[1] for row in cursor.fetchall()}
+        additions = {
+            "task_type": "TEXT",
+            "user_id": "TEXT",
+            "status": "TEXT DEFAULT 'active'",
+            "expected_subtasks": "INTEGER",
+            "completed_subtasks": "INTEGER DEFAULT 0",
+            "current_subtask_seq": "INTEGER DEFAULT 0",
+            "started_at_ms": "INTEGER",
+            "completed_at_ms": "INTEGER",
+            "config_json": "TEXT",
+            "last_raw_message_json": "TEXT",
+            "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        }
+        changed = False
+        for name, column_type in additions.items():
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE task_runs ADD COLUMN {name} {column_type}")
+                changed = True
+        if changed:
+            conn.commit()
+
+    def _create_task_events_table(self, cursor, conn) -> None:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_events'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE task_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    task_type TEXT NOT NULL,
+                    user_id TEXT,
+                    event_type TEXT NOT NULL,
+                    sub_task_seq INTEGER,
+                    timestamp_ms INTEGER NOT NULL,
+                    payload_json TEXT,
+                    raw_message_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX idx_task_events_task ON task_events(task_id, event_type, sub_task_seq)")
+            conn.commit()
+        else:
+            self._update_task_events_table(cursor, conn)
+
+    def _update_task_events_table(self, cursor, conn) -> None:
+        cursor.execute("PRAGMA table_info(task_events)")
+        columns = {row[1] for row in cursor.fetchall()}
+        additions = {
+            "task_type": "TEXT",
+            "user_id": "TEXT",
+            "sub_task_seq": "INTEGER",
+            "payload_json": "TEXT",
+            "raw_message_json": "TEXT",
+        }
+        changed = False
+        for name, column_type in additions.items():
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE task_events ADD COLUMN {name} {column_type}")
+                changed = True
+        if changed:
+            conn.commit()
+
+    def _create_task_subtask_results_table(self, cursor, conn) -> None:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_subtask_results'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE task_subtask_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER NOT NULL,
+                    task_type TEXT NOT NULL,
+                    user_id TEXT,
+                    sub_task_seq INTEGER NOT NULL,
+                    result_json TEXT NOT NULL,
+                    current_task_score REAL,
+                    ai_control_time REAL,
+                    person_control_time REAL,
+                    ai_remind_time REAL,
+                    switch_count INTEGER,
+                    fire_count INTEGER,
+                    fire_success_count INTEGER,
+                    timestamp_ms INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE UNIQUE INDEX idx_task_subtask_results_unique ON task_subtask_results(task_id, sub_task_seq)")
+            conn.commit()
+        else:
+            self._update_task_subtask_results_table(cursor, conn)
+
+    def _update_task_subtask_results_table(self, cursor, conn) -> None:
+        cursor.execute("PRAGMA table_info(task_subtask_results)")
+        columns = {row[1] for row in cursor.fetchall()}
+        additions = {
+            "task_type": "TEXT",
+            "user_id": "TEXT",
+            "current_task_score": "REAL",
+            "ai_control_time": "REAL",
+            "person_control_time": "REAL",
+            "ai_remind_time": "REAL",
+            "switch_count": "INTEGER",
+            "fire_count": "INTEGER",
+            "fire_success_count": "INTEGER",
+        }
+        changed = False
+        for name, column_type in additions.items():
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE task_subtask_results ADD COLUMN {name} {column_type}")
+                changed = True
+        if changed:
+            conn.commit()
+
+    def find_active_task_run(self, user_id: str, task_type: str) -> Optional[Dict[str, Any]]:
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT task_id, task_type, user_id, status, expected_subtasks,
+                           completed_subtasks, current_subtask_seq, started_at_ms,
+                           completed_at_ms, config_json, last_raw_message_json
+                    FROM task_runs
+                    WHERE user_id = ? AND task_type = ? AND status != 'completed'
+                    ORDER BY started_at_ms DESC, task_id DESC
+                    LIMIT 1
+                    """,
+                    (user_id, task_type),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                keys = [
+                    "task_id", "task_type", "user_id", "status", "expected_subtasks",
+                    "completed_subtasks", "current_subtask_seq", "started_at_ms",
+                    "completed_at_ms", "config_json", "last_raw_message_json",
+                ]
+                return dict(zip(keys, row))
+        except Exception as e:
+            self.logger.warning("查找 active task_run 失败: %s", e)
+            return None
+
+    def find_recent_completed_task_run(
+        self,
+        user_id: str,
+        task_type: str,
+        since_ms: int = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                params = [user_id, task_type]
+                since_clause = ""
+                if since_ms is not None:
+                    since_clause = "AND completed_at_ms >= ?"
+                    params.append(since_ms)
+                cursor.execute(
+                    f"""
+                    SELECT task_id, task_type, user_id, status, expected_subtasks,
+                           completed_subtasks, current_subtask_seq, started_at_ms,
+                           completed_at_ms, config_json, last_raw_message_json
+                    FROM task_runs
+                    WHERE user_id = ? AND task_type = ? AND status = 'completed'
+                      AND completed_at_ms IS NOT NULL
+                      {since_clause}
+                    ORDER BY completed_at_ms DESC, task_id DESC
+                    LIMIT 1
+                    """,
+                    tuple(params),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                keys = [
+                    "task_id", "task_type", "user_id", "status", "expected_subtasks",
+                    "completed_subtasks", "current_subtask_seq", "started_at_ms",
+                    "completed_at_ms", "config_json", "last_raw_message_json",
+                ]
+                return dict(zip(keys, row))
+        except Exception as e:
+            self.logger.warning("查找 recent completed task_run 失败: %s", e)
+            return None
+
+    def create_task_run(self, task_id: int, task_type: str, user_id: str,
+                        expected_subtasks: int, started_at_ms: int,
+                        config_json: str, raw_message_json: str) -> None:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO task_runs (
+                    task_id, task_type, user_id, status, expected_subtasks,
+                    completed_subtasks, current_subtask_seq, started_at_ms,
+                    config_json, last_raw_message_json, updated_at
+                ) VALUES (?, ?, ?, 'active', ?, 0, 0, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (task_id, task_type, user_id, expected_subtasks, started_at_ms, config_json, raw_message_json),
+            )
+            conn.commit()
+        self.logger.info("记录 task_run: task_id=%s task_type=%s user=%s total=%s",
+                         task_id, task_type, user_id, expected_subtasks)
+
+    def update_task_run_progress(self, task_id: int, current_subtask_seq: int = None,
+                                 completed_subtasks: int = None, status: str = None,
+                                 completed_at_ms: int = None,
+                                 raw_message_json: str = None) -> None:
+        fields = ["updated_at = CURRENT_TIMESTAMP"]
+        params = []
+        if current_subtask_seq is not None:
+            fields.append("current_subtask_seq = ?")
+            params.append(current_subtask_seq)
+        if completed_subtasks is not None:
+            fields.append("completed_subtasks = ?")
+            params.append(completed_subtasks)
+        if status is not None:
+            fields.append("status = ?")
+            params.append(status)
+        if completed_at_ms is not None:
+            fields.append("completed_at_ms = ?")
+            params.append(completed_at_ms)
+        if raw_message_json is not None:
+            fields.append("last_raw_message_json = ?")
+            params.append(raw_message_json)
+        params.append(task_id)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE task_runs SET {', '.join(fields)} WHERE task_id = ?", tuple(params))
+            conn.commit()
+
+    def record_task_event(self, task_id: int, task_type: str, user_id: str,
+                          event_type: str, timestamp_ms: int,
+                          sub_task_seq: int = None,
+                          payload_json: str = None,
+                          raw_message_json: str = None) -> None:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO task_events (
+                    task_id, task_type, user_id, event_type, sub_task_seq,
+                    timestamp_ms, payload_json, raw_message_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (task_id, task_type, user_id, event_type, sub_task_seq,
+                 timestamp_ms, payload_json, raw_message_json),
+            )
+            conn.commit()
+
+    def record_subtask_result(self, task_id: int, task_type: str, user_id: str,
+                              sub_task_seq: int, result_json: str,
+                              timestamp_ms: int,
+                              current_task_score: float = None,
+                              ai_control_time: float = None,
+                              person_control_time: float = None,
+                              ai_remind_time: float = None,
+                              switch_count: int = None,
+                              fire_count: int = None,
+                              fire_success_count: int = None) -> None:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO task_subtask_results (
+                    task_id, task_type, user_id, sub_task_seq, result_json,
+                    current_task_score, ai_control_time, person_control_time,
+                    ai_remind_time, switch_count, fire_count, fire_success_count,
+                    timestamp_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (task_id, task_type, user_id, sub_task_seq, result_json,
+                 current_task_score, ai_control_time, person_control_time,
+                 ai_remind_time, switch_count, fire_count, fire_success_count,
+                 timestamp_ms),
+            )
+            conn.commit()
+
     def _create_platform_external_tasks_table(self, cursor, conn) -> None:
         """创建外部平台任务表"""
         cursor.execute("""
@@ -587,6 +910,16 @@ class DatabaseManager:
                     user_id TEXT,
                     task_name TEXT,
                     gender TEXT,
+                    default_control_mode TEXT,
+                    autonomy_level TEXT,
+                    task_mode TEXT,
+                    difficulty TEXT,
+                    difficulty_display TEXT,
+                    task_number TEXT,
+                    repetition_total_override INTEGER,
+                    is_ai_active BOOLEAN,
+                    is_practice BOOLEAN,
+                    ai_precision TEXT,
                     ai_control_time REAL,
                     person_control_time REAL,
                     ai_remind_time REAL,
@@ -601,20 +934,67 @@ class DatabaseManager:
             conn.commit()
             self.logger.info("platform_external_tasks 表创建成功")
 
+        else:
+            self._update_platform_external_tasks_table(cursor, conn)
+
+    def _update_platform_external_tasks_table(self, cursor, conn) -> None:
+        """Ensure external platform task rows keep normalized RADAR/SA fields."""
+        cursor.execute("PRAGMA table_info(platform_external_tasks)")
+        columns = {row[1] for row in cursor.fetchall()}
+        additions = {
+            "default_control_mode": "TEXT",
+            "autonomy_level": "TEXT",
+            "task_mode": "TEXT",
+            "difficulty": "TEXT",
+            "difficulty_display": "TEXT",
+            "task_number": "TEXT",
+            "repetition_total_override": "INTEGER",
+            "is_ai_active": "BOOLEAN",
+            "is_practice": "BOOLEAN",
+            "ai_precision": "TEXT",
+        }
+        changed = False
+        for name, column_type in additions.items():
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE platform_external_tasks ADD COLUMN {name} {column_type}")
+                changed = True
+        if changed:
+            conn.commit()
+
     def record_external_task(self, task_id: int, task_category: str,
                              event_type: str, raw_message: str,
                              timestamp: int, user_id: str = None,
                              task_name: str = None, gender: str = None,
-                             sub_task_seq: int = None) -> None:
+                             sub_task_seq: int = None,
+                             default_control_mode: str = None,
+                             autonomy_level: str = None,
+                             task_mode: str = None,
+                             difficulty: str = None,
+                             difficulty_display: str = None,
+                             task_number: str = None,
+                             repetition_total_override: int = None,
+                             is_ai_active: bool = None,
+                             is_practice: bool = None,
+                             ai_precision: str = None) -> None:
         """记录外部平台任务生命周期事件"""
         sql = """
             INSERT INTO platform_external_tasks (
                 task_id, task_category, event_type, sub_task_seq,
-                user_id, task_name, gender, raw_message, timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_id, task_name, gender,
+                default_control_mode, autonomy_level, task_mode, difficulty,
+                difficulty_display, task_number, repetition_total_override,
+                is_ai_active, is_practice, ai_precision,
+                raw_message, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (task_id, task_category, event_type, sub_task_seq,
-                  user_id, task_name, gender, raw_message, timestamp)
+                  user_id, task_name, gender,
+                  default_control_mode, autonomy_level, task_mode,
+                  self.normalize_difficulty_value(difficulty), difficulty_display,
+                  task_number, repetition_total_override,
+                  None if is_ai_active is None else int(bool(is_ai_active)),
+                  None if is_practice is None else int(bool(is_practice)),
+                  ai_precision, raw_message, timestamp)
         self.execute_async(sql, params)
         self.logger.info("记录外部任务事件: task_id=%s category=%s event=%s seq=%s",
                          task_id, task_category, event_type, sub_task_seq)
@@ -694,19 +1074,38 @@ class DatabaseManager:
                                     ai_remind_time: float = None,
                                     switch_count: int = None,
                                     fire_count: int = None,
-                                    fire_success_count: int = None) -> None:
+                                    fire_success_count: int = None,
+                                    default_control_mode: str = None,
+                                    autonomy_level: str = None,
+                                    task_mode: str = None,
+                                    difficulty: str = None,
+                                    difficulty_display: str = None,
+                                    task_number: str = None,
+                                    repetition_total_override: int = None,
+                                    is_ai_active: bool = None,
+                                    is_practice: bool = None,
+                                    ai_precision: str = None) -> None:
         """记录外部平台任务结果"""
         sql = """
             INSERT INTO platform_external_tasks (
                 task_id, task_category, event_type, user_id,
                 ai_control_time, person_control_time, ai_remind_time,
                 switch_count, fire_count, fire_success_count,
+                default_control_mode, autonomy_level, task_mode, difficulty,
+                difficulty_display, task_number, repetition_total_override,
+                is_ai_active, is_practice, ai_precision,
                 raw_message, timestamp
-            ) VALUES (?, ?, 'task_result', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, 'task_result', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (task_id, task_category, user_id,
                   ai_control_time, person_control_time, ai_remind_time,
                   switch_count, fire_count, fire_success_count,
+                  default_control_mode, autonomy_level, task_mode,
+                  self.normalize_difficulty_value(difficulty), difficulty_display,
+                  task_number, repetition_total_override,
+                  None if is_ai_active is None else int(bool(is_ai_active)),
+                  None if is_practice is None else int(bool(is_practice)),
+                  ai_precision,
                   raw_message, timestamp)
         self.execute_async(sql, params)
         self.logger.info("记录外部任务结果: task_id=%s category=%s", task_id, task_category)

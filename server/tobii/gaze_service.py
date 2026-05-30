@@ -21,9 +21,10 @@ GazeService — 眼动追踪核心服务
     point, ts = service.get_latest_gaze_point()
 
 文件存储结构（每个任务独立目录）:
-    {data_dir}/{task_id}/
-        raw_gaze.jsonl      # 每帧一行：{"ts_us":…,"gaze":[x,y],"valid":true,"in_region":true}
-        summary.json        # 任务结束时写入：元数据 + 统计信息
+    {data_dir}/raw/{user_id}/{task_id}/
+        raw_gaze.jsonl      # 每帧一行：{"ts_us":…,"gaze":[x,y],"hit":false}
+
+任务元数据、markers、targets、feedback 和统计统一写入 gaze_records.db。
 """
 
 import math
@@ -35,12 +36,8 @@ import queue
 import asyncio
 import os
 import threading
+import logging
 from collections import deque
-
-try:
-    from managers import get_logger
-except Exception:
-    get_logger = None
 
 
 # 连续未注视帧数阈值，超过后推送注意力反馈
@@ -63,8 +60,7 @@ GAZE_PROGRESS_LOGS_ENABLED = os.environ.get("GAZE_PROGRESS_LOGS", "").lower() in
 
 # 写入队列中的事件类型标识
 _EVT_GAZE_FRAME = "gaze_frame"
-_EVT_TASK_SUMMARY = "task_summary"
-_EVT_MARKER = "marker"
+_EVT_CLOSE_TASK = "close_task"
 _EVT_STOP_WRITER = "stop_writer"
 _EVT_DB_EXEC = "db_exec"
 
@@ -73,7 +69,7 @@ class GazeService:
     """眼动追踪服务，封装 Tobii 设备与所有业务逻辑。"""
 
     def __init__(self, data_dir: str = None, gaze_window_size: int = 600):
-        self._logger = get_logger("gaze_service") if get_logger else None
+        self._logger = logging.getLogger("radar_system.gaze_service")
         self._progress_logs_enabled = GAZE_PROGRESS_LOGS_ENABLED
 
         # 文件存储根目录，默认放在本文件旁边的 ../../data/gaze
@@ -112,6 +108,8 @@ class GazeService:
 
         # ── 后台文件写入队列 ──────────────────
         self._writer_queue: queue.Queue = queue.Queue()
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_requested = False
         self._writer_thread = threading.Thread(
             target=self._run_writer, daemon=True, name="GazeFileWriter"
         )
@@ -130,9 +128,10 @@ class GazeService:
 
     def _log_info(self, message: str):
         formatted = f"[GazeService] {message}"
-        if self._logger:
+        if self._logger.hasHandlers():
             self._logger.info(message)
-        print(formatted)
+        else:
+            print(formatted)
 
     # ═══════════════════════════════════════════
     # 设备管理
@@ -259,6 +258,21 @@ class GazeService:
         # 优先使用外部传入的 task_id，回退到生成 UUID
         resolved_task_id = str(task_id) if task_id is not None else str(uuid.uuid4())
 
+        active_task_id = None
+        with self._state_lock:
+            if self._task_active and self._current_task:
+                active_task_id = str(self._current_task.get("task_id"))
+        if active_task_id and active_task_id != resolved_task_id:
+            self._log_info(
+                "starting a new gaze task while another task is active; "
+                f"auto-closing active={active_task_id}, new={resolved_task_id}"
+            )
+            self.stop_task(
+                task_id=active_task_id,
+                system_time=system_time,
+                end_trigger="auto_closed_by_new_task",
+            )
+
         # 创建任务目录
         task_dir = self._build_task_dir(user_id=user_id, task_id=resolved_task_id, system_time=system_time)
         os.makedirs(task_dir, exist_ok=True)
@@ -302,7 +316,7 @@ class GazeService:
                 "INSERT INTO gaze_targets "
                 "(task_id, bbox_json, normalized_bbox_json, screen_width, screen_height, appear_time_us) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (resolved_task_id, json.dumps(regions if regions is not None else bbox), json.dumps(normalized_regions),
+                (resolved_task_id, None, json.dumps(normalized_regions, ensure_ascii=False),
                  int(screen_w), int(screen_h), system_time),
             )
 
@@ -319,7 +333,7 @@ class GazeService:
         end_trigger: str = "task_end",
     ) -> dict:
         """
-        记录目标窗口消失、结束当前任务并写入 summary.json。
+        记录目标窗口消失、结束当前任务，并把生命周期和统计写入 SQLite。
 
         Args:
             task_id:     要结束的任务 ID，为 None 时自动取当前活动任务。
@@ -335,11 +349,20 @@ class GazeService:
         if system_time is None:
             system_time = int(time.time() * 1_000_000)
 
-        resolved_task_id = task_id or self._get_active_task_id()
+        requested_task_id = str(task_id) if task_id is not None else None
+        resolved_task_id = requested_task_id or self._get_active_task_id()
         if not resolved_task_id:
             raise ValueError("窗口消失时必须提供 task_id 或存在活动任务")
 
         with self._state_lock:
+            if not self._task_active or self._current_task is None:
+                raise ValueError(f"no active gaze task to stop: task_id={resolved_task_id}")
+            active_task_id = str(self._current_task.get("task_id"))
+            if requested_task_id is not None and requested_task_id != active_task_id:
+                raise ValueError(
+                    f"stop task_id mismatch: request={requested_task_id}, active={active_task_id}"
+                )
+            resolved_task_id = active_task_id
             self._task_active = False
             self._reset_out_of_box_state()
 
@@ -349,20 +372,10 @@ class GazeService:
                 if self._current_task
                 else system_time
             )
-            effective_user_id = user_id or (
-                self._current_task.get("user_id") if self._current_task else ""
-            )
-            effective_task_source = task_source or (
-                self._current_task.get("task_source") if self._current_task else ""
-            )
-            effective_task_name = task_name or (
-                self._current_task.get("task_name") if self._current_task else ""
-            )
             task_dir = self._current_task.get("task_dir") if self._current_task else None
             frame_count = self._current_task.get("frame_count", 0) if self._current_task else 0
             valid_frames = self._current_task.get("valid_frames", 0) if self._current_task else 0
             in_region_frames = self._current_task.get("in_region_frames", 0) if self._current_task else 0
-            feedback_count = self._current_task.get("feedback_count", 0) if self._current_task else 0
             self._current_task = None
 
         # 自动关闭该任务下所有未关闭的目标事件
@@ -380,27 +393,11 @@ class GazeService:
              frame_count, valid_frames, in_region_frames, end_trigger or "task_end", resolved_task_id),
         )
 
-        # 向写入队列发送 summary sentinel
+        # 任务结束后只关闭 raw_gaze 句柄；任务摘要由 gaze_tasks 查询还原。
         if task_dir:
-            summary = {
-                "task_id": resolved_task_id,
-                "user_id": effective_user_id,
-                "task_source": effective_task_source,
-                "task_name": effective_task_name,
-                "data_dir": task_dir,
-                "start_us": begin_time,
-                "end_us": system_time,
-                "duration_ms": (system_time - begin_time) / 1000,
-                "total_frames": frame_count,
-                "valid_frames": valid_frames,
-                "in_region_frames": in_region_frames,
-                "feedback_count": feedback_count,
-                "status": "completed",
-            }
             self._writer_queue.put({
-                "evt": _EVT_TASK_SUMMARY,
+                "evt": _EVT_CLOSE_TASK,
                 "task_dir": task_dir,
-                "data": summary,
             })
 
         print(f"[GazeService] 任务结束: task_id={resolved_task_id}")
@@ -484,15 +481,14 @@ class GazeService:
             "WHERE task_id = ? AND disappear_time_us IS NULL",
             (now_us, active_task_id),
         )
-        # 若新 bbox 非空，记录目标出现
-        raw_regions = regions if regions is not None else bbox
-        if raw_regions:
+        # 若新 bbox 非空，记录归一化目标出现；原始 bbox 不再作为分析主数据保存。
+        if normalized_regions:
             self._enqueue_db(
                 "INSERT INTO gaze_targets "
                 "(task_id, bbox_json, normalized_bbox_json, "
                 "screen_width, screen_height, appear_time_us) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (active_task_id, json.dumps(raw_regions), json.dumps(normalized_regions),
+                (active_task_id, None, json.dumps(normalized_regions, ensure_ascii=False),
                  int(screen_w), int(screen_h), now_us),
             )
 
@@ -511,7 +507,7 @@ class GazeService:
         user_id: str = "",
         system_time: int | None = None,
     ) -> dict:
-        """Record a manual gaze marker in SQLite and, when active, task files."""
+        """Record a manual gaze marker in SQLite."""
         marker_name = str(name or "").strip()
         if not marker_name:
             raise ValueError("marker name is required")
@@ -520,8 +516,7 @@ class GazeService:
 
         requested_task_id = str(task_id) if task_id is not None else None
         marker_id = uuid.uuid4().hex
-        payload_obj = payload if isinstance(payload, dict) else {}
-        task_dir = None
+        payload_obj = _sanitize_marker_payload(payload if isinstance(payload, dict) else {})
         resolved_task_id = requested_task_id
         resolved_user_id = user_id or ""
 
@@ -535,7 +530,6 @@ class GazeService:
                     )
                 resolved_task_id = active_task_id
                 resolved_user_id = resolved_user_id or active_task.get("user_id", "")
-                task_dir = active_task.get("task_dir")
 
         record = {
             "marker_id": marker_id,
@@ -558,12 +552,6 @@ class GazeService:
                 json.dumps(payload_obj, ensure_ascii=False),
             ),
         )
-        if task_dir:
-            self._writer_queue.put({
-                "evt": _EVT_MARKER,
-                "task_dir": task_dir,
-                "data": record,
-            })
         self._log_info(
             f"marker recorded: marker_id={marker_id}, task_id={resolved_task_id or ''}, name={marker_name}"
         )
@@ -704,9 +692,8 @@ class GazeService:
     def _build_task_dir(self, user_id: str, task_id: str, system_time: int) -> str:
         safe_user_id = _safe_path_segment(user_id, default="unknown_user")
         safe_task_id = _safe_path_segment(task_id, default=str(uuid.uuid4()))
-        date_part = time.strftime("%Y%m%d", time.localtime(system_time / 1_000_000))
         task_dir = os.path.abspath(
-            os.path.join(self._data_dir, "users", safe_user_id, date_part, safe_task_id)
+            os.path.join(self._data_dir, "raw", safe_user_id, safe_task_id)
         )
         data_root = os.path.abspath(self._data_dir)
         if os.path.commonpath([data_root, task_dir]) != data_root:
@@ -757,19 +744,19 @@ class GazeService:
                 if self._task_active and self._current_task is not None:
                     self._current_task["in_region_frames"] = self._current_task.get("in_region_frames", 0) + 1
 
-        # 向文件写入队列发送帧数据
+        frame_data = {
+            "ts_us": system_time_stamp,
+            "gaze": list(gaze_point) if gaze_valid else None,
+            "hit": current_in_region,
+        }
+        if current_in_region:
+            frame_data["hits"] = region_hits
+
+        # 向文件写入队列发送瘦身后的逐帧数据
         self._writer_queue.put({
             "evt": _EVT_GAZE_FRAME,
             "task_dir": task["task_dir"],
-            "data": {
-                "ts_us": system_time_stamp,
-                "task_id": task["task_id"],
-                "user_id": task.get("user_id", ""),
-                "gaze": list(gaze_point) if gaze_valid else None,
-                "valid": gaze_valid,
-                "in_region": current_in_region,
-                "region_hits": region_hits,
-            },
+            "data": frame_data,
         })
 
         with self._state_lock:
@@ -830,27 +817,17 @@ class GazeService:
             "server_time_ms": int(time.time() * 1000),
         }
 
-        user_id = ""
         with self._state_lock:
             if (
                 self._current_task
                 and isinstance(self._current_task, dict)
                 and self._current_task.get("task_id") == str(task_id)
             ):
-                user_id = self._current_task.get("user_id", "")
                 self._current_task["feedback_count"] = (
                     self._current_task.get("feedback_count", 0) + 1
                 )
 
-        feedback_record = {
-            "event_time_ms": payload["server_time_ms"],
-            "task_id": task_id,
-            "user_id": user_id,
-            "reason": payload["reason"],
-            "consecutive_false_count": consecutive_count,
-            "threshold": OUT_OF_BOX_FALSE_THRESHOLD,
-            "payload": payload,
-        }
+        feedback_payload = _sanitize_feedback_payload(payload)
         self._enqueue_db(
             "INSERT INTO gaze_feedback_events "
             "(task_id, event_time_ms, reason, consecutive_false_count, threshold, payload_json) "
@@ -861,7 +838,7 @@ class GazeService:
                 payload["reason"],
                 int(consecutive_count),
                 int(OUT_OF_BOX_FALSE_THRESHOLD),
-                json.dumps(feedback_record, ensure_ascii=False),
+                json.dumps(feedback_payload, ensure_ascii=False),
             ),
         )
 
@@ -882,10 +859,10 @@ class GazeService:
 
     def _run_writer(self):
         """
-        后台 daemon 线程：持续消费写入队列，将数据路由到对应文件和数据库。
+        后台 daemon 线程：持续消费写入队列，将 raw frame 写入任务文件，并执行 SQLite 写入。
 
         每个 task_dir 保持 raw_gaze 文件句柄。
-        收到 task_summary 事件时写 summary.json 并关闭对应句柄。
+        收到 close_task 事件时关闭对应句柄。
         收到 db_exec 事件时执行 SQL 写入 gaze_records.db。
         收到 stop_writer sentinel 时退出。
         """
@@ -955,19 +932,8 @@ class GazeService:
                     handles = _get_handles(task_dir)
                     handles["gaze"].write(json.dumps(data, ensure_ascii=False) + "\n")
 
-                elif evt == _EVT_MARKER:
-                    os.makedirs(task_dir, exist_ok=True)
-                    marker_path = os.path.join(task_dir, "markers.jsonl")
-                    with open(marker_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(data, ensure_ascii=False) + "\n")
-
-                elif evt == _EVT_TASK_SUMMARY:
-                    # flush & close 之前打开的帧文件句柄，再写 summary
+                elif evt == _EVT_CLOSE_TASK:
                     _close_handles(task_dir)
-                    summary_path = os.path.join(task_dir, "summary.json")
-                    with open(summary_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    print(f"[GazeService] summary 已写入: {summary_path}")
 
             except Exception as e:
                 print(f"[GazeService] 文件写入出错 ({evt}): {e}")
@@ -975,15 +941,18 @@ class GazeService:
         # 退出前关闭所有文件句柄和数据库连接
         for task_dir in list(open_handles.keys()):
             _close_handles(task_dir)
-        try:
-            db_conn.close()
-        except Exception:
-            pass
+        _close_sqlite_wal_connection(db_conn)
 
-    def shutdown(self):
+    def shutdown(self, timeout: float | None = None):
         """关闭后台写入线程（进程退出前调用）。"""
-        self._writer_queue.put({"evt": _EVT_STOP_WRITER})
-        self._writer_thread.join(timeout=5)
+        self.disconnect()
+        with self._shutdown_lock:
+            if not self._shutdown_requested:
+                self._shutdown_requested = True
+                self._writer_queue.put({"evt": _EVT_STOP_WRITER})
+        self._writer_thread.join(timeout=timeout)
+        if self._writer_thread.is_alive():
+            print("[GazeService] writer shutdown timed out; WAL files may remain until process exit")
 
 
 # ═══════════════════════════════════════════════
@@ -997,10 +966,60 @@ def _safe_path_segment(value, default: str = "unknown") -> str:
     return (cleaned or default)[:120]
 
 
+def _close_sqlite_wal_connection(conn: sqlite3.Connection) -> None:
+    try:
+        conn.commit()
+    except sqlite3.Error:
+        pass
+    for sql in ("PRAGMA wal_checkpoint(TRUNCATE)", "PRAGMA journal_mode=DELETE"):
+        try:
+            conn.execute(sql).fetchall()
+        except sqlite3.Error:
+            pass
+    try:
+        conn.close()
+    except sqlite3.Error:
+        pass
+
+
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def _sanitize_marker_payload(payload: dict) -> dict:
+    duplicated_fields = {
+        "task_id",
+        "user_id",
+        "event_type",
+        "gaze_task_id",
+        "timestamp",
+        "timestamp_ms",
+        "timestamp_us",
+    }
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in duplicated_fields
+    }
+
+
+def _sanitize_feedback_payload(payload: dict) -> dict:
+    duplicated_fields = {
+        "task_id",
+        "user_id",
+        "server_time_ms",
+        "event_time_ms",
+        "reason",
+        "consecutive_false_count",
+        "threshold",
+    }
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in duplicated_fields
+    }
 
 
 def _get_gaze_point(gaze_data: dict) -> tuple[tuple | None, bool]:

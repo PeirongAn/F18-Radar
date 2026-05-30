@@ -155,8 +155,8 @@ Response:
 }
 ```
 
-In `PHYSIO_SAMPLE_STORAGE=file` mode, export reads `sample_files` from SQLite
-and merges the referenced raw CSV files. Markers are always exported from SQLite.
+Export reads raw file metadata from `task_runs` and merges the referenced raw
+CSV files. Markers are always exported from SQLite.
 
 ## Internal Service Methods
 
@@ -164,18 +164,20 @@ These methods are used by F18 task lifecycle integration.
 
 ### `set_subject(subject_id, metadata=None)`
 
-Sets the current subject and writes/updates the `subjects` row.
+Sets the current subject context. New data does not write a separate `subjects`
+table; subject metadata is folded into `task_runs.metadata_json`.
 
 ### `clear_subject()`
 
-Closes any active raw sample writer, ends active task/trial rows, and clears the
+Closes any active raw sample writer, ends the active task row, and clears the
 current subject context.
 
-### `start_task(task_name, metadata=None)`
+### `start_task(task_name, metadata=None, run_id=None)`
 
-Creates a `task_runs` row and starts the current physio run.
+Creates a `task_runs` row and starts the current physio run. When F18 provides
+`run_id`, it is the same value as the gaze/business `task_id`.
 
-In file storage mode, it also creates:
+The raw file is created lazily after the first real sample arrives:
 
 ```text
 server/data/physio/raw/<subject_id>/<run_id>/samples.csv
@@ -183,8 +185,8 @@ server/data/physio/raw/<subject_id>/<run_id>/samples.csv
 
 ### `stop_task()`
 
-Flushes and closes the current raw sample writer, updates `sample_files`, and
-ends the active `task_runs` row.
+Flushes and closes the current raw sample writer and updates the active
+`task_runs` row.
 
 ### `marker(name, payload=None)`
 
@@ -194,7 +196,9 @@ confirmation.
 
 ### `export_data(subject_id=None, run_id=None, trial_id=None)`
 
-Exports samples, markers, and metadata to the configured export directory.
+Exports raw samples, markers, and metadata to the configured export directory.
+`trial_id` is accepted for compatibility; new physio data is not segmented into
+a `trials` table.
 
 ## Environment Variables
 
@@ -222,8 +226,7 @@ Default:
 server/data/physio/experiment_data.sqlite3
 ```
 
-SQLite database for metadata, lifecycle, markers, source sessions, and sample
-file indexes.
+SQLite database for task lifecycle, marker events, and raw sample file metadata.
 
 ### `PHYSIO_EXPORT_DIR`
 
@@ -253,12 +256,9 @@ Default:
 file
 ```
 
-Allowed values:
-
-- `file`: write high-frequency samples to raw CSV files and keep only file
-  indexes in SQLite.
-- `sqlite`: legacy mode for short tests; writes samples to the SQLite `samples`
-  table.
+New data is always file-backed: high-frequency samples are written to raw CSV
+files, and SQLite exposes only task metadata and markers. `sqlite` is ignored if
+set in the environment.
 
 ### `PHYSIO_STREAMS`
 
@@ -293,38 +293,17 @@ Default:
 
 ## SQLite Tables
 
-### `subjects`
-
-Subject metadata.
-
 ### `task_runs`
 
-One physio run per formal F18 scene/question. `run_id` is the physio task id.
+One physio run per formal F18 scene/question. For F18 tasks, `run_id` is the
+same value as the gaze/business `task_id`.
 
-### `trials`
-
-Reserved for sub-trial segmentation.
+This table also stores the raw sample file path, row count, sample time range,
+and stream list.
 
 ### `markers`
 
 Event markers aligned by `service_time_ns`.
-
-### `source_sessions`
-
-Vendor CSV session discovery and active-session tracking.
-
-### `sample_files`
-
-Raw sample file index. Contains `run_id`, `subject_id`, file path, row count,
-time range, and stream list.
-
-### `samples`
-
-Legacy raw sample table. It is only written when:
-
-```text
-PHYSIO_SAMPLE_STORAGE=sqlite
-```
 
 ## Raw Sample CSV Format
 
@@ -352,4 +331,3 @@ Formal radar and SA tasks:
 - target selected: write `target_selected` marker
 - threat clicked: write `threat_clicked` marker
 - task result confirmed: write `task_result_confirmed` marker, stop task, clear subject
-

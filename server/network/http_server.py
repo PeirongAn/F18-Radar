@@ -14,6 +14,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, target_manager, db_manager, get_logger
 from core import message_handler
+from network.netlog import (
+    duration_ms,
+    http_request_summary,
+    log_http,
+    log_ws_connect,
+    log_ws_disconnect,
+    log_ws_message,
+    now_ms,
+    remote_from_request,
+    should_log_http,
+)
 
 class HTTPServer:
     """HTTP服务器，同时支持静态文件服务和WebSocket连接"""
@@ -23,11 +34,12 @@ class HTTPServer:
         self.port = port
         self.static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'dist')
         self.logger = get_logger("http_server")
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._interface_log_middleware])
         self._routes_setup = False
         self.joystick_handler = None
         self._gaze_svc = None
         self._physio_svc = None
+        self._runner = None
         self._setup_routes()
         self.seen_users = set()
         # 新增
@@ -40,6 +52,30 @@ class HTTPServer:
             "current_difficulty": "high",# hig, low
             "audio_enabled": False# 高工效 true
         }
+
+    @web.middleware
+    async def _interface_log_middleware(self, request, handler):
+        if not should_log_http(request.path, request.method):
+            return await handler(request)
+
+        req_id = getattr(request, "request_id", None) or str(uuid.uuid4())[:8]
+        request["request_id"] = req_id
+        start_ms = now_ms()
+        summary = await http_request_summary(request)
+        status = 500
+
+        try:
+            response = await handler(request)
+            status = getattr(response, "status", 200)
+            return response
+        except web.HTTPException as exc:
+            status = exc.status
+            raise
+        except Exception:
+            status = 500
+            raise
+        finally:
+            log_http(self.logger, req_id, request, status, duration_ms(start_ms), summary)
 
     
     def set_joystick_handler(self, handler):
@@ -134,7 +170,8 @@ class HTTPServer:
         # 清除现有的静态路由
         if self._routes_setup:
             # 创建新的应用实例以避免路由冲突
-            self.app = web.Application()
+            self.app = web.Application(middlewares=[self._interface_log_middleware])
+            self._runner = None
             self._routes_setup = False
             self._setup_routes()
     
@@ -176,25 +213,7 @@ class HTTPServer:
 
     def _log_ws_request(self, client_id: str, message: str, message_data=None) -> None:
         """记录收到的 WebSocket 请求摘要到统一日志。"""
-        message_bytes = len(message.encode('utf-8')) if isinstance(message, str) else len(message)
-        message_type = ""
-        task_id = ""
-        user_id = ""
-        if isinstance(message_data, dict):
-            message_type = message_data.get('type', '') or message_data.get('TaskName', '') or 'unknown'
-            task_id = message_data.get('task_id', message_data.get('ID', ''))
-            user_id = message_data.get('user_id', message_data.get('userId', ''))
-        else:
-            message_type = "invalid_json"
-
-        self.logger.info(
-            "收到WebSocket请求: client_id=%s type=%s bytes=%s task_id=%s user_id=%s",
-            client_id,
-            message_type,
-            message_bytes,
-            task_id,
-            user_id,
-        )
+        log_ws_message(self.logger, client_id, "/ws", message, message_data)
     
     async def websocket_handler(self, request):
         """处理WebSocket连接"""
@@ -202,12 +221,20 @@ class HTTPServer:
         await ws.prepare(request)
         
         client_id = str(uuid.uuid4())
-        self.logger.info(f"WebSocket客户端已连接: {client_id}")
+        ws_start_ms = now_ms()
+        ws_remote = remote_from_request(request)
         session_state = {}
         
         # 将连接注册到 websocket_server，使操纵杆数据广播能找到此客户端
         from network import websocket_server
-        websocket_server.add_client(client_id, ws)
+        websocket_server.add_client(client_id, ws, log_event=False, endpoint="/ws", remote=ws_remote)
+        log_ws_connect(
+            self.logger,
+            client_id,
+            "/ws",
+            ws_remote,
+            websocket_server.get_client_count(),
+        )
 
         # 首个客户端连接时自动触发系统初始化（包括眼动服务）
         from main import initialize_system, _initialized
@@ -276,13 +303,23 @@ class HTTPServer:
                     )
                     if is_platform_packet:
                         from network.platform_task_bridge import handle_platform_task_ws
-                        for reply in await handle_platform_task_ws(websocket_server, client_id, message_data):
+                        for reply in await handle_platform_task_ws(
+                            websocket_server,
+                            client_id,
+                            message_data,
+                            gaze_svc=self._gaze_svc,
+                            physio_svc=self._physio_svc,
+                        ):
                             await ws.send_str(json.dumps(reply, ensure_ascii=False))
                         continue
 
                     if message_type == 'platform_task_result':
                         from network.platform_task_bridge import handle_platform_task_result_ws
-                        for reply in handle_platform_task_result_ws(message_data):
+                        for reply in handle_platform_task_result_ws(
+                            message_data,
+                            gaze_svc=self._gaze_svc,
+                            physio_svc=self._physio_svc,
+                        ):
                             await ws.send_str(json.dumps(reply, ensure_ascii=False))
                         continue
 
@@ -369,6 +406,7 @@ class HTTPServer:
                             
                             # 发送主数据
                             data = target_manager.get_radar_data(include_targets=include_targets)
+                            data["type"] = "radar_data"
                             data["_timestamp"] = time.time()
                             await ws.send_str(json.dumps(data))
                             
@@ -380,8 +418,15 @@ class HTTPServer:
         finally:
             if gaze_client_registered and self._gaze_svc is not None:
                 self._gaze_svc.unregister_ws_client(ws)
-            websocket_server.remove_client(client_id)
-            self.logger.info(f"WebSocket客户端已断开连接: {client_id}")
+            websocket_server.remove_client(client_id, log_event=False)
+            log_ws_disconnect(
+                self.logger,
+                client_id,
+                "/ws",
+                ws_remote,
+                duration_ms(ws_start_ms),
+                websocket_server.get_client_count(),
+            )
             
         return ws
     
@@ -647,6 +692,7 @@ class HTTPServer:
         # 创建运行器
         runner = web.AppRunner(self.app)
         await runner.setup()
+        self._runner = runner
         
         # 创建站点
         site = web.TCPSite(runner, self.host, self.port)
@@ -657,7 +703,12 @@ class HTTPServer:
         self.logger.info(f"  - WebSocket连接: ws://{self.host}:{self.port}/ws")
         
         # 保持运行
-        await asyncio.Future()
+        try:
+            await asyncio.Future()
+        finally:
+            self.logger.info("HTTP服务器正在停止...")
+            await runner.cleanup()
+            self._runner = None
 
     # 判断消息是否是json
     def _looks_like_payload(self, data: dict) -> bool:

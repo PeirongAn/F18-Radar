@@ -51,12 +51,14 @@ def check_page_html() -> str:
     <div class="card"><div class="label">Subject</div><div class="value" id="subject">-</div></div>
     <div class="card"><div class="label">Storage</div><div class="value" id="storage">-</div></div>
     <div class="card"><div class="label">Current Rows</div><div class="value" id="samples">0</div></div>
-    <div class="card wide"><div class="label">Vendor CSV Session</div><div class="value" id="session">-</div></div>
+    <div class="card"><div class="label">Discovered LSL</div><div class="value" id="discoveredCount">0</div></div>
+    <div class="card"><div class="label">Live LSL</div><div class="value" id="liveCount">0</div></div>
+    <div class="card wide"><div class="label">Data Source</div><div class="value" id="session">-</div></div>
     <div class="card wide"><div class="label">Current Raw Sample File</div><div class="value" id="rawFile">-</div></div>
     <div class="card wide">
       <div class="label">Streams</div>
       <table>
-        <thead><tr><th>Stream</th><th>Hz</th><th>Latest value</th><th>Last seen</th></tr></thead>
+        <thead><tr><th>Stream</th><th>LSL Name</th><th>Type</th><th>Rate</th><th>Hz</th><th>Latest value</th><th>Last seen</th></tr></thead>
         <tbody id="streams"></tbody>
       </table>
     </div>
@@ -65,10 +67,10 @@ def check_page_html() -> str:
   </div>
 </main>
 <script>
-const streamOrder = ["ppg","eda","acc","gyro","hr","skt","env","o2"];
+const fallbackStreamOrder = ["ppg_ori","ppg_filter","eda","hr","o2","skt","env","acc","gyro","mark","ppg"];
 function firstValue(values) {
   if (!values) return "-";
-  const key = Object.keys(values)[0];
+  const key = Object.keys(values).find(k => !k.startsWith("lsl_"));
   const v = key ? values[key] : null;
   return typeof v === "number" ? v.toFixed(3) : (v ?? "-");
 }
@@ -101,12 +103,24 @@ async function loadStatus() {
     document.getElementById("subject").textContent = state.subject_id || "-";
     document.getElementById("storage").textContent = data.sample_storage || "-";
     document.getElementById("samples").textContent = sampleFile.active_row_count ?? data.formal_sample_count ?? 0;
-    document.getElementById("session").textContent = collector.source_session_path || "-";
+    const discovered = collector.discovered_streams || [];
+    const live = collector.live_streams || [];
+    document.getElementById("discoveredCount").textContent = discovered.length;
+    document.getElementById("liveCount").textContent = live.length;
+    document.getElementById("liveCount").className = live.length ? "value ok" : "value warn";
+    document.getElementById("session").textContent = collector.source_session_path || collector.source_kind || "-";
     document.getElementById("rawFile").textContent = sampleFile.active_file_path || "-";
     const streams = collector.streams || {};
+    const byStream = {};
+    for (const item of discovered) {
+      byStream[item.stream] = item;
+    }
+    const streamOrder = Array.from(new Set([...fallbackStreamOrder, ...Object.keys(streams)])).filter(name => streams[name] || byStream[name]);
     document.getElementById("streams").innerHTML = streamOrder.map(name => {
       const item = streams[name] || {};
-      return `<tr><td>${name.toUpperCase()}</td><td>${item.hz || 0}</td><td>${firstValue(item.last_value)}</td><td>${ageText(item.last_seen_ns)}</td></tr>`;
+      const meta = byStream[name] || {};
+      const liveClass = (item.hz || 0) > 0 ? "ok" : "warn";
+      return `<tr><td class="${liveClass}">${name.toUpperCase()}</td><td>${meta.name || "-"}</td><td>${meta.type || "-"}</td><td>${meta.nominal_srate ?? "-"}</td><td>${item.hz || 0}</td><td>${firstValue(item.last_value)}</td><td>${ageText(item.last_seen_ns)}</td></tr>`;
     }).join("");
     const warnings = [];
     if (data.error) warnings.push(data.error);
@@ -175,11 +189,11 @@ def dashboard_html() -> str:
   <div class="charts" id="charts"></div>
 </main>
 <script>
-const streams = ["ppg","eda","acc","gyro","hr","skt","env","o2"];
-const colors = {ppg:"#25c073",eda:"#4da3ff",acc:"#f4bd50",gyro:"#c983ff",hr:"#ff6b6b",skt:"#7dd36f",env:"#94a3b8",o2:"#f59e0b"};
+const fallbackStreams = ["ppg_ori","ppg_filter","eda","hr","o2","skt","env","acc","gyro","mark","ppg"];
+const colors = {ppg:"#25c073",ppg_ori:"#25c073",ppg_filter:"#71e6aa",eda:"#4da3ff",acc:"#f4bd50",gyro:"#c983ff",hr:"#ff6b6b",skt:"#7dd36f",env:"#94a3b8",o2:"#f59e0b",mark:"#eab308"};
 function firstValue(values) {
   if (!values) return null;
-  const key = Object.keys(values)[0];
+  const key = Object.keys(values).find(k => !k.startsWith("lsl_"));
   return key ? Number(values[key]) : null;
 }
 function draw(canvas, points, color) {
@@ -203,8 +217,11 @@ async function tick() {
   const res = await fetch("/api/physio/status", {cache:"no-store"});
   const data = await res.json();
   const collector = data.collector || {};
-  document.getElementById("source").textContent = collector.source_session_path || (data.enabled ? "No vendor CSV session" : "Physio disabled");
+  const live = collector.live_streams || [];
+  const discovered = collector.discovered_streams || [];
+  document.getElementById("source").textContent = data.enabled ? `${collector.source_session_path || collector.source_kind || "No source"} · discovered ${discovered.length} · live ${live.length}` : "Physio disabled";
   const status = collector.streams || {};
+  const streams = Array.from(new Set([...fallbackStreams, ...Object.keys(status)])).filter(s => status[s]);
   document.getElementById("metrics").innerHTML = streams.map(s => {
     const item = status[s] || {};
     const last = firstValue(item.last_value);

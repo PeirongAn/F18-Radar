@@ -438,7 +438,14 @@ const App: React.FC = observer(() => {
   }, [radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── SA 查看结果确认回调保留给页面流程；问卷由任务类型完成状态统一控制 ── */
-  const handleSAResultConfirmed = useCallback(() => {}, []);
+  const handleSAResultConfirmed = useCallback(() => {
+    const source = {
+      is_ai_active: agentStore.isAIActive,
+      is_practice: radarStore.isPractice,
+    };
+    showQuestionnaireForTask('SA_THREAT_RESPONSE', source);
+    showCompletionNoticeForTask('SA_THREAT_RESPONSE', source);
+  }, [radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── SA 重置 ──────────────────────────────────── */
   const handleSATaskReset = useCallback(() => {

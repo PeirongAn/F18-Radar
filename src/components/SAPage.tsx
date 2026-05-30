@@ -312,6 +312,37 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     return saRepetitionInfo && typeof saRepetitionInfo !== 'string' ? (saRepetitionInfo as any).difficulty : undefined;
   }, [repetitionInfos]);
 
+  const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
+  const isSAAllCompleted = saRepetitionInfo === 'ALL_COMPLETED';
+  const hasReachedSAOverallTotal = useMemo(() => {
+    if (!saRepetitionInfo || typeof saRepetitionInfo === 'string') return false;
+    const current = Number((saRepetitionInfo as any).current ?? 0);
+    const total = Number((saRepetitionInfo as any).total ?? 0);
+    const scenarioIndex = Number((saRepetitionInfo as any).scenario_index ?? 1);
+    const scenarioTotal = Number((saRepetitionInfo as any).scenario_total ?? 1);
+    return total > 0 && current >= total && scenarioIndex >= scenarioTotal;
+  }, [saRepetitionInfo]);
+  const completedSATaskKeysRef = useRef<Set<string>>(new Set());
+  const getCurrentSATaskKey = useCallback(() => {
+    if (radarStore.taskId !== null && radarStore.taskId !== undefined) {
+      return String(radarStore.taskId);
+    }
+    if (!saRepetitionInfo || typeof saRepetitionInfo === 'string') {
+      return null;
+    }
+    const ri = saRepetitionInfo as any;
+    return [
+      'pending-sa',
+      userId ?? '',
+      ri.current ?? '',
+      ri.total ?? '',
+      ri.scenario_index ?? '',
+      ri.scenario_total ?? '',
+      ri.is_ai_active ? 'ai' : 'manual',
+      ri.is_practice ? 'practice' : 'formal',
+    ].join(':');
+  }, [saRepetitionInfo, userId]);
+
   const isAIActive = useMemo(() => {
     const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
     return saRepetitionInfo && typeof saRepetitionInfo !== 'string' ? !!(saRepetitionInfo as any).is_ai_active : false;
@@ -608,13 +639,36 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
-      sendMessage?.({
-        type: 'task_result_confirmed',
-        task_type: 'SA_THREAT_RESPONSE',
-        task_id: radarStore.taskId,
-        timestamp: Date.now(),
-        user_id: userId,
-      });
+      if (isSAAllCompleted) {
+        console.log('[SAPage] SA result ignored because task is already ALL_COMPLETED.');
+        onResultConfirmed?.();
+        return;
+      }
+
+      const taskKey = getCurrentSATaskKey();
+      const hasAnswer = !!userSelection;
+      if (hasAnswer && taskKey && completedSATaskKeysRef.current.has(taskKey)) {
+        console.log('[SAPage] SA result ignored because current task was already confirmed:', taskKey);
+        if (hasReachedSAOverallTotal || isSAAllCompleted) {
+          onResultConfirmed?.();
+        }
+        return;
+      }
+
+      if (hasAnswer) {
+        if (taskKey) {
+          completedSATaskKeysRef.current.add(taskKey);
+        }
+        sendMessage?.({
+          type: 'task_result_confirmed',
+          task_type: 'SA_THREAT_RESPONSE',
+          task_id: radarStore.taskId,
+          timestamp: Date.now(),
+          user_id: userId,
+        });
+      } else {
+        console.log('[SAPage] SA result viewed without a selection; current task is not marked completed.');
+      }
 
       stopAutoStartSaTobiiRef.current = true;
       const promptPosition = getSaTobiiPromptPositionRef.current?.();
@@ -1715,7 +1769,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         console.log('[SAPage] Button2按下，确认任务评估弹窗');
         if (isCorrect === true || isCorrect === false) {
           setShowTaskComplete(false);
-          onResultConfirmed?.();
+          if (hasReachedSAOverallTotal || isSAAllCompleted) {
+            onResultConfirmed?.();
+            prevButton2Ref.current = button2;
+            return;
+          }
           // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
           handleResetSA();
         } else {
@@ -1727,7 +1785,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     }
     prevButton2Ref.current = button2;
-  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, onResultConfirmed]);
+  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, onResultConfirmed, hasReachedSAOverallTotal, isSAAllCompleted]);
 
   // const [isStarted, setIsStarted] = useState(false);
   // const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);
@@ -2496,7 +2554,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             <button
               onClick={isCorrect === true || isCorrect === false ? () => {
                 setShowTaskComplete(false);
-                onResultConfirmed?.();
+                if (hasReachedSAOverallTotal || isSAAllCompleted) {
+                  onResultConfirmed?.();
+                  return;
+                }
                 // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
                 handleResetSA();
               } : handleResetSA}

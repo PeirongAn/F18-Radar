@@ -841,7 +841,7 @@ def generate_task_id_timestamp() -> int:
     
     return task_id
 
-def generate_task_id() -> int:
+def _generate_task_id_legacy() -> int:
     """从数据库查询最大task_id并生成新的唯一ID（备选方案）"""
     try:
         with db_manager.get_connection() as conn:
@@ -862,3 +862,26 @@ def generate_task_id() -> int:
         # 如果数据库查询失败，回退到时间戳方案
         get_logger("task_manager").warning(f"Failed to query max task_id from DB: {e}")
         return generate_task_id_timestamp() 
+
+
+def generate_task_id() -> int:
+    """Generate a task_id across legacy task tables and unified task_runs."""
+    try:
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            max_id = 0
+            for table_name in ("task_settings", "user_operations", "task_runs"):
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,),
+                )
+                if not cursor.fetchone():
+                    continue
+                cursor.execute(f"SELECT MAX(task_id) FROM {table_name}")
+                result = cursor.fetchone()
+                if result and result[0] is not None:
+                    max_id = max(max_id, int(result[0]))
+            return max_id + 1
+    except Exception as e:
+        get_logger("task_manager").warning(f"Failed to query max task_id from DB: {e}")
+        return generate_task_id_timestamp()

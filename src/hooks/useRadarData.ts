@@ -99,7 +99,11 @@ class GlobalWebSocketManager {
   
   // 初始化连接
   public connect(url: string) {
-    if (this.ws && this.url === url && this.ws.readyState === WebSocket.OPEN) {
+    if (
+      this.ws &&
+      this.url === url &&
+      (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
+    ) {
       console.log('【全局WS】WebSocket连接已存在');
       return;
     }
@@ -253,14 +257,27 @@ class GlobalWebSocketManager {
       }
       
       // 创建一个新的数据对象
+      const shouldClearExternalTargets =
+        rawData.type === 'init_settings' ||
+        rawData.type === 'all_tasks_completed' ||
+        rawData.type === 'reset_view';
+
       const newData: RadarData = {
         // 对于列表数据，如果新消息中没有，则保留旧值
         targets: rawData.targets !== undefined ? rawData.targets : (this.state.radarData?.targets || []),
         
-        // If the new message doesn't have externalTargets, it should be considered empty.
-        externalTargets: rawData.externalTargets !== undefined ? rawData.externalTargets : [],
+        // Preserve target returns across unrelated control/feedback messages.
+        externalTargets: rawData.externalTargets !== undefined
+          ? rawData.externalTargets
+          : shouldClearExternalTargets
+            ? []
+            : (this.state.radarData?.externalTargets || []),
 
-        externalTargetsTimestamp: rawData.externalTargets !== undefined ? Date.now() : null,
+        externalTargetsTimestamp: rawData.externalTargets !== undefined
+          ? Date.now()
+          : shouldClearExternalTargets
+            ? null
+            : (this.state.radarData?.externalTargetsTimestamp ?? null),
         saThreats: rawData.saThreats !== undefined ? rawData.saThreats : (this.state.radarData?.saThreats || []),
         
         // 对于数值数据，如果新消息中没有，则保留旧值或使用默认值
@@ -348,7 +365,7 @@ class GlobalWebSocketManager {
   }
   
   // 修改sendMessage以优先使用消息中自带的event_owner
-  public sendMessage(message: object) {
+  public sendMessage(message: object): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const payload = {
         event_owner: agentStore.currentOperationOwner,
@@ -357,9 +374,15 @@ class GlobalWebSocketManager {
       };
       console.log('useRadarData sendMessage - Sending:', payload);
       this.ws.send(JSON.stringify(payload));
+      return true;
     } else {
       console.error('WebSocket is not connected.');
+      return false;
     }
+  }
+
+  public isOpen(): boolean {
+    return !!this.ws && this.ws.readyState === WebSocket.OPEN;
   }
   
   // 关闭连接
@@ -628,69 +651,33 @@ const useRadarData = (
     }
   }, [triggerSaHighestThreatAttention]);
 
+  const sendTobiiHandMessage = useCallback((payload: any, label: string) => {
+    const message = { type: 'tobii_hand', ...payload };
+    globalWS.connect(wsUrl);
+    let attempts = 0;
+    const trySend = () => {
+      if (globalWS.isOpen() && globalWS.sendMessage(message)) return;
+      attempts += 1;
+      if (attempts >= 20) {
+        console.warn(`[gazerelation] ${label} send skipped because global WS is not open`, message);
+        return;
+      }
+      window.setTimeout(trySend, 100);
+    };
+    trySend();
+  }, [wsUrl]);
+
   // gazerelation: 关闭当前回合 WS；可选先发送 hand(box_visible=false) 结束消息
   const closeAntennaRoundWs = useCallback((sendEndPayload: boolean) => {
-    const ws = antennaRoundWsRef.current;
-    if (!ws) return;
-
-    if (sendEndPayload && ws.readyState === WebSocket.OPEN && antennaTaskIdRef.current) {
+    if (sendEndPayload && antennaTaskIdRef.current) {
       const endPayload = buildAntennaStatusPayload(false, lastAntennaPromptPositionRef.current);
-      ws.send(JSON.stringify({ type: 'tobii_hand', ...endPayload, task_id: antennaTaskIdRef.current }));
-      console.log('[gazerelation] 天线回合WS发送结束消息:', endPayload);
-      
-      // 等待后端响应后再关闭连接
-      const originalOnMessage = ws.onmessage as ((event: MessageEvent) => void) | null;
-      
-      // 监听后端响应
-      ws.onmessage = (event: MessageEvent) => {
-        try {
-          const responseBody = JSON.parse(event.data);
-          if (responseBody?.ok === true && responseBody?.msg?.includes('窗口消失')) {
-            console.log('[gazerelation] 收到后端结束响应，关闭连接');
-            try {
-              ws.close();
-            } catch (err) {
-              console.error('[gazerelation] 关闭天线回合WS失败:', err);
-            }
-            antennaRoundWsRef.current = null;
-          }
-        } catch (err) {
-          console.error('[gazerelation] 解析后端响应失败:', err);
-        }
-        if (originalOnMessage) {
-          originalOnMessage(event);
-        }
-      };
-      
-      // 设置超时，确保连接最终会关闭
-      setTimeout(() => {
-        if (antennaRoundWsRef.current === ws) {
-          console.log('[gazerelation] 超时，强制关闭连接');
-          try {
-            ws.close();
-          } catch (err) {
-            console.error('[gazerelation] 关闭天线回合WS失败:', err);
-          }
-          antennaRoundWsRef.current = null;
-        }
-      }, 3000);
+      sendTobiiHandMessage({ ...endPayload, task_id: antennaTaskIdRef.current }, 'antenna end');
+      console.log('[gazerelation] antenna round sent end message through global WS:', endPayload);
     } else if (sendEndPayload && !antennaTaskIdRef.current) {
-      console.warn('[gazerelation] 当前回合没有 task_id，跳过结束消息发送');
-      try {
-        ws.close();
-      } catch (err) {
-        console.error('[gazerelation] 关闭天线回合WS失败:', err);
-      }
-      antennaRoundWsRef.current = null;
-    } else {
-      try {
-        ws.close();
-      } catch (err) {
-        console.error('[gazerelation] 关闭天线回合WS失败:', err);
-      }
-      antennaRoundWsRef.current = null;
+      console.warn('[gazerelation] antenna round has no task_id, skip end message');
     }
-  }, [buildAntennaStatusPayload]);
+    antennaRoundWsRef.current = null;
+  }, [buildAntennaStatusPayload, sendTobiiHandMessage]);
 
   // gazerelation: 打开当前回合 Radar WS；连接成功后发送 tobii_hand(box_visible=true) 消息
   const openAntennaRoundWs = useCallback((roundId: number, promptPosition?: any) => {
@@ -702,57 +689,20 @@ const useRadarData = (
       typeof pos.bottom === 'number' &&
       !(pos.left === 0 && pos.top === 0 && pos.right === 0 && pos.bottom === 0);
 
-    const sendStartRoundIfReady = () => {
-      if (!hasValidPromptPosition(lastAntennaPromptPositionRef.current)) return;
-      if (hasReportedAntennaPromptRef.current) return;
-      if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) return;
-      if (!antennaRoundWsRef.current || antennaRoundWsRef.current.readyState !== WebSocket.OPEN) return;
-      hasReportedAntennaPromptRef.current = true;
-      const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
-      antennaRoundWsRef.current.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
-      console.log('[gazerelation] 天线回合WS发送开始消息:', startPayload);
-    };
-
     closeAntennaRoundWs(false);
     if (promptPosition) {
       lastAntennaPromptPositionRef.current = promptPosition;
     }
 
-    const ws = new WebSocket(wsUrl);
-    antennaRoundWsRef.current = ws;
-    // 处理 WS 连接成功事件
-    ws.onopen = () => {
-      if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) {
-        closeAntennaRoundWs(false);
-        return;
-      }
-      sendStartRoundIfReady();
-      console.log('[gazerelation] 天线回合WS连接成功');
-    };
-    // 处理服务端消息，更新 task_id 并触发闪烁
-    ws.onmessage = (event) => {
-      if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) return;
-      try {
-        const responseBody = JSON.parse(event.data);
-        if (responseBody?.task_id) {
-          antennaTaskIdRef.current = String(responseBody.task_id);
-        }
-        handleAntennaStatusResponse(responseBody);
-      } catch (err) {
-        console.error('[gazerelation] 天线回合WS消息解析失败:', err);
-      }
-    };
-    // 处理 WS 错误
-    ws.onerror = (event) => {
-      console.error('[gazerelation] 天线回合WS错误:', event);
-    };
+    if (!hasValidPromptPosition(lastAntennaPromptPositionRef.current)) return;
+    if (hasReportedAntennaPromptRef.current) return;
+    if (!antennaRoundActiveRef.current || antennaRoundIdRef.current !== roundId) return;
 
-    ws.onclose = () => {
-      if (antennaRoundWsRef.current === ws) {
-        antennaRoundWsRef.current = null;
-      }
-    };
-  }, [buildAntennaStatusPayload, closeAntennaRoundWs, handleAntennaStatusResponse, wsUrl]);
+    hasReportedAntennaPromptRef.current = true;
+    const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
+    sendTobiiHandMessage(startPayload, 'antenna start');
+    console.log('[gazerelation] antenna round sent start message through global WS:', startPayload);
+  }, [buildAntennaStatusPayload, closeAntennaRoundWs, sendTobiiHandMessage]);
 
   // gazerelation: 开始SA最高优先级目标的Tobii回合
   const startSaTobiiRound = useCallback((promptPosition: any) => {
@@ -769,57 +719,19 @@ const useRadarData = (
 
     lastSaTobiiPromptPositionRef.current = promptPosition;
     saTobiiRoundActiveRef.current = true;
-    saTobiiRoundStartedRef.current = false;
+    saTobiiRoundStartedRef.current = true;
     saTobiiRoundEndedRef.current = false;
     saTobiiTaskIdRef.current = null;
+    saTobiiWsRef.current = null;
 
-    if (saTobiiWsRef.current) {
-      try {
-        saTobiiWsRef.current.close();
-      } catch {
-        // no-op
-      }
-      saTobiiWsRef.current = null;
-    }
-
-    const ws = new WebSocket(wsUrl);
-    saTobiiWsRef.current = ws;
-    ws.onopen = () => {
-      if (!saTobiiRoundActiveRef.current || saTobiiRoundEndedRef.current) return;
-      console.log(`[gazerelation] isAIActive111111: ${agentStore.isAIActive}`);
-      if (agentStore.isAIActive) {
-         const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat_withAI');
-         ws.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
-         console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
-      }
-      else {
-        const startPayload = buildTobiiStatusPayload(true, lastSaTobiiPromptPositionRef.current, 'sa_highest_priority_threat_noAI');
-        ws.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
-        console.log('[gazerelation] SA Tobii回合发送开始消息:', startPayload);
-      }
-      saTobiiRoundStartedRef.current = true;
-    };
-    ws.onmessage = (event: MessageEvent) => {
-      if (!saTobiiRoundActiveRef.current) return;
-      try {
-        const responseBody = JSON.parse(event.data);
-        if (responseBody?.task_id) {
-          saTobiiTaskIdRef.current = String(responseBody.task_id);
-        }
-        handleSaTobiiResponse(responseBody);
-      } catch (err) {
-        console.error('[gazerelation] SA Tobii回合消息解析失败:', err);
-      }
-    };
-    ws.onerror = (event) => {
-      console.error('[gazerelation] SA Tobii回合WS错误:', event);
-    };
-    ws.onclose = () => {
-      if (saTobiiWsRef.current === ws) {
-        saTobiiWsRef.current = null;
-      }
-    };
-  }, [buildTobiiStatusPayload, handleSaTobiiResponse, wsUrl]);
+    const startPayload = buildTobiiStatusPayload(
+      true,
+      lastSaTobiiPromptPositionRef.current,
+      agentStore.isAIActive ? 'sa_highest_priority_threat_withAI' : 'sa_highest_priority_threat_noAI'
+    );
+    sendTobiiHandMessage(startPayload, 'sa tobii start');
+    console.log('[gazerelation] SA Tobii round sent start message through global WS:', startPayload);
+  }, [buildTobiiStatusPayload, sendTobiiHandMessage]);
 
   // gazerelation: 结束SA最高优先级目标的Tobii回合
   const endSaTobiiRound = useCallback((promptPosition?: any) => {
@@ -831,64 +743,18 @@ const useRadarData = (
       lastSaTobiiPromptPositionRef.current = promptPosition;
     }
 
-    const ws = saTobiiWsRef.current;
-    if (!ws) return;
-
-    if (agentStore.isAIActive){
-      
-    }
     const endPayload = buildTobiiStatusPayload(
       false,
       lastSaTobiiPromptPositionRef.current,
-      agentStore.isAIActive
-    ? 'sa_highest_priority_threat_withAI'
-    : 'sa_highest_priority_threat_noAI'
+      agentStore.isAIActive ? 'sa_highest_priority_threat_withAI' : 'sa_highest_priority_threat_noAI'
     );
-    
-
-    if (ws.readyState === WebSocket.OPEN) {
-      const payload = saTobiiTaskIdRef.current
-        ? { type: 'tobii_hand', ...endPayload, task_id: saTobiiTaskIdRef.current }
-        : { type: 'tobii_hand', ...endPayload };
-      ws.send(JSON.stringify(payload));
-      console.log('[gazerelation] SA Tobii回合发送结束消息:', payload);
-
-      const originalOnMessage = ws.onmessage as ((event: MessageEvent) => void) | null;
-      ws.onmessage = (event: MessageEvent) => {
-        try {
-          const responseBody = JSON.parse(event.data);
-          if (responseBody?.ok === true && responseBody?.msg?.includes('窗口消失')) {
-            ws.close();
-            saTobiiWsRef.current = null;
-          }
-        } catch {
-          // no-op
-        }
-        if (originalOnMessage) {
-          originalOnMessage(event);
-        }
-      };
-
-      setTimeout(() => {
-        if (saTobiiWsRef.current === ws) {
-          try {
-            ws.close();
-          } catch {
-            // no-op
-          }
-          saTobiiWsRef.current = null;
-        }
-      }, 3000);
-      return;
-    }
-
-    try {
-      ws.close();
-    } catch {
-      // no-op
-    }
+    sendTobiiHandMessage(
+      saTobiiTaskIdRef.current ? { ...endPayload, task_id: saTobiiTaskIdRef.current } : endPayload,
+      'sa tobii end'
+    );
+    console.log('[gazerelation] SA Tobii round sent end message through global WS:', endPayload);
     saTobiiWsRef.current = null;
-  }, [buildTobiiStatusPayload]);
+  }, [buildTobiiStatusPayload, sendTobiiHandMessage]);
 
   // gazerelation: 监听页面卸载事件刷新，尝试结束 天线 Tobii 回合
   useEffect(() => {
@@ -940,7 +806,6 @@ const useRadarData = (
 
       const physicalDetail = toPhysicalPromptPosition(detail);
       lastAntennaPromptPositionRef.current = physicalDetail;
-      const ws = antennaRoundWsRef.current;
       if (!antennaRoundActiveRef.current) {
         antennaRoundIdRef.current += 1;
         antennaRoundActiveRef.current = true;
@@ -951,10 +816,10 @@ const useRadarData = (
         return;
       }
 
-      if (ws && ws.readyState === WebSocket.OPEN && !hasReportedAntennaPromptRef.current) {
+      if (!hasReportedAntennaPromptRef.current) {
         hasReportedAntennaPromptRef.current = true;
         const startPayload = buildAntennaStatusPayload(true, lastAntennaPromptPositionRef.current);
-        ws.send(JSON.stringify({ type: 'tobii_hand', ...startPayload }));
+        sendTobiiHandMessage(startPayload, 'antenna start');
         console.log('[gazerelation] 收到首个bbox后发送开始消息:', startPayload);
       }
     };
@@ -970,7 +835,7 @@ const useRadarData = (
         hasReportedAntennaPromptRef.current = false;
       }
     };
-  }, [enableAntennaRound, buildAntennaStatusPayload, closeAntennaRoundWs, openAntennaRoundWs]);
+  }, [enableAntennaRound, buildAntennaStatusPayload, closeAntennaRoundWs, openAntennaRoundWs, sendTobiiHandMessage]);
 
   // gazerelation: 若回合进行中且 antennaAdjustmentRequired 变为 true，则提前结束并发送结束消息
   useEffect(() => {
@@ -1124,6 +989,23 @@ const useRadarData = (
     if (message.type === 'attention_feedback') {
       console.log('[useRadarData] Processing gaze attention feedback:', message);
       handleAntennaStatusResponse(message);
+      if (saTobiiRoundActiveRef.current) {
+        handleSaTobiiResponse(message);
+      }
+      return;
+    }
+
+    if (message.type === 'tobii_hand_result') {
+      if (message?.task_id) {
+        if (antennaRoundActiveRef.current && !antennaTaskIdRef.current) {
+          antennaTaskIdRef.current = String(message.task_id);
+        }
+        if (saTobiiRoundActiveRef.current && !saTobiiTaskIdRef.current) {
+          saTobiiTaskIdRef.current = String(message.task_id);
+        }
+      }
+      handleAntennaStatusResponse(message);
+      handleSaTobiiResponse(message);
       return;
     }
 
@@ -1306,7 +1188,7 @@ const useRadarData = (
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 
-  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled, handleAntennaStatusResponse]);
+  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled, handleAntennaStatusResponse, handleSaTobiiResponse]);
   
   const confirmAntennaAdjustmentHandled = useCallback(() => {
     console.log('Confirming to backend that antenna adjustment has been handled.');

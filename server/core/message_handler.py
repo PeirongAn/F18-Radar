@@ -113,7 +113,7 @@ class MessageHandler:
         try:
             metadata = self._physio_task_metadata(task_type, user_id, task_id, event_owner, current_scenario)
             self._physio_svc.set_subject(user_id, {"source": "F18-Radar", "last_task_type": task_type})
-            self._physio_svc.start_task(task_type, metadata)
+            self._physio_svc.start_task(task_type, metadata, run_id=str(task_id))
             self._physio_svc.marker("task_start", metadata)
         except Exception as e:
             self.logger.warning("physio start_task failed: %s", e, exc_info=True)
@@ -258,11 +258,12 @@ class MessageHandler:
     async def _handle_task_start(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """处理任务开始消息"""
         print("消息类型: task_start", message.get('user_id', ''))
+        user_id = message.get('user_id', '')
+        task_type = 'RADAR_TARGETING'
         is_ai_active_request = message.get('include_ai', False)
-        pending_ai = peek_pending_include_ai()
+        pending_ai = peek_pending_include_ai(user_id, task_type)
         if pending_ai is not None:
             is_ai_active_request = bool(pending_ai)
-        user_id = message.get('user_id', '')
         event_owner = 'AI' if is_ai_active_request else 'manual'
         is_practice = message.get('is_practice', False)
         session_state['is_practice'] = is_practice
@@ -275,7 +276,6 @@ class MessageHandler:
         self.current_session['target_elevation'] = None
         self.current_session['stage'] = 'init'
         
-        task_type = 'RADAR_TARGETING'
         progress_key = get_progress_key_for_task(user_id, task_type)
         
         # 创建或加载与用户绑定的持久化任务管理器
@@ -290,7 +290,7 @@ class MessageHandler:
         session_state['task_manager'] = task_manager
 
         overlay_source = "pending"
-        overlay, platform_meta = consume_pending_for_task_start()
+        overlay, platform_meta = consume_pending_for_task_start(user_id, task_type)
         if not overlay:
             overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
@@ -740,7 +740,7 @@ class MessageHandler:
         event_owner = message.get('event_owner') or ('AI' if is_ai_active_request else 'manual')
 
         overlay_source = "pending"
-        overlay, platform_meta = consume_pending_for_task_start()
+        overlay, platform_meta = consume_pending_for_task_start(user_id, task_type)
         if not overlay:
             overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)

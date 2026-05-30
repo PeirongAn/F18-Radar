@@ -105,7 +105,8 @@ def test_gaze_service():
         task_name="tobii_test",
     )
     print(f"✅ start_task: task_id={task_id}")
-    print(f"   数据目录: {os.path.join(test_dir, task_id)}")
+    task_dir = svc._current_task["task_dir"]
+    print(f"   数据目录: {task_dir}")
 
     print("⏳ 采集 3 秒...")
     time.sleep(3)
@@ -114,21 +115,27 @@ def test_gaze_service():
     print(f"   最新注视点: {point}, 时间戳: {ts}")
 
     result = svc.stop_task(task_id=task_id)
-    print(f"✅ stop_task: frames={result['task_info']['frame_count']}, fixations={result['task_info']['fixation_count']}")
+    task_info = result["task_info"]
+    print(
+        "✅ stop_task: "
+        f"frames={task_info['frame_count']}, "
+        f"valid_frames={task_info.get('valid_frames', 0)}, "
+        f"in_region_frames={task_info.get('in_region_frames', 0)}"
+    )
 
     svc.disconnect()
     svc.shutdown()
 
-    # 检查生成的文件
-    task_dir = os.path.join(test_dir, task_id)
-    for fname in ["raw_gaze.jsonl", "fixation.jsonl", "summary.json"]:
-        fpath = os.path.join(task_dir, fname)
-        if os.path.exists(fpath):
-            size = os.path.getsize(fpath)
-            lines = sum(1 for _ in open(fpath, encoding="utf-8")) if size > 0 else 0
-            print(f"   📄 {fname}: {size} bytes, {lines} lines")
-        else:
-            print(f"   ⚠️ {fname}: 未生成")
+    # 检查生成的逐帧 raw 文件；任务摘要和 marker 从 gaze_records.db 查询。
+    raw_path = os.path.join(task_dir, "raw_gaze.jsonl")
+    if os.path.exists(raw_path):
+        size = os.path.getsize(raw_path)
+        lines = sum(1 for _ in open(raw_path, encoding="utf-8")) if size > 0 else 0
+        print(f"   📄 raw_gaze.jsonl: {size} bytes, {lines} lines")
+    else:
+        print("   ⚠️ raw_gaze.jsonl: 未生成")
+    db_path = os.path.join(test_dir, "gaze_records.db")
+    print(f"   🗄️ gaze_records.db: {'已生成' if os.path.exists(db_path) else '未生成'}")
 
     print(f"\n测试数据目录: {test_dir}")
     print("测试完毕后可手动删除。")

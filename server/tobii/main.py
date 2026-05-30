@@ -8,9 +8,9 @@ Tobii 眼动服务器入口
   HTTPServer  WebSocketServer
   (Flask)    (websockets)
 
-文件存储：每个任务的眼动数据存放在
-  server/data/gaze/{task_id}/
-    raw_gaze.jsonl   fixation.jsonl   summary.json
+数据存储：
+  server/data/gaze/gaze_records.db 保存任务元数据、markers、targets、feedback 和统计
+  server/data/gaze/raw/{user_id}/{task_id}/raw_gaze.jsonl 保存高频逐帧注视数据
 
 任务 ID 联动：前端收到主服务器的 task_id（整数）后，
 在调用 /tobii/hand（box_visible=true）或 WS hand 消息时

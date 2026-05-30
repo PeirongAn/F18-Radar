@@ -17,15 +17,13 @@
 ```text
 server/data/gaze/
   gaze_records.db
-  users/
+  raw/
     {user_id}/
-      {YYYYMMDD}/
-        {task_id}/
-          raw_gaze.jsonl
-          summary.json
+      {task_id}/
+        raw_gaze.jsonl
 ```
 
-旧的 `server/data/gaze/{task_id}` 目录不迁移，旧任务仍通过数据库里的 `data_dir` 字段定位。
+旧的 `server/data/gaze/{task_id}` 和 `server/data/gaze/users/{user_id}/{YYYYMMDD}/{task_id}` 目录不迁移，旧任务仍通过数据库里的 `data_dir` 字段定位。
 
 ## SQLite
 
@@ -48,7 +46,7 @@ WHERE task_id = ?;
 每帧一行分析数据：
 
 ```json
-{"ts_us":1779250000000000,"task_id":"1","user_id":"anpeirong","gaze":[0.421,0.913],"valid":true,"in_region":true,"region_hits":["region_1"]}
+{"ts_us":1779250000000000,"gaze":[0.421,0.913],"hit":true,"hits":["region_1"]}
 ```
 
 `region_hits` 优先使用 region 自带的 `id`，没有 `id` 时按 `region_1`、`region_2` 生成。
@@ -56,7 +54,7 @@ WHERE task_id = ?;
 无效 gaze 不再写成 `(0.0, 0.0)`：
 
 ```json
-{"ts_us":1779250000000000,"task_id":"1","user_id":"anpeirong","gaze":null,"valid":false,"in_region":false,"region_hits":[]}
+{"ts_us":1779250000000000,"gaze":null,"hit":false}
 ```
 
-`summary.json` 在任务结束时写入，包含 `task_id`、`user_id`、`task_source`、`task_name`、`data_dir`、`start_us`、`end_us`、`duration_ms`、`total_frames`、`valid_frames`、`in_region_frames`、`feedback_count` 和 `status`。
+新任务目录不再写 `summary.json`；任务摘要由 `gaze_tasks` 查询还原。
