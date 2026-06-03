@@ -588,6 +588,11 @@ class HTTPServer:
         except Exception:
             return web.json_response({"ok": False, "msg": "请求体必须是 JSON"}, status=400)
 
+        self.logger.warning(
+            "[TOBII_HAND_REQUEST] POST /tobii/hand payload=%s",
+            json.dumps(data, ensure_ascii=False, default=str),
+        )
+
         if "box_visible" not in data:
             return web.json_response({"ok": False, "msg": "缺少字段: box_visible"}, status=400)
 

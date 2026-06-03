@@ -653,6 +653,14 @@ const useRadarData = (
 
   const sendTobiiHandMessage = useCallback((payload: any, label: string) => {
     const message = { type: 'tobii_hand', ...payload };
+    console.log('[gazerelation] tobii_hand payload fields', {
+      label,
+      task_id: message.task_id,
+      coordinate_space: message.coordinate_space,
+      bbox: message.bbox,
+      regions: message.regions,
+      screen_data: message.screen_data,
+    });
     globalWS.connect(wsUrl);
     let attempts = 0;
     const trySend = () => {

@@ -72,6 +72,10 @@ class HTTPServer:
             data = request.get_json()
             if data is None:
                 return jsonify({"ok": False, "msg": "请求体必须是 JSON"}), 400
+            self.app.logger.warning(
+                "[TOBII_HAND_REQUEST] POST /tobii/hand payload=%s",
+                json.dumps(data, ensure_ascii=False, default=str),
+            )
             if "box_visible" not in data:
                 return jsonify({"ok": False, "msg": "缺少字段: box_visible"}), 400
 

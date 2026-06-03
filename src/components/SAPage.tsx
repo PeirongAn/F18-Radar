@@ -233,7 +233,14 @@ interface TobiiPromptPosition {
   top: number;
   right: number;
   bottom: number;
-  gazeCoordinateSpace: 'physical_pixel';
+  gazeCoordinateSpace: 'physical_pixel' | 'display_area_normalized';
+}
+
+interface SaTobiiDebugBbox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 }
 
 const FAN_START_ANGLE = -132;
@@ -243,6 +250,7 @@ const FAN_EDGE_COLOR = '#ffffff';
 const ATTACK_SOURCES = ['雷达', '友机', '装订'] as const;
 
 const degToRad = (angle: number) => (angle * Math.PI) / 180;
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
 const stableHash = (value: string): number => {
   let hash = 0;
@@ -303,8 +311,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const attentionIntervalRef = useRef<number | null>(null);
   const attentionTimeoutRef = useRef<number | null>(null);
   const [highestThreatAttentionVisible, setHighestThreatAttentionVisible] = useState(false);
+  const [saTobiiDebugBbox, setSaTobiiDebugBbox] = useState<SaTobiiDebugBbox | null>(null);
   const stopAutoStartSaTobiiRef = useRef<boolean>(false);
   const lastHighestThreatIdRef = useRef<string | null>(null);
+  const isSaTobiiBboxDebugEnabled = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return (
+      params.get('debugSaTobiiBbox') === '1' ||
+      window.localStorage.getItem('debugSaTobiiBbox') === '1'
+    );
+  }, []);
 
   // 计算当前难度和AI状态
   const currentDifficulty = useMemo(() => {
@@ -1298,7 +1315,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     if (!threat) return null;
     const containerRect = saCanvasRef.current?.getBoundingClientRect();
     if (!containerRect) return null;
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     let centerX: number | null = null;
     let centerY: number | null = null;
     let boxSize = ICON_SIZE;
@@ -1341,37 +1357,57 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
 
     if (centerX === null || centerY === null) return null;
-    const screenLeft = typeof window !== 'undefined' ? window.screenLeft || window.screenX : 0;
-    const screenTop = typeof window !== 'undefined' ? window.screenTop || window.screenY : 0;
-    // 计算浏览器UI元素的尺寸
-    const browserUIHeight = typeof window !== 'undefined' ? (window.outerHeight - window.innerHeight) : 0;
-    const browserUIWidth = typeof window !== 'undefined' ? (window.outerWidth - window.innerWidth) : 0;
-    const half = boxSize / 2;
-    // 计算相对于屏幕的绝对坐标，包括浏览器UI元素的尺寸
-    const left = screenLeft + (browserUIWidth / 2) + containerRect.left + centerX - half;
-    const top = screenTop + browserUIHeight + containerRect.top + centerY - half;
-    const right = screenLeft + (browserUIWidth / 2) + containerRect.left + centerX + half;
-    const bottom = screenTop + browserUIHeight + containerRect.top + centerY + half;
-    const physicalLeft = Math.round(left * dpr);
-    const physicalTop = Math.round(top * dpr);
-    const physicalRight = Math.round(right * dpr);
-    const physicalBottom = Math.round(bottom * dpr);
-
-    console.log('gazerelation:thread:physical', {
-      left: physicalLeft,
-      top: physicalTop,
-      right: physicalRight,
-      bottom: physicalBottom,
-      dpr,
-    });
-    return {
-      left: physicalLeft,
-      top: physicalTop,
-      right: physicalRight,
-      bottom: physicalBottom,
-      gazeCoordinateSpace: 'physical_pixel',
+    const viewportWidth = typeof window !== 'undefined' ? Math.max(1, window.innerWidth || 1) : 1;
+    const viewportHeight = typeof window !== 'undefined' ? Math.max(1, window.innerHeight || 1) : 1;
+    const scaleX = containerRect.width / Math.max(1, width);
+    const scaleY = containerRect.height / Math.max(1, height);
+    const viewportCenterX = containerRect.left + centerX * scaleX;
+    const viewportCenterY = containerRect.top + centerY * scaleY;
+    const halfWidth = (boxSize * scaleX) / 2;
+    const halfHeight = (boxSize * scaleY) / 2;
+    const normalizedBbox = {
+      left: clamp01((viewportCenterX - halfWidth) / viewportWidth),
+      top: clamp01((viewportCenterY - halfHeight) / viewportHeight),
+      right: clamp01((viewportCenterX + halfWidth) / viewportWidth),
+      bottom: clamp01((viewportCenterY + halfHeight) / viewportHeight),
     };
-  }, [fanThreatPositions, missiles, useEnhancedProtocol, enhancedThreats, saThreats, threatPositions]);
+
+    if (isSaTobiiBboxDebugEnabled) {
+      setSaTobiiDebugBbox(normalizedBbox);
+    }
+
+    console.log('gazerelation:sa:normalized-bbox', {
+      containerRect: {
+        left: containerRect.left,
+        top: containerRect.top,
+        width: containerRect.width,
+        height: containerRect.height,
+      },
+      centerX,
+      centerY,
+      boxSize,
+      scaleX,
+      scaleY,
+      viewportWidth,
+      viewportHeight,
+      ...normalizedBbox,
+    });
+
+    return {
+      ...normalizedBbox,
+      gazeCoordinateSpace: 'display_area_normalized',
+    };
+  }, [
+    fanThreatPositions,
+    missiles,
+    useEnhancedProtocol,
+    enhancedThreats,
+    saThreats,
+    threatPositions,
+    width,
+    height,
+    isSaTobiiBboxDebugEnabled,
+  ]);
 
   const getHighestThreatPromptPosition = useCallback((): TobiiPromptPosition | null => {
     return getThreatPromptPosition(highestPriorityThreat);
@@ -1403,6 +1439,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     if (currentHighestThreatId !== lastHighestThreatIdRef.current) {
       // 进入新一轮威胁（或清空）时，允许重新自动开启Tobii回合
       stopAutoStartSaTobiiRef.current = false;
+      setSaTobiiDebugBbox(null);
       if (aiSelectedThreatRef.current?.id !== currentHighestThreatId) {
         aiSelectedThreatRef.current = null;
       }
@@ -2104,6 +2141,23 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           
           {/* 雷达显示 - 仅包含雷达相关元素 */}
           <div className="sa-page bg-black relative" style={{ width, height }} ref={saCanvasRef}>
+            {isSaTobiiBboxDebugEnabled && saTobiiDebugBbox && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: 'fixed',
+                  left: `${saTobiiDebugBbox.left * 100}vw`,
+                  top: `${saTobiiDebugBbox.top * 100}vh`,
+                  width: `${Math.max(0, saTobiiDebugBbox.right - saTobiiDebugBbox.left) * 100}vw`,
+                  height: `${Math.max(0, saTobiiDebugBbox.bottom - saTobiiDebugBbox.top) * 100}vh`,
+                  border: '2px solid rgba(255, 64, 64, 0.95)',
+                  background: 'rgba(255, 64, 64, 0.12)',
+                  boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(255, 64, 64, 0.45)',
+                  pointerEvents: 'none',
+                  zIndex: 9999,
+                }}
+              />
+            )}
         
             
             <Stage width={width} height={height}>
