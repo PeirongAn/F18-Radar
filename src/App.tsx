@@ -5,6 +5,7 @@ import SAPage from './components/SAPage';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
 import ThreatList, { type ThreatListData } from './components/ThreatList';
 import GazePointOverlay, { type GazePointDebug } from './components/GazePointOverlay';
+import GazeCalibrationPage from './components/GazeCalibrationPage';
 import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
@@ -85,7 +86,7 @@ const ProgressBadge: React.FC<{ current: number; total: number }> = ({ current, 
 /* ══════════════════════════════════════════════════════
    App
 ══════════════════════════════════════════════════════ */
-const App: React.FC = observer(() => {
+const MainApp: React.FC = observer(() => {
   const [selectedTarget] = useState<string | null>(null);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
@@ -930,5 +931,27 @@ const App: React.FC = observer(() => {
     </div>
   );
 });
+
+function isGazeCalibrationRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('gazeCalibration') === '1' || window.location.hash === '#/gaze-calibration';
+}
+
+const App: React.FC = () => {
+  const [showGazeCalibration, setShowGazeCalibration] = useState<boolean>(() => isGazeCalibrationRoute());
+
+  useEffect(() => {
+    const updateRoute = () => setShowGazeCalibration(isGazeCalibrationRoute());
+    window.addEventListener('hashchange', updateRoute);
+    window.addEventListener('popstate', updateRoute);
+    return () => {
+      window.removeEventListener('hashchange', updateRoute);
+      window.removeEventListener('popstate', updateRoute);
+    };
+  }, []);
+
+  return showGazeCalibration ? <GazeCalibrationPage /> : <MainApp />;
+};
 
 export default App;
