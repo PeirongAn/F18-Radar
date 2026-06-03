@@ -396,6 +396,15 @@ class WebSocketServer:
 
         box_visible = bool(data.get("box_visible"))
         task_id = data.get("task_id")
+        task_name = data.get("task_name")
+        effective_task_id = None if task_name == "WeaponLaunchMission" else task_id
+        if task_name == "WeaponLaunchMission" and task_id is not None:
+            self.logger.warning(
+                "[TOBII_HAND_REQUEST] WS tobii_hand ignoring request task_id for WeaponLaunchMission; "
+                "request_task_id=%s active_task_id=%s",
+                task_id,
+                self._gaze_svc.get_active_task_id(),
+            )
 
         if box_visible:
             bbox = data.get("bbox") or []
@@ -408,7 +417,7 @@ class WebSocketServer:
             updated = self._gaze_svc.set_task_bbox(
                 bbox=bbox,
                 screen_size=screen_data,
-                task_id=str(task_id) if task_id is not None else None,
+                task_id=str(effective_task_id) if effective_task_id is not None else None,
                 regions=regions if isinstance(regions, list) else None,
                 coordinate_space=coordinate_space if isinstance(coordinate_space, str) else None,
             )
@@ -423,7 +432,7 @@ class WebSocketServer:
             updated = self._gaze_svc.set_task_bbox(
                 bbox=[],
                 screen_size=None,
-                task_id=str(task_id) if task_id is not None else None,
+                task_id=str(effective_task_id) if effective_task_id is not None else None,
             )
             return {
                 "type": "tobii_hand_result",
