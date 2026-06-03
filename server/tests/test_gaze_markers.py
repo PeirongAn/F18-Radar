@@ -294,6 +294,38 @@ def test_raw_gaze_frame_writes_hits_only_when_region_matches():
         rows = _task_rows(Path(tmp) / "gaze_records.db")
         assert rows[0][4:] == (1, 1, 1)
 
+def test_empty_attention_region_does_not_trigger_feedback():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[],
+                screen_size=None,
+                task_id="empty-region-task",
+                user_id="S010",
+                system_time=1_700_000_000_000_000,
+            )
+            for _ in range(250):
+                svc._gaze_data_callback({
+                    "left_gaze_point_validity": 1,
+                    "right_gaze_point_validity": 1,
+                    "left_gaze_point_on_display_area": (0.736, 0.951),
+                    "right_gaze_point_on_display_area": (0.736, 0.951),
+                })
+        finally:
+            svc.shutdown()
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM gaze_feedback_events WHERE task_id = ?",
+                ("empty-region-task",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count == 0
+
 
 def test_targets_store_normalized_region_without_raw_bbox_json():
     with tempfile.TemporaryDirectory() as tmp:

@@ -733,6 +733,7 @@ class GazeService:
                 self._current_task["valid_frames"] = self._current_task.get("valid_frames", 0) + 1
 
         regions = task.get("regions") or task.get("bbox") or []
+        has_attention_region = bool(regions)
         region_hits = _region_hits(gaze_point, regions) if gaze_valid else []
         current_in_region = bool(region_hits)
         should_push_feedback = False
@@ -761,6 +762,11 @@ class GazeService:
 
         with self._state_lock:
             if not self._task_active or self._current_task is None:
+                return
+
+            if not has_attention_region:
+                self._consecutive_out_of_box_false = 0
+                self._last_out_of_box_log_count = 0
                 return
 
             if not gaze_valid or current_in_region is False:
