@@ -24,6 +24,7 @@ import threading
 import asyncio
 import time
 import json
+import logging
 
 from flask import Flask, request, jsonify
 import websockets
@@ -200,6 +201,7 @@ class WebSocketServer:
         self.host = host
         self.port = port
         self._svc = gaze_service
+        self.logger = logging.getLogger("tobii.websocket")
 
     async def _handle_client(self, websocket):
         self._svc.register_ws_client(websocket)
@@ -224,6 +226,10 @@ class WebSocketServer:
                 await websocket.send(json.dumps({"ok": True, "msg": "请求接收成功", "data": data}))
 
             elif msg_type == "hand":
+                self.logger.warning(
+                    "[TOBII_HAND_REQUEST] WS hand payload=%s",
+                    json.dumps(data, ensure_ascii=False, default=str),
+                )
                 if "box_visible" not in data:
                     await websocket.send(json.dumps({"ok": False, "msg": "缺少字段: box_visible"}))
                     return

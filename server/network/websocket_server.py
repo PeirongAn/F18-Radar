@@ -386,6 +386,11 @@ class WebSocketServer:
         if self._gaze_svc is None:
             return {"type": "tobii_hand_result", "ok": False, "msg": "眼动追踪服务未启动"}
 
+        self.logger.warning(
+            "[TOBII_HAND_REQUEST] WS tobii_hand payload=%s",
+            json.dumps(data, ensure_ascii=False, default=str),
+        )
+
         if "box_visible" not in data:
             return {"type": "tobii_hand_result", "ok": False, "msg": "缺少字段: box_visible"}
 
