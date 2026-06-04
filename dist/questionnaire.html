@@ -317,6 +317,7 @@ function getParams() {
   return {
     userId:       p.get('userId')       || '',
     taskType:     p.get('taskType')     || 'RADAR_TARGETING',
+    taskId:       p.get('taskId')       || p.get('task_id') || '',
     difficulty:   p.get('difficulty')   || '',
     autonomyLevel: p.get('autonomyLevel') || p.get('autonomy_level') ||
       p.get('AIAutonomyLevel') || p.get('AIAutonomyLeve') || '',
@@ -554,10 +555,13 @@ function handleSubmit() {
   btn.disabled = true;
 
   const { userId, taskType, difficulty, autonomyLevel, isPractice, experimentNo, total } = contextData;
+  const taskId = contextData.taskId ?? contextData.task_id;
+  const timestamp = Date.now();
 
   const payload = {
     type:               'questionnaire_submitted',
     taskType:           taskType || 'RADAR_TARGETING',
+    taskId:             taskId ? Number(taskId) || taskId : undefined,
     userId:             userId || '',
     repetitionCurrent:  parseInt(experimentNo) || 0,
     repetitionTotal:    parseInt(total) || 0,
@@ -567,11 +571,20 @@ function handleSubmit() {
       autonomyLevel: autonomyLevel || null,
       isPractice:  !!isPractice,
     },
-    timestamp: Date.now(),
+    timestamp,
     source: 'html_page',
+  };
+  const exitPayload = {
+    type: 'task_exit_request',
+    reason: 'task_completed',
+    task_type: taskType || 'RADAR_TARGETING',
+    task_id: taskId ? Number(taskId) || taskId : undefined,
+    user_id: userId || '',
+    timestamp,
   };
 
   const sent = sendWS(payload);
+  sendWS(exitPayload);
   if (!sent) {
     // Fallback: POST to /api/questionnaire if WS unavailable
     fetch('/api/questionnaire', {

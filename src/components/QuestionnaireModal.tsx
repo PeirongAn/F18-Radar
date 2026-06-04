@@ -49,6 +49,7 @@ interface QuestionnaireConfig {
 
 export interface QuestionnaireSubmitData {
   taskType: TaskType;
+  taskId?: number;
   userId: string;
   repetitionCurrent: number;
   repetitionTotal: number;
@@ -264,6 +265,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
       const data: QuestionnaireSubmitData = {
         taskType: currentTaskType,
+        taskId: infoObj?.task_id,
         userId,
         repetitionCurrent: infoObj?.current ?? 0,
         repetitionTotal: infoObj?.total ?? 0,
@@ -277,6 +279,14 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
       };
 
       sendMessage?.({ type: 'questionnaire_submitted', ...data, source: 'react_modal' });
+      sendMessage?.({
+        type: 'task_exit_request',
+        reason: 'task_completed',
+        task_type: currentTaskType,
+        task_id: infoObj?.task_id,
+        user_id: userId,
+        timestamp: data.timestamp,
+      });
       onSubmit?.(data);
 
       setIsSubmitting(false);
