@@ -27,6 +27,9 @@ export const DEFAULT_TRUST_CALIBRATION_CONFIG: TrustCalibrationConfig = {
     hysteresis: 1,
     latency_threshold_ms: 4500,
     require_evidence_before_confirm: true,
+    min_truth_coverage: 0.5,
+    unwarranted_reject_threshold: 2,
+    unwarranted_accept_threshold: 1,
   },
   threat: {
     score_gap_threshold: 0.1,
@@ -38,6 +41,9 @@ export const DEFAULT_TRUST_CALIBRATION_CONFIG: TrustCalibrationConfig = {
     hysteresis: 1,
     latency_threshold_ms: 4500,
     require_evidence_before_submit: true,
+    min_truth_coverage: 0.5,
+    unwarranted_reject_threshold: 2,
+    unwarranted_accept_threshold: 1,
   },
   display: {
     show_explanation_panel: true,
@@ -89,6 +95,9 @@ export function createTrustInteractionEvent(
     latencyMs: input.latencyMs,
     source: input.source,
     metadata: input.metadata,
+    aiRecommendationCorrect: input.aiRecommendationCorrect,
+    humanDecisionCorrect: input.humanDecisionCorrect,
+    outcomeSource: input.outcomeSource,
   };
 }
 
@@ -131,10 +140,43 @@ export function buildTrustBehaviorMetricsFromEvents(
     .slice(-Math.max(1, windowSize));
   const latencyEvents = decisionEvents
     .filter(event => typeof event.latencyMs === "number" && Number.isFinite(event.latencyMs) && event.latencyMs >= 0);
+  const consecutiveRejectCount = decisionEvents
+    .slice()
+    .reverse()
+    .findIndex(event => event.eventType !== "human_reject");
+  const trailingRejectCount = consecutiveRejectCount === -1
+    ? decisionEvents.length
+    : consecutiveRejectCount;
+
+  let truthKnownCount = 0;
+  let aiCorrectCount = 0;
+  let aiIncorrectCount = 0;
+  let unwarrantedRejectCount = 0;
+  let justifiedRejectCount = 0;
+  let unwarrantedAcceptCount = 0;
+  for (const event of decisionEvents) {
+    const aiCorrect = event.aiRecommendationCorrect;
+    if (typeof aiCorrect !== "boolean") continue; // 真值未知，跳过真值统计
+    truthKnownCount += 1;
+    if (aiCorrect) aiCorrectCount += 1;
+    else aiIncorrectCount += 1;
+
+    if (event.eventType === "human_reject") {
+      if (aiCorrect) unwarrantedRejectCount += 1; // 拒了对的
+      else justifiedRejectCount += 1; // 应该拒
+    } else if (
+      event.eventType === "human_accept" &&
+      !aiCorrect &&
+      !hasEvidenceViewedBeforeDecision(event, events)
+    ) {
+      unwarrantedAcceptCount += 1; // 无证据接受了错的
+    }
+  }
 
   return {
     sampleCount: decisionEvents.length,
     rejectCount: decisionEvents.filter(event => event.eventType === "human_reject").length,
+    consecutiveRejectCount: trailingRejectCount,
     directAcceptCount: decisionEvents.filter(event =>
       event.eventType === "human_accept" &&
       !hasEvidenceViewedBeforeDecision(event, events)
@@ -143,6 +185,13 @@ export function buildTrustBehaviorMetricsFromEvents(
     averageConfirmationLatencyMs: latencyEvents.length > 0
       ? latencyEvents.reduce((total, event) => total + (event.latencyMs ?? 0), 0) / latencyEvents.length
       : undefined,
+    truthKnownCount,
+    aiCorrectCount,
+    aiIncorrectCount,
+    unwarrantedRejectCount,
+    justifiedRejectCount,
+    unwarrantedAcceptCount,
+    truthCoverage: decisionEvents.length > 0 ? truthKnownCount / decisionEvents.length : 0,
   };
 }
 
@@ -189,16 +238,61 @@ export interface TrustStateEvaluation {
   underTrust: boolean;
   overTrust: boolean;
   triggers: TrustControlTrigger[];
+  /** true 表示真值覆盖不足、状态由行为启发式推断，仅供软提示，不应触发强干预 */
+  provisional: boolean;
 }
 
-export function evaluateTrustState(input: {
+export interface EvaluateTrustStateInput {
   metrics: TrustBehaviorMetrics;
   consecutiveRejectThreshold: number;
   directAcceptThreshold: number;
   latencyThresholdMs: number;
   hysteresis: number;
   previousTrustState?: TrustState;
-}): TrustStateEvaluation {
+  minTruthCoverage?: number;
+  unwarrantedRejectThreshold?: number;
+  unwarrantedAcceptThreshold?: number;
+}
+
+/**
+ * 信任状态判定：真值优先，行为兜底。
+ * - 真值覆盖率达标时：under/over 严格按「与真值不一致」定义（拒了对的 / 接了错的）。
+ * - 覆盖不足时：退回行为启发式，但标记 provisional，仅作软提示。
+ */
+export function evaluateTrustState(input: EvaluateTrustStateInput): TrustStateEvaluation {
+  const { metrics } = input;
+  const minTruthCoverage = input.minTruthCoverage ?? 0.5;
+  const truthReliable = metrics.truthKnownCount > 0 && metrics.truthCoverage >= minTruthCoverage;
+
+  if (truthReliable) {
+    const unwarrantedRejectThreshold = Math.max(1, input.unwarrantedRejectThreshold ?? 2);
+    const unwarrantedAcceptThreshold = Math.max(1, input.unwarrantedAcceptThreshold ?? 1);
+    const underTrust = metrics.unwarrantedRejectCount >= unwarrantedRejectThreshold;
+    const overTrust = metrics.unwarrantedAcceptCount >= unwarrantedAcceptThreshold;
+    const triggers: TrustControlTrigger[] = [];
+    if (underTrust) triggers.push("unwarranted_reject");
+    if (overTrust) triggers.push("unwarranted_accept");
+    return {
+      trustState: overTrust ? "over_trust" : underTrust ? "under_trust" : "normal",
+      underTrust,
+      overTrust,
+      triggers,
+      provisional: false,
+    };
+  }
+
+  const behavioral = evaluateTrustStateBehavioral(input);
+  const flagged = behavioral.underTrust || behavioral.overTrust;
+  return {
+    ...behavioral,
+    triggers: flagged ? [...behavioral.triggers, "low_truth_coverage"] : behavioral.triggers,
+    provisional: true,
+  };
+}
+
+function evaluateTrustStateBehavioral(
+  input: EvaluateTrustStateInput
+): Omit<TrustStateEvaluation, "provisional"> {
   const { metrics } = input;
   const previousTrustState = input.previousTrustState === "disabled" ? "normal" : input.previousTrustState;
   const hysteresis = Math.max(0, input.hysteresis);
@@ -208,8 +302,8 @@ export function evaluateTrustState(input: {
   const evidenceViewRate =
     metrics.sampleCount > 0 ? metrics.evidenceViewedCount / metrics.sampleCount : 1;
 
-  const rejectEntry = metrics.rejectCount >= rejectThreshold;
-  const rejectExit = metrics.rejectCount >= Math.max(1, rejectThreshold - hysteresis);
+  const rejectEntry = metrics.consecutiveRejectCount >= rejectThreshold;
+  const rejectExit = metrics.consecutiveRejectCount >= Math.max(1, rejectThreshold - hysteresis);
   const latencyEntry =
     metrics.averageConfirmationLatencyMs !== undefined &&
     metrics.averageConfirmationLatencyMs >= latencyThreshold;
@@ -233,7 +327,7 @@ export function evaluateTrustState(input: {
       : directAcceptEntry;
 
   const triggers: TrustControlTrigger[] = [];
-  if (underTrust && metrics.rejectCount > 0) triggers.push("consecutive_reject");
+  if (underTrust && metrics.consecutiveRejectCount > 0) triggers.push("consecutive_reject");
   if (underTrust && (latencyEntry || latencyExit)) triggers.push("confirmation_latency");
   if (overTrust) triggers.push("direct_accept_without_evidence");
 
@@ -377,6 +471,9 @@ export function evaluateSensorTrustDecision(input: {
     latencyThresholdMs: sensorConfig.latency_threshold_ms,
     hysteresis: sensorConfig.hysteresis,
     previousTrustState: input.previousTrustState,
+    minTruthCoverage: sensorConfig.min_truth_coverage,
+    unwarrantedRejectThreshold: sensorConfig.unwarranted_reject_threshold,
+    unwarrantedAcceptThreshold: sensorConfig.unwarranted_accept_threshold,
   });
   const taskRisk = evaluateSensorTaskRisk({
     confidence,
@@ -390,7 +487,9 @@ export function evaluateSensorTrustDecision(input: {
   const triggers = Array.from(new Set([...taskRisk.triggers, ...behaviorState.triggers]));
   const underTrust = behaviorState.underTrust || (behaviorState.trustState === "normal" && taskRisk.explainRisk);
   const overTrust = behaviorState.overTrust;
-  const reviewNeeded = overTrust && taskRisk.reviewRisk && sensorConfig.require_evidence_before_confirm;
+  // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
+  const allowHardControl = !behaviorState.provisional;
+  const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && sensorConfig.require_evidence_before_confirm;
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick =
     reviewNeeded &&
@@ -403,7 +502,7 @@ export function evaluateSensorTrustDecision(input: {
     trustState: behaviorState.trustState === "normal" && taskRisk.explainRisk
       ? "under_trust"
       : behaviorState.trustState,
-    controlLevel: reviewNeeded ? "review" : underTrust ? "explain" : "none",
+    controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
     triggers,
     evidenceViewed: input.evidenceViewed,
     manualReviewRequested: Boolean(input.manualReviewRequested),
@@ -412,12 +511,16 @@ export function evaluateSensorTrustDecision(input: {
     primaryMessage: reviewNeeded
       ? reviewComplete
         ? "复核已完成，可继续确认"
-        : "近期存在直接接受倾向，且当前建议风险较高，需要人工复核"
-      : underTrust
-        ? "AI建议依据已展开"
-        : taskRisk.reviewRisk
-          ? "当前建议存在任务风险，请查看候选依据"
-        : "",
+        : "近期多次无证据接受了实际错误的推荐，需要人工复核"
+      : overTrust
+        ? "近期存在对错误推荐的过度接受倾向，请查看依据再确认"
+        : underTrust
+          ? behaviorState.triggers.includes("unwarranted_reject")
+            ? "近期多次拒绝了实际正确的推荐，建议展开依据再判断"
+            : "AI建议依据已展开"
+          : taskRisk.reviewRisk
+            ? "当前建议存在任务风险，请查看候选依据"
+          : "",
     aiTargetId: recommendation.targetId,
     confidence,
     candidateGap,
@@ -466,6 +569,9 @@ export function evaluateThreatTrustDecision(input: {
     latencyThresholdMs: threatConfig.latency_threshold_ms,
     hysteresis: threatConfig.hysteresis,
     previousTrustState: input.previousTrustState,
+    minTruthCoverage: threatConfig.min_truth_coverage,
+    unwarrantedRejectThreshold: threatConfig.unwarranted_reject_threshold,
+    unwarrantedAcceptThreshold: threatConfig.unwarranted_accept_threshold,
   });
   const taskRisk = evaluateThreatTaskRisk({
     scoreGap,
@@ -476,7 +582,9 @@ export function evaluateThreatTrustDecision(input: {
   const triggers = Array.from(new Set([...taskRisk.triggers, ...behaviorState.triggers]));
   const underTrust = behaviorState.underTrust || (behaviorState.trustState === "normal" && taskRisk.explainRisk);
   const overTrust = behaviorState.overTrust;
-  const reviewNeeded = overTrust && taskRisk.reviewRisk && threatConfig.require_evidence_before_submit;
+  // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
+  const allowHardControl = !behaviorState.provisional;
+  const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && threatConfig.require_evidence_before_submit;
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick = reviewNeeded && !reviewComplete;
 
@@ -486,7 +594,7 @@ export function evaluateThreatTrustDecision(input: {
     trustState: behaviorState.trustState === "normal" && taskRisk.explainRisk
       ? "under_trust"
       : behaviorState.trustState,
-    controlLevel: reviewNeeded ? "review" : underTrust ? "explain" : "none",
+    controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
     triggers,
     evidenceViewed: input.evidenceViewed,
     manualReviewRequested: Boolean(input.manualReviewRequested),
@@ -495,12 +603,16 @@ export function evaluateThreatTrustDecision(input: {
     primaryMessage: reviewNeeded
       ? reviewComplete
         ? "复核已完成，可继续查看结果"
-        : "近期存在直接查看倾向，且当前排序风险较高，需要人工确认"
-      : underTrust
-        ? "排序变化依据已展开"
-        : taskRisk.reviewRisk
-          ? "当前排序存在任务风险，请查看证据"
-        : "",
+        : "近期多次无证据接受了实际错误的排序，需要人工确认"
+      : overTrust
+        ? "近期存在对错误排序的过度接受倾向，请查看证据再确认"
+        : underTrust
+          ? behaviorState.triggers.includes("unwarranted_reject")
+            ? "近期多次拒绝了实际正确的排序，建议展开依据再判断"
+            : "排序变化依据已展开"
+          : taskRisk.reviewRisk
+            ? "当前排序存在任务风险，请查看证据"
+          : "",
     topThreatId: top?.id,
     secondThreatId: second?.id,
     previousTopThreatRank: input.previousTopThreatRank,

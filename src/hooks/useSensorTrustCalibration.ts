@@ -25,13 +25,26 @@ export function useSensorTrustCalibration({
   externalTargets,
   iffMode,
   taskKey,
+  participantKey,
+  groundTruth,
 }: {
   config?: Partial<TrustCalibrationConfig> | null;
   externalTargets: SensorCandidateInput[];
   iffMode: boolean;
   taskKey?: string | number | null;
+  /** 被试标识；变化时清空行为窗口，避免跨被试串数据 */
+  participantKey?: string | number | null;
+  /** 正确目标的类型（如 'army' 表示敌机为正确识别）；未知则不传 */
+  groundTruth?: { correctType?: string };
 }) {
   const mergedConfig = useMemo(() => mergeTrustCalibrationConfig(config), [config]);
+  const correctType = groundTruth?.correctType;
+  // 解析某目标是否为「正确选择」：true/false 已知，undefined 表示真值未知
+  const resolveCorrect = useCallback((targetId?: string): boolean | undefined => {
+    if (!correctType || !targetId) return undefined;
+    const target = externalTargets.find(item => item.id === targetId);
+    return target ? target.type === correctType : undefined;
+  }, [externalTargets, correctType]);
   const [recommendation, setRecommendation] = useState<SensorAIRecommendation | null>(null);
   const [trustEventHistory, setTrustEventHistory] = useState<TrustInteractionEvent[]>([]);
   const [evidenceViewed, setEvidenceViewed] = useState(false);
@@ -43,15 +56,21 @@ export function useSensorTrustCalibration({
   const latestTrustEventsRef = useRef<TrustInteractionEvent[]>([]);
 
   useEffect(() => {
+    // 仅重置「当轮推荐」相关的瞬时状态；保留 trustEventHistory 与 previousTrustState，
+    // 让信任状态能跨任务按近期人工行为滑动累积（窗口已由 window_size 限长）。
     setRecommendation(null);
-    setTrustEventHistory([]);
     setEvidenceViewed(false);
     setManualReviewRequested(false);
     setManualReviewDone(false);
-    previousTrustStateRef.current = "normal";
     acceptedRecommendationRef.current = null;
-    latestTrustEventsRef.current = [];
   }, [taskKey]);
+
+  // 被试切换：清空行为窗口与历史状态，避免跨被试累积
+  useEffect(() => {
+    setTrustEventHistory([]);
+    previousTrustStateRef.current = "normal";
+    latestTrustEventsRef.current = [];
+  }, [participantKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -136,6 +155,8 @@ export function useSensorTrustCalibration({
       acceptedRecommendationRef.current = `${recommendation.targetId}:${recommendation.recommendedAt}`;
     }
     const latencyMs = Math.max(0, now - recommendation.recommendedAt);
+    const aiRecommendationCorrect = resolveCorrect(recommendation.targetId);
+    const humanDecisionCorrect = resolveCorrect(targetId);
     const trustEvent = createTrustInteractionEvent({
       actor: "human",
       task: "sensor",
@@ -147,13 +168,16 @@ export function useSensorTrustCalibration({
       riskFlags: [],
       source: "sensor.recordManualSelection",
       metadata: { evidenceViewed },
+      aiRecommendationCorrect,
+      humanDecisionCorrect,
+      outcomeSource: aiRecommendationCorrect !== undefined ? "scenario" : undefined,
     });
     rememberTrustEvents(trustEvent);
     if (manualReviewRequested) {
       setManualReviewDone(true);
       setManualReviewRequested(false);
     }
-  }, [evidenceViewed, manualReviewRequested, recommendation, rememberTrustEvents]);
+  }, [evidenceViewed, manualReviewRequested, recommendation, rememberTrustEvents, resolveCorrect]);
 
   const recordRecommendationAcceptance = useCallback((targetId?: string) => {
     if (!targetId || !recommendation || targetId !== recommendation.targetId) return;
@@ -164,6 +188,8 @@ export function useSensorTrustCalibration({
 
     const now = Date.now();
     const latencyMs = Math.max(0, now - recommendation.recommendedAt);
+    const aiRecommendationCorrect = resolveCorrect(recommendation.targetId);
+    const humanDecisionCorrect = resolveCorrect(targetId);
     const trustEvent = createTrustInteractionEvent({
       actor: "human",
       task: "sensor",
@@ -175,13 +201,16 @@ export function useSensorTrustCalibration({
       riskFlags: [],
       source: "sensor.recordRecommendationAcceptance",
       metadata: { evidenceViewed },
+      aiRecommendationCorrect,
+      humanDecisionCorrect,
+      outcomeSource: aiRecommendationCorrect !== undefined ? "iff" : undefined,
     });
     rememberTrustEvents(trustEvent);
     if (manualReviewRequested) {
       setManualReviewDone(true);
       setManualReviewRequested(false);
     }
-  }, [evidenceViewed, manualReviewRequested, recommendation, rememberTrustEvents]);
+  }, [evidenceViewed, manualReviewRequested, recommendation, rememberTrustEvents, resolveCorrect]);
 
   const markEvidenceViewed = useCallback(() => {
     const trustEvent = createTrustInteractionEvent({
@@ -241,6 +270,30 @@ export function useSensorTrustCalibration({
       previousTrustStateRef.current = sensorTrustDecision.trustState;
     }
   }, [sensorTrustDecision]);
+
+  // 【临时诊断】每次事件历史变化时打印行为指标，定位信任状态为何不变；定位完成后可删除。
+  useEffect(() => {
+    const m = buildTrustBehaviorMetricsFromEvents(trustEventHistory, mergedConfig.sensor.window_size);
+    const lastDecision = trustEventHistory
+      .filter(e => e.eventType === "human_accept" || e.eventType === "human_reject")
+      .slice(-1)[0];
+    console.log("[TrustDebug:sensor]", {
+      trustState: sensorTrustDecision.trustState,
+      sampleCount: m.sampleCount,
+      consecutiveReject: m.consecutiveRejectCount,
+      truthKnown: m.truthKnownCount,
+      truthCoverage: Number(m.truthCoverage.toFixed(2)),
+      unwarrantedReject: m.unwarrantedRejectCount,
+      unwarrantedAccept: m.unwarrantedAcceptCount,
+      lastEventType: lastDecision?.eventType,
+      lastAiCorrect: lastDecision?.aiRecommendationCorrect,
+      thresholds: {
+        unwarrantedReject: mergedConfig.sensor.unwarranted_reject_threshold,
+        unwarrantedAccept: mergedConfig.sensor.unwarranted_accept_threshold,
+        minTruthCoverage: mergedConfig.sensor.min_truth_coverage,
+      },
+    });
+  }, [trustEventHistory, mergedConfig.sensor, sensorTrustDecision.trustState]);
 
   const buildLogExtra = useCallback(() => ({
     trust_calibration: buildTrustCalibrationLogPayload(sensorTrustDecision),

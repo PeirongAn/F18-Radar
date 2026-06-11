@@ -37,6 +37,7 @@ export interface RadarProps {
   onClearMessages?: () => void; // 添加清空日志功能
   onNavigateToSA?: () => void;
   onTaskCompleted?: () => void;
+  userId?: string;
   onTrustDecisionUpdate?: (decision: SensorTrustDecision) => void;
   onTrustActionsUpdate?: (actions: {
     markEvidenceViewed: () => void;
@@ -54,6 +55,7 @@ const Radar: React.FC<RadarProps> = (({
   onClearMessages,
   onNavigateToSA,
   onTaskCompleted,
+  userId,
   onTrustDecisionUpdate,
   onTrustActionsUpdate,
 }) => {
@@ -91,6 +93,8 @@ const Radar: React.FC<RadarProps> = (({
     externalTargets: radarData?.externalTargets || [],
     iffMode: currentIffMode,
     taskKey: taskId,
+    participantKey: userId || null,
+    groundTruth: { correctType: 'army' },
   });
 
   useEffect(() => {

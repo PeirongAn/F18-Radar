@@ -1039,6 +1039,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     threats: trustThreatInputs,
     generationTimestamp: radarData?.timestamp,
     taskKey: `${userId || ''}:${lastEmergencyReceiveTimestampRef.current || ''}`,
+    participantKey: userId || null,
+    groundTruth: { correctId: highestPriorityThreat?.id ?? null },
   });
   useEffect(() => {
     onTrustDecisionUpdate?.(threatTrustDecision);

@@ -76,6 +76,7 @@
 - 使用 `trustEventHistory` 作为统一输入。
 - 从 `TrustInteractionEvent[]` 计算：
   - 人工拒绝次数
+  - 最近连续人工拒绝次数
   - 无证据直接接受次数
   - 查看证据次数
   - 平均确认时延

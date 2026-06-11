@@ -49,12 +49,22 @@ interface TrustHistoryStats {
   human_decision_count: number;
   human_accept_count: number;
   human_reject_count: number;
+  max_consecutive_reject_count: number;
   direct_accept_without_evidence_count: number;
   evidence_viewed_count: number;
   manual_review_count: number;
   result_confirmed_count: number;
   average_confirmation_latency_ms?: number | null;
   last_event_at?: number | null;
+  // —— 真值口径 ——
+  truth_known_count?: number;
+  ai_correct_count?: number;
+  ai_incorrect_count?: number;
+  unwarranted_reject_count?: number;
+  justified_reject_count?: number;
+  unwarranted_accept_count?: number;
+  ai_accuracy?: number | null;
+  truth_coverage?: number | null;
 }
 
 interface TrustHistoryEvent {
@@ -188,6 +198,7 @@ const HistoryRuleValidationPanel: React.FC<{
     human_decision_count: 0,
     human_accept_count: 0,
     human_reject_count: 0,
+    max_consecutive_reject_count: 0,
     direct_accept_without_evidence_count: 0,
     evidence_viewed_count: 0,
     manual_review_count: 0,
@@ -196,7 +207,7 @@ const HistoryRuleValidationPanel: React.FC<{
     last_event_at: null,
   };
   const directAcceptHit = safeStats.direct_accept_without_evidence_count >= directAcceptThreshold;
-  const rejectHit = safeStats.human_reject_count >= rejectThreshold;
+  const rejectHit = safeStats.max_consecutive_reject_count >= rejectThreshold;
   const latencyHit =
     typeof safeStats.average_confirmation_latency_ms === 'number' &&
     safeStats.average_confirmation_latency_ms >= latencyThresholdMs;
@@ -210,9 +221,9 @@ const HistoryRuleValidationPanel: React.FC<{
     },
     {
       label: '欠信任验证',
-      value: `${safeStats.human_reject_count} / ${rejectThreshold}`,
+      value: `${safeStats.max_consecutive_reject_count} / ${rejectThreshold}`,
       hit: rejectHit,
-      hint: '人工拒绝达到阈值',
+      hint: '最大连续拒绝达到阈值',
       state: 'under' as DecisionState,
     },
     {
@@ -266,38 +277,52 @@ const HistoryCalibrationSuggestionPanel: React.FC<{
   sampleSufficient: boolean;
   onApply: (patch: BehaviorThresholdPatch) => void;
 }> = ({ title, stats, config, sampleSufficient, onApply }) => {
-  const safeStats = stats ?? {
+  const safeStats: TrustHistoryStats = stats ?? {
     event_count: 0,
     human_event_count: 0,
     ai_event_count: 0,
     human_decision_count: 0,
     human_accept_count: 0,
     human_reject_count: 0,
+    max_consecutive_reject_count: 0,
     direct_accept_without_evidence_count: 0,
     evidence_viewed_count: 0,
     manual_review_count: 0,
     result_confirmed_count: 0,
     average_confirmation_latency_ms: null,
     last_event_at: null,
+    truth_known_count: 0,
+    unwarranted_reject_count: 0,
+    unwarranted_accept_count: 0,
+    truth_coverage: null,
+    ai_accuracy: null,
   };
+  // 真值口径就绪条件：覆盖率达标且有已知真值样本
+  const MIN_TRUTH_COVERAGE = 0.5;
+  const truthCoverage = safeStats.truth_coverage ?? 0;
+  const truthKnown = safeStats.truth_known_count ?? 0;
+  const truthReady = truthKnown > 0 && truthCoverage >= MIN_TRUTH_COVERAGE;
+  const ready = sampleSufficient && truthReady;
+  const unwarrantedAccept = safeStats.unwarranted_accept_count ?? 0;
+  const unwarrantedReject = safeStats.unwarranted_reject_count ?? 0;
   const suggestions = [
     {
       key: 'direct_accept_threshold',
       label: '直接接受阈值',
       current: config.direct_accept_threshold,
-      suggested: safeStats.direct_accept_without_evidence_count > 0
-        ? clamp(safeStats.direct_accept_without_evidence_count, 1, 6)
+      suggested: unwarrantedAccept > 0
+        ? clamp(unwarrantedAccept, 1, 6)
         : config.direct_accept_threshold,
-      evidence: `历史无证据直接接受 ${safeStats.direct_accept_without_evidence_count} 次`,
+      evidence: `无证据接受了实际错误的推荐 ${unwarrantedAccept} 次`,
     },
     {
       key: 'consecutive_reject_threshold',
       label: '连续拒绝阈值',
       current: config.consecutive_reject_threshold,
-      suggested: safeStats.human_reject_count > 0
-        ? clamp(safeStats.human_reject_count, 1, 6)
+      suggested: unwarrantedReject > 0
+        ? clamp(unwarrantedReject, 1, 6)
         : config.consecutive_reject_threshold,
-      evidence: `历史人工拒绝 ${safeStats.human_reject_count} 次`,
+      evidence: `拒绝了实际正确的推荐 ${unwarrantedReject} 次（最大连续拒绝 ${safeStats.max_consecutive_reject_count} 次）`,
     },
     {
       key: 'latency_threshold_ms',
@@ -315,14 +340,16 @@ const HistoryCalibrationSuggestionPanel: React.FC<{
     <div style={{
       ...panelStyle,
       padding: '16px',
-      borderColor: sampleSufficient ? '#176a8a' : '#8a7518',
-      background: sampleSufficient ? 'rgba(0,24,20,0.68)' : 'rgba(46,35,0,0.38)',
+      borderColor: ready ? '#176a8a' : '#8a7518',
+      background: ready ? 'rgba(0,24,20,0.68)' : 'rgba(46,35,0,0.38)',
     }}>
       <div style={{ color: '#dfffea', fontSize: '15px', fontWeight: 700, marginBottom: '6px' }}>{title}</div>
-      <div style={{ color: sampleSufficient ? '#86c58f' : '#ffdf73', fontSize: '11px', lineHeight: 1.5, marginBottom: '12px' }}>
-        {sampleSufficient
-          ? '建议只写入草稿；需要再点击“应用并保存”才会生效。'
-          : '样本量不足，暂不建议调整阈值。'}
+      <div style={{ color: ready ? '#86c58f' : '#ffdf73', fontSize: '11px', lineHeight: 1.5, marginBottom: '12px' }}>
+        {ready
+          ? `真值覆盖率 ${Math.round(truthCoverage * 100)}%，建议基于「该拒/该接」真值口径，仅写入草稿；需再点击“应用并保存”才生效。`
+          : !sampleSufficient
+            ? '样本量不足，暂不建议调整阈值。'
+            : `真值样本不足（覆盖率 ${Math.round(truthCoverage * 100)}%，已知 ${truthKnown} 条），暂不校准；请确保任务回传正确答案。`}
       </div>
       <div style={{ display: 'grid', gap: '8px' }}>
         {suggestions.map(item => {
@@ -333,26 +360,26 @@ const HistoryCalibrationSuggestionPanel: React.FC<{
               gridTemplateColumns: '100px 1fr 84px',
               gap: '10px',
               alignItems: 'center',
-              border: `1px solid ${changed && sampleSufficient ? '#1ca8ff' : 'rgba(80,170,100,0.18)'}`,
-              background: changed && sampleSufficient ? 'rgba(0,42,55,0.35)' : 'rgba(0,12,5,0.55)',
+              border: `1px solid ${changed && ready ? '#1ca8ff' : 'rgba(80,170,100,0.18)'}`,
+              background: changed && ready ? 'rgba(0,42,55,0.35)' : 'rgba(0,12,5,0.55)',
               padding: '9px 10px',
               borderRadius: '3px',
             }}>
-              <span style={{ color: changed && sampleSufficient ? '#7bdcff' : '#bdf5c8', fontSize: '12px', fontWeight: 700 }}>{item.label}</span>
+              <span style={{ color: changed && ready ? '#7bdcff' : '#bdf5c8', fontSize: '12px', fontWeight: 700 }}>{item.label}</span>
               <span style={{ color: '#d8ffe3', fontSize: '11px', lineHeight: 1.4 }}>
                 当前 {item.current} · 建议 {item.suggested} · {item.evidence}
               </span>
               <button
                 type="button"
-                disabled={!sampleSufficient || !changed}
+                disabled={!ready || !changed}
                 onClick={() => onApply({ [item.key]: item.suggested } as BehaviorThresholdPatch)}
                 style={{
                   height: '28px',
-                  border: `1px solid ${sampleSufficient && changed ? '#1ca8ff' : '#245331'}`,
-                  background: sampleSufficient && changed ? 'rgba(0,42,55,0.72)' : 'rgba(0,18,8,0.45)',
-                  color: sampleSufficient && changed ? '#9cf6ff' : '#5c8264',
+                  border: `1px solid ${ready && changed ? '#1ca8ff' : '#245331'}`,
+                  background: ready && changed ? 'rgba(0,42,55,0.72)' : 'rgba(0,18,8,0.45)',
+                  color: ready && changed ? '#9cf6ff' : '#5c8264',
                   borderRadius: '3px',
-                  cursor: sampleSufficient && changed ? 'pointer' : 'not-allowed',
+                  cursor: ready && changed ? 'pointer' : 'not-allowed',
                   fontSize: '11px',
                   fontFamily: "'SimHei', 'Microsoft YaHei', sans-serif",
                 }}
@@ -363,9 +390,9 @@ const HistoryCalibrationSuggestionPanel: React.FC<{
           );
         })}
       </div>
-      {sampleSufficient && changedSuggestions.length === 0 && (
+      {ready && changedSuggestions.length === 0 && (
         <div style={{ color: '#6fa878', fontSize: '11px', marginTop: '10px' }}>
-          当前阈值与历史建议一致，暂无调整建议。
+          当前阈值与真值口径建议一致，暂无调整建议。
         </div>
       )}
     </div>
@@ -831,9 +858,14 @@ const DataCollectionNotice: React.FC<{
         {[
           `人工接受 ${formatCount(summary.human_accept_count)}`,
           `人工拒绝 ${formatCount(summary.human_reject_count)}`,
+          `最大连续拒绝 ${formatCount(summary.max_consecutive_reject_count)}`,
           `无证据直接接受 ${formatCount(summary.direct_accept_without_evidence_count)}`,
           `查看证据 ${formatCount(summary.evidence_viewed_count)}`,
           `AI事件 ${formatCount(summary.ai_event_count)}`,
+          `真值覆盖 ${typeof summary.truth_coverage === 'number' ? Math.round(summary.truth_coverage * 100) + '%' : '—'}`,
+          `AI准确率 ${typeof summary.ai_accuracy === 'number' ? Math.round(summary.ai_accuracy * 100) + '%' : '—'}`,
+          `不该拒 ${formatCount(summary.unwarranted_reject_count ?? 0)}`,
+          `不该接 ${formatCount(summary.unwarranted_accept_count ?? 0)}`,
         ].map(label => (
           <span key={label} style={{
             border: '1px solid rgba(130,210,150,0.3)',
@@ -950,7 +982,7 @@ const ExperimentStatusPanel: React.FC<{
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '14px' }}>
       {[
         ['实验样本', `${sampleCount} / ${minimumSampleSize}`, history?.sample_sufficient ? '已达到验证样本量' : '达到样本量后才显示真实评估'],
-        ['行为因子', summary ? `${summary.human_accept_count}/${summary.human_reject_count}` : '待采集', '人工接受 / 人工拒绝'],
+        ['行为因子', summary ? `${summary.human_accept_count}/${summary.max_consecutive_reject_count}` : '待采集', '人工接受 / 最大连续拒绝'],
         ['证据查看', summary ? `${summary.evidence_viewed_count}` : '待采集', '用于区分直接接受与有证据接受'],
       ].map(([label, value, hint]) => (
         <div key={label} style={{ ...panelStyle, padding: '16px', borderColor: '#52652a', background: 'rgba(28, 32, 5, 0.46)' }}>
@@ -973,6 +1005,7 @@ const ExperimentStatusPanel: React.FC<{
               <span>人工决策</span><span>{formatCount(taskStats?.human_decision_count)}</span>
               <span>无证据接受</span><span>{formatCount(taskStats?.direct_accept_without_evidence_count)}</span>
               <span>人工拒绝</span><span>{formatCount(taskStats?.human_reject_count)}</span>
+              <span>最大连续拒绝</span><span>{formatCount(taskStats?.max_consecutive_reject_count)}</span>
               <span>平均确认时延</span><span>{formatLatency(taskStats?.average_confirmation_latency_ms)}</span>
               <span>最近事件</span><span>{formatEventTime(taskStats?.last_event_at)}</span>
             </div>

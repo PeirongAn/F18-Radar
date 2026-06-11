@@ -331,14 +331,25 @@ class DatabaseManager:
             'human_decision_count': 0,
             'human_accept_count': 0,
             'human_reject_count': 0,
+            'max_consecutive_reject_count': 0,
             'direct_accept_without_evidence_count': 0,
             'evidence_viewed_count': 0,
             'manual_review_count': 0,
             'result_confirmed_count': 0,
             'average_confirmation_latency_ms': None,
             'last_event_at': None,
+            # —— 真值口径（AI 推荐正确性已知时统计）——
+            'truth_known_count': 0,
+            'ai_correct_count': 0,
+            'ai_incorrect_count': 0,
+            'unwarranted_reject_count': 0,   # 拒了对的（欠信任信号）
+            'justified_reject_count': 0,     # 应该拒（正确校准）
+            'unwarranted_accept_count': 0,   # 无证据接了错的（过信任信号）
+            'ai_accuracy': None,
+            'truth_coverage': None,
             '_latency_total': 0,
             '_latency_count': 0,
+            '_current_reject_streak': 0,
         }
 
     @staticmethod
@@ -346,8 +357,17 @@ class DatabaseManager:
         public_stats = dict(stats)
         latency_count = public_stats.pop('_latency_count', 0)
         latency_total = public_stats.pop('_latency_total', 0)
+        public_stats.pop('_current_reject_streak', None)
         public_stats['average_confirmation_latency_ms'] = (
             latency_total / latency_count if latency_count else None
+        )
+        truth_known = public_stats.get('truth_known_count', 0)
+        decision_count = public_stats.get('human_decision_count', 0)
+        public_stats['ai_accuracy'] = (
+            public_stats.get('ai_correct_count', 0) / truth_known if truth_known else None
+        )
+        public_stats['truth_coverage'] = (
+            truth_known / decision_count if decision_count else None
         )
         return public_stats
 
@@ -447,8 +467,14 @@ class DatabaseManager:
                     stats['human_decision_count'] += 1
                     if event_type == 'human_accept':
                         stats['human_accept_count'] += 1
+                        stats['_current_reject_streak'] = 0
                     else:
                         stats['human_reject_count'] += 1
+                        stats['_current_reject_streak'] += 1
+                        stats['max_consecutive_reject_count'] = max(
+                            stats['max_consecutive_reject_count'],
+                            stats['_current_reject_streak']
+                        )
                     if isinstance(latency_ms, (int, float)) and latency_ms >= 0:
                         stats['_latency_total'] += latency_ms
                         stats['_latency_count'] += 1
@@ -466,6 +492,23 @@ class DatabaseManager:
                 if event_type == 'human_accept' and not evidence_viewed:
                     for stats in stats_targets:
                         stats['direct_accept_without_evidence_count'] += 1
+
+                # 真值口径：AI 推荐正确性已知时区分「该拒/不该拒」「该接/不该接」
+                ai_correct = event.get('aiRecommendationCorrect')
+                if isinstance(ai_correct, bool):
+                    for stats in stats_targets:
+                        stats['truth_known_count'] += 1
+                        if ai_correct:
+                            stats['ai_correct_count'] += 1
+                        else:
+                            stats['ai_incorrect_count'] += 1
+                        if event_type == 'human_reject':
+                            if ai_correct:
+                                stats['unwarranted_reject_count'] += 1
+                            else:
+                                stats['justified_reject_count'] += 1
+                        elif event_type == 'human_accept' and not ai_correct and not evidence_viewed:
+                            stats['unwarranted_accept_count'] += 1
 
         public_summary = self._public_trust_history_stats(summary)
         public_breakdown = {

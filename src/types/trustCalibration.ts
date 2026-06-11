@@ -8,6 +8,8 @@ export type TrustEventActor = "ai" | "human";
 
 export type TrustEventTask = "sensor" | "threat";
 
+export type OutcomeSource = "scenario" | "iff" | "post_hoc" | "manual_label";
+
 export type TrustInteractionEventType =
   | "ai_recommendation_shown"
   | "ai_auto_action"
@@ -29,7 +31,10 @@ export type TrustControlTrigger =
   | "ranking_changed"
   | "score_gap_small"
   | "data_delay"
-  | "manual_review_required";
+  | "manual_review_required"
+  | "unwarranted_reject"
+  | "unwarranted_accept"
+  | "low_truth_coverage";
 
 export interface SensorTrustCalibrationConfig {
   high_confidence: number;
@@ -43,6 +48,9 @@ export interface SensorTrustCalibrationConfig {
   hysteresis: number;
   latency_threshold_ms: number;
   require_evidence_before_confirm: boolean;
+  min_truth_coverage: number;
+  unwarranted_reject_threshold: number;
+  unwarranted_accept_threshold: number;
 }
 
 export interface ThreatTrustCalibrationConfig {
@@ -55,6 +63,9 @@ export interface ThreatTrustCalibrationConfig {
   hysteresis: number;
   latency_threshold_ms: number;
   require_evidence_before_submit: boolean;
+  min_truth_coverage: number;
+  unwarranted_reject_threshold: number;
+  unwarranted_accept_threshold: number;
 }
 
 export interface TrustDisplayConfig {
@@ -111,9 +122,23 @@ export interface ThreatCandidateEvidence {
 export interface TrustBehaviorMetrics {
   sampleCount: number;
   rejectCount: number;
+  consecutiveRejectCount: number;
   directAcceptCount: number;
   evidenceViewedCount: number;
   averageConfirmationLatencyMs?: number;
+  /** 窗口内已知真值（AI 推荐对错已知）的人工决策数 */
+  truthKnownCount: number;
+  /** 已知真值范围内，AI 推荐正确 / 错误的次数 */
+  aiCorrectCount: number;
+  aiIncorrectCount: number;
+  /** 拒绝了实际正确的推荐 = 不该拒（欠信任信号） */
+  unwarrantedRejectCount: number;
+  /** 拒绝了实际错误的推荐 = 应该拒（正确校准，不计欠信任） */
+  justifiedRejectCount: number;
+  /** 无证据接受了实际错误的推荐 = 不该接（过信任信号） */
+  unwarrantedAcceptCount: number;
+  /** 真值覆盖率 = truthKnownCount / sampleCount */
+  truthCoverage: number;
 }
 
 export interface BaseTrustDecision {
@@ -180,4 +205,10 @@ export interface TrustInteractionEvent {
   riskFlags: TrustControlTrigger[];
   source: string;
   metadata?: Record<string, unknown>;
+  /** 该条 AI 推荐是否与真值一致（已知时填，未知不填） */
+  aiRecommendationCorrect?: boolean;
+  /** 人工最终决策是否与真值一致（已知时填） */
+  humanDecisionCorrect?: boolean;
+  /** 真值来源 */
+  outcomeSource?: OutcomeSource;
 }

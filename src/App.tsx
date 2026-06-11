@@ -13,7 +13,7 @@ import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
 import InitialFormModal from './components/InitialFormModal';
 import TrustCalibrationSettings from './components/TrustCalibrationSettings';
-import { SensorTrustDecision, ThreatTrustDecision } from './types/trustCalibration';
+import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
 interface TargetSelectParams {
   targetId: string | undefined;
   lockX?: number;
@@ -349,6 +349,91 @@ const SidebarSensorTrustPanel: React.FC<{
           </button>
         </div>
       </div>
+    </div>
+  );
+};
+
+const TRUST_TRIGGER_LABELS: Record<TrustControlTrigger, string> = {
+  high_confidence_unconfirmed: '高置信未确认',
+  consecutive_reject: '连续拒绝',
+  low_confidence: '低置信',
+  candidate_close: '候选接近',
+  iff_unconfirmed: 'IFF未确认',
+  direct_accept_without_evidence: '无证据直接接受',
+  confirmation_latency: '确认时延偏高',
+  ranking_changed: '排序变化',
+  score_gap_small: '分差过小',
+  data_delay: '数据延迟',
+  manual_review_required: '需人工复核',
+  unwarranted_reject: '拒绝了正确推荐',
+  unwarranted_accept: '接受了错误推荐',
+  low_truth_coverage: '真值不足',
+};
+
+/** 任务面板常驻信任状态徽标：始终显示当前信任状态，含 normal */
+const TaskTrustStatusBadge: React.FC<{
+  decision: SensorTrustDecision | ThreatTrustDecision | null;
+}> = ({ decision }) => {
+  if (!decision || !decision.enabled || decision.trustState === 'disabled') return null;
+
+  const provisional = decision.triggers.includes('low_truth_coverage');
+  const stateMeta = decision.trustState === 'over_trust'
+    ? { label: '过信任', accent: '#ff7a45', bg: 'rgba(46,16,2,0.82)' }
+    : decision.trustState === 'under_trust'
+      ? { label: '欠信任', accent: '#ffbf3d', bg: 'rgba(40,30,2,0.82)' }
+      : { label: '信任正常', accent: '#2dd8ff', bg: 'rgba(2,26,30,0.82)' };
+  const controlLabel = decision.controlLevel === 'review'
+    ? '复核'
+    : decision.controlLevel === 'explain'
+      ? '解释'
+      : '观察';
+  const ruleLabels = decision.triggers
+    .filter(trigger => trigger !== 'low_truth_coverage')
+    .map(trigger => TRUST_TRIGGER_LABELS[trigger] ?? trigger);
+
+  return (
+    <div style={{
+      position: 'absolute',
+      top: 12,
+      left: 12,
+      zIndex: 6,
+      pointerEvents: 'none',
+      maxWidth: 280,
+      border: `1px solid ${stateMeta.accent}`,
+      borderRadius: 5,
+      background: stateMeta.bg,
+      boxShadow: `0 0 14px ${stateMeta.accent}22`,
+      padding: '8px 11px',
+      fontFamily: "'Share Tech Mono', 'SimHei', 'Microsoft YaHei', monospace",
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: stateMeta.accent, boxShadow: `0 0 8px ${stateMeta.accent}` }} />
+        <span style={{ color: stateMeta.accent, fontSize: 14, fontWeight: 700, letterSpacing: '0.06em' }}>
+          信任状态：{stateMeta.label}
+        </span>
+        <span style={{
+          color: '#bdf5c8', fontSize: 11, border: '1px solid rgba(130,210,150,0.4)',
+          borderRadius: 3, padding: '1px 6px',
+        }}>{controlLabel}</span>
+        {provisional && (
+          <span style={{ color: '#9aa0a6', fontSize: 11 }}>暂定</span>
+        )}
+      </div>
+      {ruleLabels.length > 0 && (
+        <div style={{ color: '#d7e7da', fontSize: 11, lineHeight: 1.5, marginTop: 5 }}>
+          触发规则：{ruleLabels.join('、')}
+        </div>
+      )}
+      {decision.primaryMessage && (
+        <div style={{ color: '#eaffef', fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
+          {decision.primaryMessage}
+        </div>
+      )}
+      {provisional && (
+        <div style={{ color: '#9aa0a6', fontSize: 10.5, lineHeight: 1.45, marginTop: 4 }}>
+          真值尚未充分揭示，当前为暂定状态，不强制复核。
+        </div>
+      )}
     </div>
   );
 };
@@ -929,6 +1014,7 @@ const App: React.FC = observer(() => {
           className="radar-panel-bg"
           style={{
             flex: '0 0 68%',
+            position: 'relative',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -940,6 +1026,7 @@ const App: React.FC = observer(() => {
             overflowX: 'auto',
           }}
         >
+          <TaskTrustStatusBadge decision={activeDisplay === 'radar' ? sensorTrustDecision : saTrustDecision} />
           {activeDisplay === 'radar' ? (
             <Radar
               width={700}
@@ -950,6 +1037,7 @@ const App: React.FC = observer(() => {
               onAddMessage={addMessage}
               onClearMessages={clearMessages}
               onTaskCompleted={handleRadarTaskCompleted}
+              userId={userId}
               onTrustDecisionUpdate={setSensorTrustDecision}
               onTrustActionsUpdate={setSensorTrustActions}
             />

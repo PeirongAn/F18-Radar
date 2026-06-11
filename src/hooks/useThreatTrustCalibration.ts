@@ -50,13 +50,20 @@ export function useThreatTrustCalibration({
   threats,
   generationTimestamp,
   taskKey,
+  participantKey,
+  groundTruth,
 }: {
   config?: Partial<TrustCalibrationConfig> | null;
   threats: ThreatInput[];
   generationTimestamp?: number | null;
   taskKey?: string | number | null;
+  /** 被试标识；变化时清空行为窗口，避免跨被试串数据 */
+  participantKey?: string | number | null;
+  /** 当前任务的正确答案（最高优先级威胁 id）；未知则不传 */
+  groundTruth?: { correctId?: string | null };
 }) {
   const mergedConfig = useMemo(() => mergeTrustCalibrationConfig(config), [config]);
+  const correctId = groundTruth?.correctId ?? null;
   const [trustEventHistory, setTrustEventHistory] = useState<TrustInteractionEvent[]>([]);
   const [evidenceViewed, setEvidenceViewed] = useState(false);
   const [manualReviewDone, setManualReviewDone] = useState(false);
@@ -69,16 +76,22 @@ export function useThreatTrustCalibration({
   const latestTrustEventsRef = useRef<TrustInteractionEvent[]>([]);
 
   useEffect(() => {
-    setTrustEventHistory([]);
+    // 仅重置「当轮排序」相关的瞬时状态；保留 trustEventHistory 与 previousTrustState，
+    // 让信任状态能跨任务按近期人工行为滑动累积（窗口已由 window_size 限长）。
     setEvidenceViewed(false);
     setManualReviewDone(false);
     setRankingChange({ previousTopThreatId: null });
     previousRankByIdRef.current = {};
     previousTopThreatIdRef.current = null;
     presentedAtRef.current = Date.now();
+  }, [taskKey]);
+
+  // 被试切换：清空行为窗口与历史状态，避免跨被试累积
+  useEffect(() => {
+    setTrustEventHistory([]);
     previousTrustStateRef.current = "normal";
     latestTrustEventsRef.current = [];
-  }, [taskKey]);
+  }, [participantKey]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
@@ -157,6 +170,9 @@ export function useThreatTrustCalibration({
     const isHuman = eventOwner !== "AI";
     const acceptedTopThreat = threatId === candidates[0].id;
     const latencyMs = Math.max(0, now - presentedAtRef.current);
+    // AI 推荐的 top = candidates[0]；真值 = correctId（最高优先级威胁）
+    const aiRecommendationCorrect = correctId != null ? candidates[0].id === correctId : undefined;
+    const humanDecisionCorrect = correctId != null ? threatId === correctId : undefined;
     const trustEvent = createTrustInteractionEvent({
       actor: isHuman ? "human" : "ai",
       task: "threat",
@@ -173,9 +189,12 @@ export function useThreatTrustCalibration({
       riskFlags: threatTrustDecision.triggers,
       source: "threat.recordThreatSelection",
       metadata: { evidenceViewed, eventOwner },
+      aiRecommendationCorrect,
+      humanDecisionCorrect,
+      outcomeSource: correctId != null ? "scenario" : undefined,
     });
     rememberTrustEvents(trustEvent);
-  }, [candidates, evidenceViewed, rememberTrustEvents, threatTrustDecision]);
+  }, [candidates, correctId, evidenceViewed, rememberTrustEvents, threatTrustDecision]);
 
   const recordResultConfirmed = useCallback((selectedThreatId?: string) => {
     const selectedId = selectedThreatId ?? candidates[0]?.id;
