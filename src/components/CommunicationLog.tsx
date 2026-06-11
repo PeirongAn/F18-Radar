@@ -96,7 +96,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   useEffect(() => {
     if (isStarted && onAddMessageProp) {
       if (antennaAdjustmentRequired && !prevAntennaAdjustmentRef.current) {
-        if (targetAntennaElevation !== undefined) {
+        if (targetAntennaElevation != null) {
           onAddMessageProp('system', `需要调整天线${targetAntennaElevation > 0 ? '上移' : '下移'} ${Math.abs(targetAntennaElevation)}格，请使用b/t键进行调整`);
         } else {
           onAddMessageProp('warning', '重置系统');
@@ -300,7 +300,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
           ── 雷达参数 ──
         </div>
 
-        {(antennaAdjustmentRequired || antennaPromptAttentionActive || true) && (
+        {(antennaAdjustmentRequired || antennaPromptAttentionActive) && (
           <div
             ref={antennaPromptRef}
             className={antennaPromptAttentionActive ? 'animate-pulse' : ''}
@@ -316,7 +316,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
               padding: antennaPromptAttentionActive ? '4px 8px' : '0',
             }}
           >
-            请调整天线高度{targetAntennaElevation !== undefined ? ` 至 ${targetAntennaElevation}°` : ''}!
+            请调整天线高度{targetAntennaElevation != null ? ` 至 ${targetAntennaElevation}°` : ''}!
           </div>
         )}
 

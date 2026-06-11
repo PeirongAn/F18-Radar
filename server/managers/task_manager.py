@@ -40,6 +40,7 @@ class TaskScenarioManager:
         self.active_queue: Optional[List[Dict[str, Any]]] = None
         self.current_scenario: Optional[Dict[str, Any]] = None
         self.repetition_counter: int = 0
+        self.pending_repetition_override: Optional[int] = None
 
         if self.is_practice:
             # 练习模式：尝试从内存缓存加载，失败则初始化新进度
@@ -75,15 +76,21 @@ class TaskScenarioManager:
         
         # 获取现有的 is_completed 状态（如果存在）
         current_is_completed = False  # 默认为未完成
+        current_is_ai_completed = False
+        current_is_manual_completed = False
         if cache_key in self._practice_memory_cache:
             current_is_completed = self._practice_memory_cache[cache_key].get('is_completed', False)
+            current_is_ai_completed = self._practice_memory_cache[cache_key].get('is_ai_completed', False)
+            current_is_manual_completed = self._practice_memory_cache[cache_key].get('is_manual_completed', False)
         
         self._practice_memory_cache[cache_key] = {
             'current_scenario': self.current_scenario,
             'repetition_counter': self.repetition_counter,
             'ai_queue': self.ai_queue.copy(),  # 复制列表避免引用问题
             'manual_queue': self.manual_queue.copy(),
-            'is_completed': current_is_completed  # 保持现有的完成状态，不自动修改
+            'is_completed': current_is_completed,  # 保持现有的完成状态，不自动修改
+            'is_ai_completed': current_is_ai_completed,
+            'is_manual_completed': current_is_manual_completed,
         }
         self.logger.debug(f"Practice mode progress saved to memory for user '{self.user_id}', progress '{self.progress_task_type}'")
 
@@ -393,6 +400,8 @@ class TaskScenarioManager:
         base = practice_reps if self.is_practice else formal_reps
 
         override = (self.current_scenario or {}).get('max_repetitions_override')
+        if override is None:
+            override = self.pending_repetition_override
         if override is not None:
             try:
                 self.max_repetitions = max(1, int(override))
@@ -402,23 +411,28 @@ class TaskScenarioManager:
             self.max_repetitions = base
         self.logger.debug("Config refreshed from file")
 
-    def apply_repetition_override(self, n: int) -> None:
+    def apply_repetition_override(self, n: int, overwrite: bool = False) -> None:
         """外部平台 TaskNumber 注入：把当前场景的总重复次数锁定为 n。
 
         语义：以"第一次设置"为准——若当前场景已有 override，则忽略本次。
         会同时更新 self.max_repetitions 并把 override 持久化到当前场景，
         以便下一次 task_start 创建新的 manager 时仍能加载到。
         """
-        if self.current_scenario is None:
-            return
-        if self.current_scenario.get('max_repetitions_override') is not None:
-            return
         try:
             n_int = max(1, int(n))
         except (TypeError, ValueError):
             return
+        self.pending_repetition_override = n_int
+        self.max_repetitions = n_int
+        if self.current_scenario is None:
+            return
+        if self.current_scenario.get('max_repetitions_override') is not None and not overwrite:
+            return
         self.current_scenario['max_repetitions_override'] = n_int
         self.max_repetitions = n_int
+        rep_info = self.current_scenario.get('repetition_info') or {}
+        rep_info['total'] = self.max_repetitions
+        self.current_scenario['repetition_info'] = rep_info
         if self.is_practice:
             self._save_to_memory()
         else:

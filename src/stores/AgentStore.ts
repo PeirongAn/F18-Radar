@@ -1,4 +1,5 @@
 import { makeAutoObservable, runInAction, computed } from "mobx";
+import { TrustCalibrationConfig } from "../types/trustCalibration";
 
 // 定义 agent_level.json 中每个配置对象的接口
 export interface AgentLevelConfig {
@@ -38,6 +39,9 @@ class AgentStore {
   // 新增：音频状态
   audioEnabled = true; // 默认值
 
+  // 信任状态调控配置，由服务端随任务配置下发
+  trustCalibrationConfig: Partial<TrustCalibrationConfig> | null = null;
+
   constructor() {
     makeAutoObservable(this, {
       currentAILevelConfig: computed,
@@ -65,12 +69,14 @@ class AgentStore {
     ai_level: string; 
     ai_configs: AgentLevelConfig[];
     audio_enabled: boolean; 
+    trust_calibration?: Partial<TrustCalibrationConfig>;
   }) => {
     runInAction(() => {
       this.isAIActive = data.is_ai_active;
       this.currentAILevel = data.ai_level;
       this.aiConfigs = data.ai_configs;
       this.audioEnabled = data.audio_enabled;
+      this.trustCalibrationConfig = data.trust_calibration ?? null;
       this.currentOperationOwner = this.isAIActive ? 'AI' : 'manual';
       console.log(`[AgentStore] Initialized from server. AI Active: ${this.isAIActive}, Level: ${this.currentAILevel}, Audio: ${this.audioEnabled}`);
     });
@@ -90,6 +96,13 @@ class AgentStore {
       // 当AI被禁用时，可以考虑是否要重置AI等级和推荐
       this.serverAIRecommendation = null;
     }
+  }
+
+  setTrustCalibrationConfig = (config: Partial<TrustCalibrationConfig> | null) => {
+    runInAction(() => {
+      this.trustCalibrationConfig = config;
+      console.log("[AgentStore] Trust calibration config updated:", config);
+    });
   }
 
   setCurrentAILevel = (level: string) => {
@@ -136,4 +149,4 @@ class AgentStore {
 }
 
 const agentStore = new AgentStore();
-export default agentStore; 
+export default agentStore;

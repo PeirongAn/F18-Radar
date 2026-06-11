@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
-import { Group, Line } from 'react-konva';
+import { Group, Line, Rect, Text } from 'react-konva';
 import UnknownTarget, { UnknownTargetData } from './UnknownTarget';
+import { SensorTrustDecision } from '../types/trustCalibration';
 
 /**
  * UnknownTargetManager组件的属性接口
@@ -55,6 +56,7 @@ interface UnknownTargetManagerProps {
    * 当前雷达量程（海里），用于距离分档
    */
   range?: number;
+  sensorTrustDecision?: SensorTrustDecision;
 }
 
 /**
@@ -72,7 +74,8 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
   scanAngle = 60, // 默认值为60
   onTargetClick,
   cognitiveLoad = 'low',
-  range = 20
+  range = 20,
+  sensorTrustDecision
 }) => {
   // 如果不显示目标或者没有目标数据，但有垂直线需要显示
   if ((!showTargets || !externalTargets || externalTargets.length === 0) && verticalLineX === undefined) {
@@ -115,22 +118,58 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
         if (!target || !target.id) return null;
         
         const targetColor = getTargetColor(target);
+        const candidateIndex = sensorTrustDecision?.candidates.findIndex(candidate => candidate.id === target.id) ?? -1;
+        const isAiRecommendation = sensorTrustDecision?.aiTargetId === target.id;
+        const shouldAnnotate = sensorTrustDecision?.enabled && (isAiRecommendation || candidateIndex >= 0);
+	        const stroke = sensorTrustDecision?.controlLevel === 'review'
+	          ? '#ff9a2e'
+	          : isAiRecommendation
+	            ? '#1ca8ff'
+	            : '#d6b84a';
+        const isReview = sensorTrustDecision?.controlLevel === 'review';
+	        const displayPosition = target.position;
         return (
-          <UnknownTarget 
-            key={target.id} 
-            data={{
-              ...target,
-              selected: target.id === selectedTargetId
-            }} 
-            color={targetColor} 
-            framePositions={framePositions}
-            scanAngle={scanAngle}
-            onTargetClick={onTargetClick}
-            cognitiveLoad={cognitiveLoad}
-            range={range}
-          />
+          <React.Fragment key={target.id}>
+            {shouldAnnotate && displayPosition && (
+              <Group>
+                <Rect
+                  x={displayPosition.x - 24}
+                  y={displayPosition.y - 24}
+                  width={48}
+                  height={48}
+                  stroke={stroke}
+                  strokeWidth={isAiRecommendation ? 2 : 1.5}
+                  dash={[6, 4]}
+                  cornerRadius={4}
+                  opacity={0.95}
+                />
+                <Text
+                  x={displayPosition.x + 26}
+	                  y={displayPosition.y - 24}
+	                  text={isAiRecommendation
+	                    ? `${isReview ? 'AI锁定' : 'AI推荐'} ${(sensorTrustDecision.confidence ? sensorTrustDecision.confidence * 100 : 0).toFixed(0)}%`
+	                    : isReview ? '相似候选' : `备选#${candidateIndex + 1}`}
+	                  fill={stroke}
+                  fontSize={11}
+                  fontFamily="monospace"
+                />
+              </Group>
+            )}
+            <UnknownTarget
+              data={{
+                ...target,
+                selected: target.id === selectedTargetId
+              }}
+              color={targetColor}
+              framePositions={framePositions}
+              scanAngle={scanAngle}
+              onTargetClick={onTargetClick}
+              cognitiveLoad={cognitiveLoad}
+              range={range}
+            />
+          </React.Fragment>
         );
       })}
     </Group>
   );
-}; 
+};

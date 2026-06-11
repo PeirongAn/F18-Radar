@@ -54,10 +54,14 @@ class ConfigManager:
     def get_ai_levels(self) -> list:
         """获取AI级别配置"""
         return self.config.get('levels', [])
+
+    def get_trust_calibration_config(self) -> Dict[str, Any]:
+        """获取信任调控配置"""
+        return self.config.get('trust_calibration', {})
     
     def is_audio_enabled(self) -> bool:
         """检查音频是否启用"""
         return self.get_game_settings().get('audio_enabled', True)
 
 # 全局配置管理器实例
-config_manager = ConfigManager() 
+config_manager = ConfigManager()

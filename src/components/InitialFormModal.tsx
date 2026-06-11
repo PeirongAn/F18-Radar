@@ -4,21 +4,27 @@ import { globalWS } from '../hooks/useRadarData';
 
 
 interface InitialFormModalProps {
-  onStart: (userId: string, includeAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean, useJoystick: boolean) => void;
+  onStart: (userId: string, includeAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean, useJoystick: boolean, taskNumber: number) => void;
   defaultUserId?: string;
   defaultIncludeAI?: boolean;
+  defaultTaskNumber?: number;
+  onOpenTrustSettings?: () => void;
 }
 
 const InitialFormModal: React.FC<InitialFormModalProps> = observer(({ 
   onStart, 
   defaultUserId = '', 
-  defaultIncludeAI = false 
+  defaultIncludeAI = false,
+  defaultTaskNumber,
+  onOpenTrustSettings,
 }) => {
   const userIdRef = useRef<HTMLInputElement>(null);
   const [includeAI, setIncludeAI] = useState(defaultIncludeAI);
   const [taskType, setTaskType] = useState<'radar' | 'sa'>('radar');
   const [isPractice, setIsPractice] = useState(true);
   const [useJoystick, setUseJoystick] = useState(true);
+  const [taskNumber, setTaskNumber] = useState(defaultTaskNumber ?? 3);
+  const [taskNumberTouched, setTaskNumberTouched] = useState(defaultTaskNumber !== undefined);
 
   useEffect(() => {
     if (userIdRef.current) {
@@ -29,10 +35,25 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
     }
   }, [defaultUserId]);
 
+  // defaultTaskNumber 可能异步到达（如从 init_config.json 读取），到达后用它作为初值，
+  // 并锁定（视为已设置），避免被 isPractice 切换重置。用户仍可手动改输入框。
+  useEffect(() => {
+    if (defaultTaskNumber === undefined) return;
+    setTaskNumber(Math.min(100, Math.max(1, Math.floor(defaultTaskNumber))));
+    setTaskNumberTouched(true);
+  }, [defaultTaskNumber]);
+
+  useEffect(() => {
+    if (!taskNumberTouched) {
+      setTaskNumber(isPractice ? 3 : 1);
+    }
+  }, [isPractice, taskNumberTouched]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const userId = userIdRef.current?.value.trim();
     if (userId) {
+      const normalizedTaskNumber = Math.min(100, Math.max(1, Math.floor(Number(taskNumber) || 1)));
       // 如果选择使用摇杆，则连接摇杆
       if (useJoystick) {
         const wsState = globalWS.getState();
@@ -67,7 +88,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
         }
       }
       
-      onStart(userId, includeAI, taskType, isPractice, useJoystick);
+      onStart(userId, includeAI, taskType, isPractice, useJoystick, normalizedTaskNumber);
     }
   };
 
@@ -154,6 +175,26 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
           </div>
 
           <div className="mb-6">
+            <label htmlFor="taskNumber" className="block text-green-400 font-mono mb-2">
+              任务次数
+            </label>
+            <input
+              type="number"
+              id="taskNumber"
+              min={1}
+              max={100}
+              step={1}
+              value={taskNumber}
+              onChange={(e) => {
+                setTaskNumberTouched(true);
+                setTaskNumber(Math.min(100, Math.max(1, Number(e.target.value) || 1)));
+              }}
+              className="w-full bg-gray-800 border border-gray-600 text-white py-2 px-3 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
+              required
+            />
+          </div>
+
+          <div className="mb-6">
             <label className="block text-green-400 font-mono mb-2">
               是否使用摇杆
             </label>
@@ -231,6 +272,16 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
               </svg>
             </a>
           </div>
+
+          {onOpenTrustSettings && (
+            <button
+              type="button"
+              onClick={onOpenTrustSettings}
+              className="w-full mb-3 border border-cyan-500/50 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 font-bold py-3 px-4 rounded-md transition duration-200 font-mono text-base tracking-widest"
+            >
+              信任调控设置
+            </button>
+          )}
           
           <button
             type="submit"

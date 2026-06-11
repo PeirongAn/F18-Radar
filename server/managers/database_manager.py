@@ -5,7 +5,7 @@ import threading
 import atexit
 import os
 from contextlib import contextmanager
-from typing import Dict, Any, Optional, Set, Tuple
+from typing import Dict, Any, List, Optional, Set, Tuple
 from .logger_manager import get_logger
 
 class DatabaseManager:
@@ -306,6 +306,187 @@ class DatabaseManager:
             is_correct_str
         )
         self.execute_async(sql, params)
+
+    @staticmethod
+    def _extract_trust_events(parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """从操作参数中提取 trust_events，兼容顶层和 extra 嵌套结构。"""
+        direct_events = parameters.get('trust_events')
+        if isinstance(direct_events, list):
+            return [event for event in direct_events if isinstance(event, dict)]
+
+        extra = parameters.get('extra')
+        if isinstance(extra, dict):
+            nested_events = extra.get('trust_events')
+            if isinstance(nested_events, list):
+                return [event for event in nested_events if isinstance(event, dict)]
+
+        return []
+
+    @staticmethod
+    def _empty_trust_history_stats() -> Dict[str, Any]:
+        return {
+            'event_count': 0,
+            'human_event_count': 0,
+            'ai_event_count': 0,
+            'human_decision_count': 0,
+            'human_accept_count': 0,
+            'human_reject_count': 0,
+            'direct_accept_without_evidence_count': 0,
+            'evidence_viewed_count': 0,
+            'manual_review_count': 0,
+            'result_confirmed_count': 0,
+            'average_confirmation_latency_ms': None,
+            'last_event_at': None,
+            '_latency_total': 0,
+            '_latency_count': 0,
+        }
+
+    @staticmethod
+    def _public_trust_history_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+        public_stats = dict(stats)
+        latency_count = public_stats.pop('_latency_count', 0)
+        latency_total = public_stats.pop('_latency_total', 0)
+        public_stats['average_confirmation_latency_ms'] = (
+            latency_total / latency_count if latency_count else None
+        )
+        return public_stats
+
+    def get_trust_calibration_history(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 500,
+        minimum_sample_size: int = 30,
+    ) -> Dict[str, Any]:
+        """聚合历史 trust_events，用于信任调控设置页展示行为数据采集状态。"""
+        safe_limit = max(1, min(int(limit or 500), 5000))
+        rows: List[Tuple[Any, ...]] = []
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                sql = """
+                    SELECT id, task_id, operation_type, timestamp, parameters, user_id, event_owner, created_at
+                    FROM user_operations
+                    WHERE parameters LIKE '%trust_events%'
+                """
+                params: List[Any] = []
+                if user_id:
+                    sql += " AND user_id = ?"
+                    params.append(user_id)
+                sql += " ORDER BY timestamp DESC LIMIT ?"
+                params.append(safe_limit)
+                cursor.execute(sql, tuple(params))
+                rows = cursor.fetchall()
+        except Exception as e:
+            self.logger.warning(f"读取信任调控历史失败: {e}")
+
+        events: List[Dict[str, Any]] = []
+        for row in rows:
+            operation_id, task_id, operation_type, op_timestamp, parameters_json, row_user_id, event_owner, created_at = row
+            try:
+                parameters = json.loads(parameters_json or '{}')
+            except json.JSONDecodeError:
+                continue
+
+            for event in self._extract_trust_events(parameters):
+                enriched_event = dict(event)
+                enriched_event['_operation'] = {
+                    'id': operation_id,
+                    'task_id': task_id,
+                    'operation_type': operation_type,
+                    'timestamp': op_timestamp,
+                    'user_id': row_user_id,
+                    'event_owner': event_owner,
+                    'created_at': created_at,
+                }
+                events.append(enriched_event)
+
+        events.sort(key=lambda event: event.get('timestamp') or 0)
+
+        summary = self._empty_trust_history_stats()
+        task_breakdown: Dict[str, Dict[str, Any]] = {
+            'sensor': self._empty_trust_history_stats(),
+            'threat': self._empty_trust_history_stats(),
+        }
+        evidence_seen: Set[Tuple[str, str]] = set()
+
+        for event in events:
+            task = event.get('task') if event.get('task') in ('sensor', 'threat') else 'unknown'
+            task_stats = task_breakdown.setdefault(task, self._empty_trust_history_stats())
+            stats_targets = [summary, task_stats]
+            actor = event.get('actor')
+            event_type = event.get('eventType')
+            recommendation_id = event.get('recommendationId')
+            event_timestamp = event.get('timestamp')
+
+            for stats in stats_targets:
+                stats['event_count'] += 1
+                if event_timestamp and (stats['last_event_at'] is None or event_timestamp > stats['last_event_at']):
+                    stats['last_event_at'] = event_timestamp
+                if actor == 'human':
+                    stats['human_event_count'] += 1
+                elif actor == 'ai':
+                    stats['ai_event_count'] += 1
+
+            if actor == 'human' and event_type == 'evidence_viewed':
+                for stats in stats_targets:
+                    stats['evidence_viewed_count'] += 1
+                if recommendation_id:
+                    evidence_seen.add((str(task), str(recommendation_id)))
+
+            if actor == 'human' and event_type == 'manual_review_done':
+                for stats in stats_targets:
+                    stats['manual_review_count'] += 1
+
+            if actor == 'human' and event_type == 'human_result_confirmed':
+                for stats in stats_targets:
+                    stats['result_confirmed_count'] += 1
+
+            if actor == 'human' and event_type in ('human_accept', 'human_reject'):
+                latency_ms = event.get('latencyMs')
+                for stats in stats_targets:
+                    stats['human_decision_count'] += 1
+                    if event_type == 'human_accept':
+                        stats['human_accept_count'] += 1
+                    else:
+                        stats['human_reject_count'] += 1
+                    if isinstance(latency_ms, (int, float)) and latency_ms >= 0:
+                        stats['_latency_total'] += latency_ms
+                        stats['_latency_count'] += 1
+
+                metadata = event.get('metadata') if isinstance(event.get('metadata'), dict) else {}
+                metadata_evidence_viewed = metadata.get('evidenceViewed')
+                evidence_viewed = (
+                    metadata_evidence_viewed is True or
+                    (
+                        metadata_evidence_viewed is not False and
+                        recommendation_id is not None and
+                        (str(task), str(recommendation_id)) in evidence_seen
+                    )
+                )
+                if event_type == 'human_accept' and not evidence_viewed:
+                    for stats in stats_targets:
+                        stats['direct_accept_without_evidence_count'] += 1
+
+        public_summary = self._public_trust_history_stats(summary)
+        public_breakdown = {
+            task: self._public_trust_history_stats(stats)
+            for task, stats in task_breakdown.items()
+        }
+
+        recent_events = list(reversed(events))[:20]
+        return {
+            'minimum_sample_size': minimum_sample_size,
+            'sample_sufficient': public_summary['human_decision_count'] >= minimum_sample_size,
+            'operation_count': len(rows),
+            'event_count': len(events),
+            'filters': {
+                'user_id': user_id,
+                'limit': safe_limit,
+            },
+            'summary': public_summary,
+            'task_breakdown': public_breakdown,
+            'recent_events': recent_events,
+        }
     
     def initialize_database(self) -> None:
         """初始化数据库表结构"""

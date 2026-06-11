@@ -3,6 +3,7 @@ import { UnknownTargetData } from '../components/UnknownTarget';
 import radarStore from '../stores/RadarStore';
 import agentStore, { ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
 import audioManager from '../managers/AudioManager'; // 引入新的全局音频管理器
+import { normalizeTimestampMs } from '../utils/trustCalibration';
 
 export interface TargetHistory {
   x: number;
@@ -88,6 +89,7 @@ class GlobalWebSocketManager {
   private maxReconnectAttempts: number = 10;
   private lastMessage: any = null; // 存储最后一条消息
   private lastMessageId: string = ''; // 存储最后一条消息的ID
+  private messageSequence: number = 0;
   
   // 确保单例模式
   public static getInstance(): GlobalWebSocketManager {
@@ -144,6 +146,9 @@ class GlobalWebSocketManager {
   private handleMessage = (event: MessageEvent) => {
     try {
       const rawData = JSON.parse(event.data);
+      const messageSequence = ++this.messageSequence;
+      rawData.__message_seq = messageSequence;
+      rawData.__received_at = Date.now();
       
       // 详细记录所有消息，特别关注重复调用的原因
       console.log('【全局WS】handleMessage被调用:', {
@@ -182,12 +187,25 @@ class GlobalWebSocketManager {
       let messageId = rawData.type;
       if (rawData.type === 'SAThreats' && rawData.saThreats) {
         messageId += '_' + JSON.stringify(rawData.saThreats.map((t:any) => t.id).sort());
+      } else if (rawData.type === 'init_settings') {
+        const rep = rawData.repetition_info;
+        messageId += '_' + [
+          rawData.task_id ?? 'pending',
+          rawData.task_type ?? 'unknown',
+          rep?.current ?? 'unknown',
+          rep?.total ?? 'unknown',
+          rawData.timestamp ?? Date.now(),
+        ].join(':');
+      } else if (rawData.type === 'settings_validation') {
+        messageId += '_' + (rawData.timestamp ?? messageSequence);
       } else if (rawData.type === 'externalTargets' && rawData.externalTargets) {
         console.log('externalTargets agentStore.isAIActive', agentStore.isAIActive);
         if (agentStore.isAIActive) {
           audioManager.play('radarAISelect');
         }
         messageId += '_' + JSON.stringify(rawData.externalTargets.map((t:any) => t.id).sort());
+      } else if (rawData.type === 'adjust_antenna' && rawData.targetElevation !== undefined) {
+        messageId += '_' + rawData.targetElevation + '_' + messageSequence;
       } else if (rawData.targetElevation !== undefined) {
         messageId += '_' + rawData.targetElevation;
       } else if (rawData.type === 'radar_data' && rawData.timestamp) {
@@ -256,8 +274,10 @@ class GlobalWebSocketManager {
         radar_azimuth: rawData.radar_azimuth !== undefined ? rawData.radar_azimuth : (this.state.radarData?.radar_azimuth || 0),
         own_heading: rawData.own_heading !== undefined ? rawData.own_heading : (this.state.radarData?.own_heading || 0),
         
-        // 时间戳通常随消息更新或取当前时间
-        timestamp: rawData.timestamp || Date.now(),
+        // 时间戳通常随消息更新或取当前时间；兼容后端秒级和毫秒级时间戳
+        timestamp: rawData.timestamp !== undefined
+          ? normalizeTimestampMs(rawData.timestamp)
+          : Date.now(),
         
         // 使用处理过的 emergencyData
         emergency: emergencyData,
@@ -497,6 +517,7 @@ const useRadarData = (
     taskType: 'radar' | 'sa';
     includeAI: boolean;
     isPractice: boolean;
+    taskNumber?: number;
   } | null>(null);
 
   // gazerelation: 统一构造 Tobii 回合消息体（与 Tobii main.py 的 hand 协议一致）
@@ -1007,7 +1028,7 @@ const useRadarData = (
   }, []);
   
   // 初始化系统，请求任务ID和初始设置
-  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean) => {
+  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => {
     radarStore.setUserId(userId); // 修正：设置到 radarStore
     agentStore.setAIActive(includeAI);
 
@@ -1016,6 +1037,8 @@ const useRadarData = (
       user_id: userId,
       include_ai: includeAI,
       is_practice: isPractice, // 添加练习模式参数
+      task_number: taskNumber,
+      repetition_total_override: taskNumber,
     };
     sendMessage(initMessage);
     console.log('System initialization message sent:', initMessage);
@@ -1136,11 +1159,17 @@ const useRadarData = (
         const taskType: 'radar' | 'sa' = kind === 'sa' ? 'sa' : 'radar';
         const userId = String(message.userId || message.normalized.platform_task_id || '');
         console.log('[useRadarData] platform autostart triggered:', { userId, taskType, includeAI: message.normalized.include_ai });
+        const rawTaskNumber = message.normalized.repetition_total_override ?? message.normalized.task_number;
+        const parsedTaskNumber = Number(rawTaskNumber);
+        const taskNumber = Number.isFinite(parsedTaskNumber) && parsedTaskNumber > 0
+          ? Math.max(1, Math.floor(parsedTaskNumber))
+          : undefined;
         setPlatformAutoStart({
           userId,
           taskType,
           includeAI: Boolean(message.normalized.include_ai),
           isPractice: Boolean(message.normalized.is_practice),
+          taskNumber,
         });
       }
       return;
@@ -1148,6 +1177,11 @@ const useRadarData = (
 
     if (message.type === 'init_settings') {
       console.log('[useRadarData] Processing full init_settings from server:', message);
+      // 每一轮新任务开始都重置雷达参数提交去重集合。
+      // 该去重原本只为防止同一轮内重复提交，但 key 为 `${taskId}:${range}:${scanAngle}`，
+      // 当服务端在同一场景的多轮重复中复用相同 task_id 时会跨轮误命中，
+      // 导致第 2 轮及以后的 settings_update 被静默跳过、雷达参数无法自动设置。
+      submittedSettingsKeysRef.current.clear();
       if (message.platform_task?.raw && message.platform_task?.normalized) {
         setPlatformTaskConfig({
           raw: message.platform_task.raw,
@@ -1170,8 +1204,20 @@ const useRadarData = (
         radarStore.setTargetAntennaElevation(null);
       }
 
-      // 3. 设置雷达参数供UI自动配置
-      setInitSettings(message.settings);
+      // 3. 设置雷达参数供UI自动配置；保留轮次元信息，确保相同参数的新一轮也会被处理。
+      const enrichedInitSettings = {
+        ...(message.settings || {}),
+        __task_id: message.task_id,
+        __task_type: message.task_type,
+        __repetition_current: message.repetition_info?.current,
+        __repetition_total: message.repetition_info?.total,
+        __message_seq: message.__message_seq,
+        __received_at: message.__received_at ?? Date.now(),
+      };
+      setInitSettings(enrichedInitSettings);
+      if (typeof window !== 'undefined' && message.task_type === 'RADAR_TARGETING') {
+        window.dispatchEvent(new CustomEvent('radar:init_settings', { detail: enrichedInitSettings }));
+      }
 
       // 4. 设置任务重复信息（附带 task_id 供问卷触发使用）
       if (message.task_type && message.repetition_info) {
@@ -1197,7 +1243,11 @@ const useRadarData = (
       const ts = Date.now();
       recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
     } else if (message.type === 'adjust_antenna') {
-      if (targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
+      const antennaCommandKey = message.__message_seq !== undefined
+        ? `seq_${message.__message_seq}`
+        : `${radarStore.taskId || 'pending'}:${message.targetElevation}`;
+      if (lastAntennaCommandKeyRef.current === antennaCommandKey && targetAntennaElevation === message.targetElevation && antennaAdjustmentRequired) return;
+      lastAntennaCommandKeyRef.current = antennaCommandKey;
       console.log('[useRadarData] Received adjust_antenna message:', message);
       const ts = Date.now();
       setAntennaAdjustmentRequired(true);
@@ -1282,6 +1332,8 @@ const useRadarData = (
     console.log('Confirming to backend that antenna adjustment has been handled.');
     setAntennaAdjustmentRequired(false);
     setTargetAntennaElevation(null); // Reset the elevation state as the signal is handled
+    radarStore.setAntennaAdjustmentRequired(false);
+    radarStore.setTargetAntennaElevation(null);
     console.log('[useRadarData] Antenna adjustment requirement handled and states reset.');
   }, []); // Dependencies: setAntennaAdjustmentRequired, setTargetAntennaElevation are stable from useState
 
@@ -1293,6 +1345,7 @@ const useRadarData = (
 
   const lastProcessedMessageIdForHook = useRef<string>('');
   const lastProcessedEmergencyId = useRef<string>('');
+  const lastAntennaCommandKeyRef = useRef<string>('');
   // gazerelation: 监听 externalTargets 变化所需的前次签名（跳过首次）
   const prevExternalTargetsSignatureRef = useRef<string>('');
   const externalTargetsFirstRunRef = useRef<boolean>(true);
@@ -1306,22 +1359,32 @@ const useRadarData = (
       setConnected(state.connected);
       setError(state.error);
       console.log("############radarData 111#####", state.radarData);
+
+      const latestMsgFromGlobal = globalWS.getLastMessage();
+      if (latestMsgFromGlobal) {
+        let currentMsgId = latestMsgFromGlobal.__message_seq !== undefined
+          ? `seq_${latestMsgFromGlobal.__message_seq}`
+          : latestMsgFromGlobal.type;
+        if (latestMsgFromGlobal.__message_seq === undefined) {
+          if (latestMsgFromGlobal.timestamp) currentMsgId += '_' + latestMsgFromGlobal.timestamp;
+          if (latestMsgFromGlobal.task_id) currentMsgId += '_' + latestMsgFromGlobal.task_id;
+          if (latestMsgFromGlobal.repetition_info) {
+            currentMsgId += `_${latestMsgFromGlobal.repetition_info.current}_${latestMsgFromGlobal.repetition_info.total}`;
+          }
+          if (latestMsgFromGlobal.type === 'adjust_antenna' && latestMsgFromGlobal.targetElevation !== undefined) {
+            currentMsgId += `_${latestMsgFromGlobal.targetElevation}`;
+          }
+        }
+
+        if (currentMsgId !== lastProcessedMessageIdForHook.current) {
+          handleHookMessage(latestMsgFromGlobal);
+          lastProcessedMessageIdForHook.current = currentMsgId;
+        }
+      }
       
       // 处理雷达数据更新
       if (state.radarData) {
         setRadarData(state.radarData);
-        
-        // Process the most recent message that formed this radarData state IF it's new for the hook
-        const latestMsgFromGlobal = globalWS.getLastMessage();
-        if (latestMsgFromGlobal) {
-            let currentMsgId = latestMsgFromGlobal.type; // Simple ID for now, could be enhanced
-            if (latestMsgFromGlobal.timestamp) currentMsgId += '_' + latestMsgFromGlobal.timestamp;
-
-            if (currentMsgId !== lastProcessedMessageIdForHook.current) {
-                handleHookMessage(latestMsgFromGlobal);
-                lastProcessedMessageIdForHook.current = currentMsgId;
-            }
-        }
       }
     };
     

@@ -42,6 +42,7 @@ class EnhancedThreatsMessage(BaseMessage):
     ai_level: Optional[str]
     ai_configs: Dict[str, Any]
     audio_enabled: bool
+    trust_calibration: Optional[Dict[str, Any]]
 
 class EnhancedEmergencyMessage(BaseMessage):
     """增强紧急事件消息（使用原有SAEmergency类型保持兼容性）"""
@@ -70,7 +71,8 @@ class MessageProtocol:
         is_ai_active: bool,
         ai_level: Optional[str],
         ai_configs: Dict[str, Any],
-        audio_enabled: bool
+        audio_enabled: bool,
+        trust_calibration: Optional[Dict[str, Any]] = None
     ) -> EnhancedThreatsMessage:
         """
         创建增强威胁消息
@@ -99,6 +101,7 @@ class MessageProtocol:
             'ai_level': ai_level,
             'ai_configs': ai_configs,
             'audio_enabled': audio_enabled,
+            'trust_calibration': trust_calibration or {},
             'timestamp': int(threat_result.generation_timestamp)
         }
     
@@ -248,7 +251,8 @@ class LegacyMessageAdapter:
                 'is_ai_active': enhanced_message['is_ai_active'],
                 'ai_level': enhanced_message.get('ai_level'),
                 'ai_configs': enhanced_message['ai_configs'],
-                'audio_enabled': enhanced_message['audio_enabled']
+                'audio_enabled': enhanced_message['audio_enabled'],
+                'trust_calibration': enhanced_message.get('trust_calibration', {})
             }
         
         elif message_type == 'SAEmergency':
@@ -277,4 +281,4 @@ class LegacyMessageAdapter:
         return enhanced_message
 
 # 全局消息协议实例
-message_protocol = MessageProtocol() 
+message_protocol = MessageProtocol()

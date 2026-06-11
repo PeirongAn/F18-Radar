@@ -11,6 +11,8 @@ import agentStore from '../stores/AgentStore'; // Import AgentStore directly
 import radarStore from '../stores/RadarStore';
 import toast from 'react-hot-toast';
 import audioManager from '../managers/AudioManager';
+import { useSensorTrustCalibration } from '../hooks/useSensorTrustCalibration';
+import { SensorTrustDecision } from '../types/trustCalibration';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -22,6 +24,7 @@ interface TargetSelectParams {
   iffMode?: boolean; // AI可能不直接处理IFF模式，但类型需匹配
   externalTargetsTimestamp?: number | null; // AI获取数据的方式不同，可能为null
   event_owner?: 'AI' | 'manual';
+  extra?: Record<string, unknown>;
 }
 
 export interface RadarProps {
@@ -34,6 +37,11 @@ export interface RadarProps {
   onClearMessages?: () => void; // 添加清空日志功能
   onNavigateToSA?: () => void;
   onTaskCompleted?: () => void;
+  onTrustDecisionUpdate?: (decision: SensorTrustDecision) => void;
+  onTrustActionsUpdate?: (actions: {
+    markEvidenceViewed: () => void;
+    markManualReviewDone: () => void;
+  } | null) => void;
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -46,9 +54,11 @@ const Radar: React.FC<RadarProps> = (({
   onClearMessages,
   onNavigateToSA,
   onTaskCompleted,
+  onTrustDecisionUpdate,
+  onTrustActionsUpdate,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
-  const { 
+  const {
     sendMessage, 
     resetTargets, 
     clearAndResetView,
@@ -66,6 +76,51 @@ const Radar: React.FC<RadarProps> = (({
     connected,
     error,
   } = useRadarData(undefined, { enableAntennaRound: true });
+  const [currentIffMode, setCurrentIffMode] = useState(false);
+
+  const {
+    sensorTrustDecision,
+    recordAIRecommendation,
+    recordManualSelection,
+    recordRecommendationAcceptance,
+    markEvidenceViewed: markSensorEvidenceViewed,
+    markManualReviewDone: markSensorManualReviewDone,
+    buildLogExtra: buildSensorTrustLogExtra,
+  } = useSensorTrustCalibration({
+    config: agentStore.trustCalibrationConfig,
+    externalTargets: radarData?.externalTargets || [],
+    iffMode: currentIffMode,
+    taskKey: taskId,
+  });
+
+  useEffect(() => {
+    onTrustDecisionUpdate?.(sensorTrustDecision);
+  }, [onTrustDecisionUpdate, sensorTrustDecision]);
+
+  useEffect(() => {
+    onTrustActionsUpdate?.({
+      markEvidenceViewed: markSensorEvidenceViewed,
+      markManualReviewDone: markSensorManualReviewDone,
+    });
+    return () => onTrustActionsUpdate?.(null);
+  }, [markSensorEvidenceViewed, markSensorManualReviewDone, onTrustActionsUpdate]);
+
+  useEffect(() => {
+    if (initSettings) {
+      setMissionInitSettings(initSettings);
+    }
+  }, [initSettings]);
+
+  useEffect(() => {
+    const handleRadarInitSettings = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail) {
+        setMissionInitSettings(detail);
+      }
+    };
+    window.addEventListener('radar:init_settings', handleRadarInitSettings);
+    return () => window.removeEventListener('radar:init_settings', handleRadarInitSettings);
+  }, []);
   
   // 使用MobX Store
   const { radarStore } = useStore();
@@ -77,6 +132,7 @@ const Radar: React.FC<RadarProps> = (({
   
   const [missionSettingsReady, setMissionSettingsReady] = useState(false);
   const [missionAntennaReady, setMissionAntennaReady] = useState(false);
+  const [missionInitSettings, setMissionInitSettings] = useState<any>(null);
 
   // 定义扫描模式状态
   const [scanMode, setScanMode] = useState<ScanModeType>({
@@ -231,6 +287,7 @@ const Radar: React.FC<RadarProps> = (({
 
     // Clear the old init settings from the hook's state
     clearInitSettings();
+    setMissionInitSettings(null);
 
     // Reset the mission readiness flags
     setMissionSettingsReady(false);
@@ -241,13 +298,17 @@ const Radar: React.FC<RadarProps> = (({
     
     // Reset the flag for processing initial settings
     initSettingsProcessedRef.current = false;
+    submittedInitialSettingsKeyRef.current = null;
+    aiAntennaActionsRef.current.clear();
+    aiTargetSelectionsRef.current.clear();
+    pendingAiTargetSelectionsRef.current.clear();
 
     // Clear targets from the backend/data source
     clearAndResetView();
 
     // Re-initialize the system for the next mission
     console.log('Starting next mission...');
-    initializeSystem(radarStore.userId, agentStore.isAIActive, radarStore.isPractice);
+    initializeSystem(radarStore.userId, agentStore.isAIActive, radarStore.isPractice, radarStore.taskNumber);
     
   }, [width, height, onTargetSelect, radarStore, clearAndResetView, initializeSystem, clearInitSettings, resetAntennaAdjustment]);
 
@@ -373,30 +434,39 @@ const Radar: React.FC<RadarProps> = (({
   const submittedInitialSettingsKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!missionInitSettings || !isStarted) return;
+    initSettingsProcessedRef.current = false;
+    submittedInitialSettingsKeyRef.current = null;
+    aiAntennaActionsRef.current.clear();
+    aiTargetSelectionsRef.current.clear();
+    pendingAiTargetSelectionsRef.current.clear();
+  }, [missionInitSettings, isStarted]);
+
+  useEffect(() => {
     // If initSettings is null (e.g., after a reset), do nothing until new settings arrive.
-    if (!initSettings) {
+    if (!missionInitSettings) {
       return;
     }
-    
-    console.log('initSettings Check:', { 
-      isAIActive: agentStore.isAIActive, 
-      isStarted, 
-      initSettings, 
+
+    console.log('initSettings Check:', {
+      isAIActive: agentStore.isAIActive,
+      isStarted,
+      initSettings: missionInitSettings,
       processed: initSettingsProcessedRef.current
     });
     if (
       agentStore.isAIActive &&
       !initSettingsProcessedRef.current &&
       isStarted &&
-      initSettings &&
-      typeof initSettings.range === 'number' &&
-      typeof initSettings.scanAngle === 'number'
+      missionInitSettings &&
+      typeof missionInitSettings.range === 'number' &&
+      typeof missionInitSettings.scanAngle === 'number'
     ) {
-      console.log('[Radar] Processing initSettings for auto-configuration:', initSettings);
+      console.log('[Radar] Processing initSettings for auto-configuration:', missionInitSettings);
       initSettingsProcessedRef.current = true;  // 标记为已处理
 
-      const targetRange = initSettings.range;
-      const targetScanAngle = initSettings.scanAngle;
+      const targetRange = missionInitSettings.range;
+      const targetScanAngle = missionInitSettings.scanAngle;
       let needsSettingsSubmission = false;
       let paramsChangedForUI = false;
 
@@ -433,7 +503,12 @@ const Radar: React.FC<RadarProps> = (({
 
       if (needsSettingsSubmission) {
         console.log('[Radar] Submitting initSettings to backend.');
-        const settingsKey = `${taskId || 'pending'}:${targetRange}:${targetScanAngle}`;
+        const settingsKey = [
+          missionInitSettings.__message_seq ?? missionInitSettings.__received_at ?? taskId ?? 'pending',
+          missionInitSettings.__repetition_current ?? 'round',
+          targetRange,
+          targetScanAngle
+        ].join(':');
         if (submittedInitialSettingsKeyRef.current !== settingsKey) {
           submittedInitialSettingsKeyRef.current = settingsKey;
           submitSettings({
@@ -448,7 +523,7 @@ const Radar: React.FC<RadarProps> = (({
 
       setMissionSettingsReady(true);
     }
-  }, [isStarted, initSettings, submitSettings, rangeIndex, scanMode, agentStore.isAIActive]);
+  }, [isStarted, missionInitSettings, submitSettings, rangeIndex, scanMode, agentStore.isAIActive, taskId]);
 
 
   const prevAntennaRequiredRef = useRef(false);
@@ -585,11 +660,13 @@ const Radar: React.FC<RadarProps> = (({
               const lockX = targetDisplayPosition.x;
               
               // 调用目标选择回调，传入锁定线位置
+              const trustExtra = recordAIRecommendation(finalTargetToSelect);
               onTargetSelect({ 
                 targetId: finalTargetToSelect.id, 
                 lockX: lockX,
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
                 event_owner: 'AI', // AI操作
+                extra: trustExtra ?? buildSensorTrustLogExtra(),
               });
 
               console.log(`[AI Engine] Target locked at X: ${lockX}`);
@@ -600,11 +677,13 @@ const Radar: React.FC<RadarProps> = (({
             if (onTargetSelect) {
               // 使用屏幕中心的X坐标作为默认锁定线位置
               const centerX = (framePositions.startX + framePositions.endX) / 2;
+              const trustExtra = recordAIRecommendation(finalTargetToSelect);
               onTargetSelect({ 
                 targetId: finalTargetToSelect.id,
                 lockX: centerX, // 添加默认的lockX值
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
                 event_owner: 'AI', // AI操作
+                extra: trustExtra ?? buildSensorTrustLogExtra(),
               });
               
               console.log(`[AI Engine] Target locked at center X: ${centerX} (fallback)`);
@@ -631,33 +710,42 @@ const Radar: React.FC<RadarProps> = (({
 
   // useEffect for AI to automatically adjust antenna when required
   useEffect(() => {
+    const effectiveTargetAntennaElevation = targetAntennaElevation ?? radarStore.targetAntennaElevation;
+    const effectiveAntennaRequired = antennaAdjustmentRequired || radarStore.antennaAdjustmentRequired;
     console.log('[AI Radar Antenna Effect Check]', {
       isAIActive: agentStore.isAIActive,
       isStarted,
-      antennaAdjustmentRequired,
-      targetAntennaElevation,
+      antennaAdjustmentRequired: effectiveAntennaRequired,
+      targetAntennaElevation: effectiveTargetAntennaElevation,
     });
     if (
       agentStore.isAIActive &&
       isStarted &&
-      antennaAdjustmentRequired &&
-      targetAntennaElevation !== null
+      effectiveAntennaRequired &&
+      effectiveTargetAntennaElevation !== null
     ) {
-      const antennaKey = `${taskId || 'pending'}:${targetAntennaElevation}`;
+      const antennaKey = `${taskId || 'pending'}:${effectiveTargetAntennaElevation}`;
       if (aiAntennaActionsRef.current.has(antennaKey)) {
         return;
       }
       aiAntennaActionsRef.current.add(antennaKey);
 
-      console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${targetAntennaElevation}. AI is taking action.`);
+      console.log(`[AI Radar] Antenna adjustment required. Target elevation: ${effectiveTargetAntennaElevation}. AI is taking action.`);
       
-      // Pass 'ai' as source and the sendMessage callback
-      radarStore.setCurrentAntennaElevation(targetAntennaElevation, 'ai', sendMessage);
+      radarStore.setCurrentAntennaElevation(effectiveTargetAntennaElevation, 'ai');
+      sendMessage({
+        type: 'antenna_adjusted',
+        elevation: effectiveTargetAntennaElevation,
+        targetElevation: effectiveTargetAntennaElevation,
+        timestamp: Date.now(),
+        receive_timestamp: radarStore.adjustAntennaReceiveTimestamp || Date.now(),
+        event_owner: 'AI',
+      });
       
       if (confirmAntennaAdjustmentHandled) {
         confirmAntennaAdjustmentHandled();
       }
-      console.log(`[AI Radar] Antenna elevation automatically set to ${targetAntennaElevation} by AI and requirement cleared.`);
+      console.log(`[AI Radar] Antenna elevation automatically set to ${effectiveTargetAntennaElevation} by AI and confirmation sent.`);
     }
   }, [
     agentStore.isAIActive,
@@ -667,6 +755,9 @@ const Radar: React.FC<RadarProps> = (({
     sendMessage,
     confirmAntennaAdjustmentHandled,
     radarStore,
+    radarStore.antennaAdjustmentRequired,
+    radarStore.targetAntennaElevation,
+    radarStore.adjustAntennaReceiveTimestamp,
     taskId
   ]);
 
@@ -734,14 +825,32 @@ const Radar: React.FC<RadarProps> = (({
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
+    const isBlockedAiLock =
+      sensorTrustDecision.enabled &&
+      sensorTrustDecision.blockedOneClick &&
+      !sensorTrustDecision.manualReviewRequested &&
+      params.targetId === sensorTrustDecision.aiTargetId;
+
+    if (isBlockedAiLock) {
+      onAddMessage?.(
+        'warning',
+        `信任调控：${sensorTrustDecision.primaryMessage || '当前AI建议需要人工复核'}，请先查看证据或人工复核`
+      );
+      console.log(`[Radar] 目标锁定被信任调控拦截: ${params.targetId}`);
+      return;
+    }
+
     // 直接更新radarStore中的lockedTargetId和lockScreenX
     radarStore.setLockedTargetId(params.targetId);
     radarStore.setLockScreenX(params.lockX);
     console.log(`[Radar] 目标锁定状态更新: ${params.targetId}, 锁定线X坐标: ${params.lockX}`);
     
     if (onTargetSelect) {
-      // 用户手动操作
-      onTargetSelect({ ...params, event_owner: 'manual' });
+      const eventOwner = params.event_owner ?? 'manual';
+      if (eventOwner !== 'AI') {
+        recordManualSelection(params.targetId);
+      }
+      onTargetSelect({ ...params, event_owner: eventOwner, extra: buildSensorTrustLogExtra() });
     }
   };
 
@@ -1072,6 +1181,9 @@ const Radar: React.FC<RadarProps> = (({
             onAddMessage={onAddMessage}
             onClearMessages={onClearMessages}
             cognitiveLoad={cognitiveLoad}
+            sensorTrustDecision={sensorTrustDecision}
+            onIffModeChange={setCurrentIffMode}
+            onIffTargetConfirmed={recordRecommendationAcceptance}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}

@@ -60,6 +60,7 @@ class HTTPServer:
 
         # 问卷提交路由
         self.app.router.add_post('/api/questionnaire', self.questionnaire_submit_handler)
+        self.app.router.add_get('/api/trust-history', self.trust_history_handler)
 
         # 眼动追踪路由
         self.app.router.add_post('/tobii/hand', self.tobii_hand_handler)
@@ -371,6 +372,29 @@ class HTTPServer:
             return web.json_response({"ok": True, "msg": "问卷已保存"})
         except Exception as e:
             self.logger.error(f"保存问卷失败: {e}", exc_info=True)
+            return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
+    async def trust_history_handler(self, request: web.Request) -> web.Response:
+        """GET /api/trust-history — 聚合历史信任事件，供设置页展示样本状态。"""
+        user_id = request.query.get('user_id') or None
+        try:
+            limit = int(request.query.get('limit', '500'))
+        except ValueError:
+            limit = 500
+        try:
+            minimum_sample_size = int(request.query.get('minimum_sample_size', '30'))
+        except ValueError:
+            minimum_sample_size = 30
+
+        try:
+            history = db_manager.get_trust_calibration_history(
+                user_id=user_id,
+                limit=limit,
+                minimum_sample_size=minimum_sample_size,
+            )
+            return web.json_response({"ok": True, **history})
+        except Exception as e:
+            self.logger.error(f"读取信任历史失败: {e}", exc_info=True)
             return web.json_response({"ok": False, "msg": str(e)}, status=500)
 
     async def tobii_hand_handler(self, request: web.Request) -> web.Response:

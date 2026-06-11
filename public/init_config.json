@@ -3,5 +3,6 @@
   "includeAI": true,
   "taskType": "sa",
   "isPractice": true,
-  "useJoystick": true
+  "useJoystick": true,
+  "taskNumber": 3
 }

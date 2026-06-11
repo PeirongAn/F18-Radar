@@ -13,6 +13,7 @@ import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils
 import useRadarData from '../hooks/useRadarData';
 import agentStore from '../stores/AgentStore';
 import audioManager from '../managers/AudioManager';
+import { SensorTrustDecision } from '../types/trustCalibration';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -77,6 +78,9 @@ export interface RadarDisplayProps {
   onAddMessage?: (type: import('./CommunicationLog').MessageType, content: string) => void; // 添加日志记录功能
   onClearMessages?: () => void; // 添加清空日志功能
   cognitiveLoad?: 'low' | 'medium' | 'high'; // 认知负荷等级：低/中/高
+  sensorTrustDecision?: SensorTrustDecision;
+  onIffModeChange?: (enabled: boolean) => void;
+  onIffTargetConfirmed?: (targetId?: string) => void;
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -107,7 +111,10 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   onTaskCompleted,
   onAddMessage,
   onClearMessages,
-  cognitiveLoad = 'low'
+  cognitiveLoad = 'low',
+  sensorTrustDecision,
+  onIffModeChange,
+  onIffTargetConfirmed
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -148,6 +155,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 添加IFF模式状态
   const [iffMode, setIffMode] = React.useState(false);
+  React.useEffect(() => {
+    onIffModeChange?.(iffMode);
+  }, [iffMode, onIffModeChange]);
   
   // 添加HI/MED状态切换
   const [hiMedToggle, setHiMedToggle] = React.useState<'HI' | 'MED'>('HI');
@@ -544,15 +554,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions, joystickEnabled, calculatedTdcPosition]);
 
-  // 处理确认弹窗的确认操作
-  const handleConfirmYes = useCallback(() => {
-    if (!missionCanComplete) {
-      setShowMissionConfirm(false);
-      setIffMode(false);
-      console.log('[RadarDisplay] IFF误触确认，仅关闭提示框，继续当前任务');
-      return;
-    }
-
+  const finishMissionAndAdvance = useCallback(() => {
     if (onClearMessages) {
       onClearMessages();
     }
@@ -579,7 +581,19 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [missionCanComplete, onClearMessages, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, isAllTasksCompleted]);
+  }, [onClearMessages, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, isAllTasksCompleted]);
+
+  // 处理确认弹窗的确认操作
+  const handleConfirmYes = useCallback(() => {
+    if (!missionCanComplete) {
+      setShowMissionConfirm(false);
+      setIffMode(false);
+      console.log('[RadarDisplay] IFF误触确认，仅关闭提示框，继续当前任务');
+      return;
+    }
+
+    finishMissionAndAdvance();
+  }, [missionCanComplete, finishMissionAndAdvance]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
@@ -675,6 +689,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const handleIffButtonClick = () => {
     if (lockedTargetObject) {
       const targetInfo = calculateTargetInfo(lockedTargetObject);
+      onIffTargetConfirmed?.(lockedTargetObject.id);
       
       // 添加目标详细信息到日志
       if (onAddMessage) {
@@ -840,7 +855,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     }
     return undefined;
   }, [radarStore.lockedTargetId, processedExternalTargets]);
-  
+
   // 新增：创建一个符合LiveTarget props要求的对象
   const liveTargetForRender = useMemo(() => {
     if (!lockedTargetObject) {
@@ -921,6 +936,7 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               onTargetClick={handleTargetClickInIFF}
               cognitiveLoad={cognitiveLoad}
               range={range}
+              sensorTrustDecision={sensorTrustDecision}
             />
           )}
           

@@ -1,4 +1,5 @@
 import React from 'react';
+import { ThreatTrustDecision } from '../types/trustCalibration';
 
 interface ThreatData {
   id: string;
@@ -15,13 +16,14 @@ interface ThreatData {
 interface ThreatListProps {
   threats: ThreatData[];
   showDetailedInfo?: boolean;
+  trustDecision?: ThreatTrustDecision;
 }
 
 const MONO: React.CSSProperties = {
   fontFamily: "'Share Tech Mono', monospace",
 };
 
-const ThreatList: React.FC<ThreatListProps> = ({ threats, showDetailedInfo = false }) => {
+const ThreatList: React.FC<ThreatListProps> = ({ threats, showDetailedInfo = false, trustDecision }) => {
   // grid columns: index | type | label | [distance] | [score] | priority-dot
   const cols = showDetailedInfo
     ? '28px 1fr 1fr 62px 58px 52px'
@@ -56,6 +58,19 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, showDetailedInfo = fal
 
       {/* ── Panel title ── */}
       <div className="panel-label">威胁列表</div>
+      {trustDecision?.enabled && trustDecision.controlLevel !== 'none' && (
+        <div style={{
+          ...MONO,
+          fontSize: '12px',
+          color: trustDecision.controlLevel === 'review' ? '#ffb45c' : '#5ec8ff',
+          border: `1px solid ${trustDecision.controlLevel === 'review' ? '#9a5b1d' : '#155f8a'}`,
+          padding: '5px 7px',
+          background: 'rgba(0,20,8,0.65)',
+        }}>
+          {trustDecision.primaryMessage}
+          {trustDecision.scoreGap !== undefined ? ` / 分差 ${trustDecision.scoreGap.toFixed(2)}` : ''}
+        </div>
+      )}
 
       {(!threats || threats.length === 0) ? (
         <div style={{

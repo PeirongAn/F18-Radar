@@ -64,6 +64,18 @@ class MessageHandler:
                 self._gaze_svc.stop_task(task_id=str(resolved))
         except Exception as e:
             print(f"[MessageHandler] gaze stop_task 失败（已跳过）: {e}")
+
+    def _extract_repetition_override(self, message: Dict[str, Any]) -> Optional[int]:
+        """读取前端初始化弹窗或平台消息传入的任务次数。"""
+        for key in ('repetition_total_override', 'task_number', 'taskNumber', 'TaskNumber'):
+            value = message.get(key)
+            if value is None or value == '':
+                continue
+            try:
+                return max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+        return None
     
     async def handle_client_message(self, message_str: str, session_state: Dict[str, Any], 
                                   websocket=None) -> Union[List[Dict[str, Any]], Tuple[Dict[str, Any], bool], bool]:
@@ -145,6 +157,10 @@ class MessageHandler:
             is_ai_active_request=is_ai_active_request,
             progress_key=progress_key,
         )
+        repetition_override = self._extract_repetition_override(message)
+        if repetition_override is not None:
+            task_manager.max_repetitions = repetition_override
+            task_manager.apply_repetition_override(repetition_override, overwrite=True)
         session_state['task_manager'] = task_manager
         
         # 从管理器获取下一个任务场景
@@ -174,6 +190,9 @@ class MessageHandler:
             task_manager.apply_platform_overlay(overlay)
             current_scenario = task_manager.current_scenario
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
+        if repetition_override is not None:
+            task_manager.apply_repetition_override(repetition_override, overwrite=True)
+            current_scenario = task_manager.current_scenario
         
         self.current_session[f'{task_type}_scenario'] = current_scenario
         existing_task_id = db_manager.find_existing_task_setting_id(
@@ -229,6 +248,7 @@ class MessageHandler:
             "ai_level": current_scenario.get('ai_level_name'),
             "ai_configs": config_manager.get_ai_levels(),
             "audio_enabled": current_scenario['audio_enabled'],
+            "trust_calibration": config_manager.get_trust_calibration_config(),
             "repetition_info": current_scenario['repetition_info'],
             "task_type": task_type
         }
@@ -327,6 +347,7 @@ class MessageHandler:
                     'iff_mode': iff_mode,
                     'is_enemy': is_enemy,
                     'is_correct': (is_enemy and not iff_mode) or False,
+                    'extra': message.get('extra', {})
                 },
                 'user_id': message.get('user_id', ''),
                 'event_owner': client_event_owner
@@ -381,6 +402,22 @@ class MessageHandler:
         if task_manager:
             task_manager.mark_task_completed()
 
+        task_id = self.current_session.get('task_id')
+        if not session_state.get('is_practice', False) and task_id:
+            operation = {
+                'task_id': task_id,
+                'operationType': 'task_result_confirmed',
+                'timestamp': message.get('timestamp', int(time.time() * 1000)),
+                'isActive': True,
+                'parameters': {
+                    'task_type': task_type,
+                    'extra': message.get('extra', {})
+                },
+                'user_id': message.get('user_id', ''),
+                'event_owner': message.get('event_owner', 'manual')
+            }
+            db_manager.record_operation(operation, session_state.get('is_practice', False))
+
         self._gaze_stop(self.current_session.get('task_id'))
         return []
     
@@ -426,6 +463,10 @@ class MessageHandler:
             is_ai_active_request=is_ai_active_request,
             progress_key=progress_key,
         )
+        repetition_override = self._extract_repetition_override(message)
+        if repetition_override is not None:
+            task_manager.max_repetitions = repetition_override
+            task_manager.apply_repetition_override(repetition_override, overwrite=True)
         session_state['sa_task_manager'] = task_manager
         event_owner = message.get('event_owner') or ('AI' if is_ai_active_request else 'manual')
         
@@ -457,6 +498,9 @@ class MessageHandler:
             task_manager.apply_platform_overlay(overlay)
             current_scenario = task_manager.current_scenario
             event_owner = 'AI' if current_scenario['is_ai_active'] else 'manual'
+        if repetition_override is not None:
+            task_manager.apply_repetition_override(repetition_override, overwrite=True)
+            current_scenario = task_manager.current_scenario
 
         existing_task_id = db_manager.find_existing_task_setting_id(
             current_scenario,
@@ -527,7 +571,8 @@ class MessageHandler:
                 is_ai_active=current_scenario['is_ai_active'],
                 ai_level=current_scenario.get('ai_level_name'),
                 ai_configs=config_manager.get_ai_levels(),
-                audio_enabled=current_scenario['audio_enabled']
+                audio_enabled=current_scenario['audio_enabled'],
+                trust_calibration=config_manager.get_trust_calibration_config()
             )
             
             if websocket:
@@ -565,7 +610,8 @@ class MessageHandler:
                 'is_ai_active': current_scenario['is_ai_active'],
                 'ai_level': current_scenario.get('ai_level_name'),
                 'ai_configs': config_manager.get_ai_levels(),
-                'audio_enabled': current_scenario['audio_enabled']
+                'audio_enabled': current_scenario['audio_enabled'],
+                'trust_calibration': config_manager.get_trust_calibration_config()
             }
 
             if websocket:
