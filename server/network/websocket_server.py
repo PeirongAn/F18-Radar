@@ -38,6 +38,7 @@ class WebSocketServer:
         # 眼动追踪服务（延迟注入）
         self._gaze_svc = None
         self._physio_svc = None
+        self._external_collectors = None
     
     def set_joystick_handler(self, handler):
         """设置操纵杆事件处理器"""
@@ -50,6 +51,9 @@ class WebSocketServer:
 
     def set_physio_service(self, physio_svc) -> None:
         self._physio_svc = physio_svc
+
+    def set_external_collector_manager(self, external_collectors) -> None:
+        self._external_collectors = external_collectors
     
     def generate_client_id(self) -> str:
         """生成唯一的客户端ID"""
@@ -250,6 +254,7 @@ class WebSocketServer:
                             message_data,
                             gaze_svc=self._gaze_svc,
                             physio_svc=self._physio_svc,
+                            external_collectors=self._external_collectors,
                         ):
                             await self.send_message(websocket, reply)
                         continue
@@ -260,6 +265,7 @@ class WebSocketServer:
                             message_data,
                             gaze_svc=self._gaze_svc,
                             physio_svc=self._physio_svc,
+                            external_collectors=self._external_collectors,
                         ):
                             await self.send_message(websocket, reply)
                         continue

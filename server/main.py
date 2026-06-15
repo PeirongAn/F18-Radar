@@ -29,6 +29,7 @@ from network.http_server import http_server
 
 _initialized = False
 _joystick_handler = None
+_external_collectors = None
 _gaze_svc = None  # 全局 GazeService 实例，供 main() finally 块清理
 _physio_svc = None
 
@@ -166,7 +167,7 @@ async def _log_physio_start_status(physio_svc):
 
 async def initialize_system():
     """初始化系统组件（延迟调用，首次客户端连接时触发）"""
-    global _initialized, _joystick_handler, _gaze_svc, _physio_svc
+    global _initialized, _joystick_handler, _gaze_svc, _physio_svc, _external_collectors
     if _initialized:
         return _joystick_handler
     _initialized = True
@@ -240,6 +241,25 @@ async def initialize_system():
             except Exception:
                 pass
             _physio_svc = None
+
+    info("7. 初始化外部生理采集服务调用...", "main")
+    try:
+        from collectors import create_external_collector_manager_from_env
+        from core import message_handler as _mh
+
+        _external_collectors = create_external_collector_manager_from_env(logger=getattr(http_server, "logger", None))
+        if _external_collectors is None:
+            info("外部采集服务调用未启用", "main")
+        else:
+            _external_collectors.start()
+            _mh.set_external_collector_manager(_external_collectors)
+            http_server.set_external_collector_manager(_external_collectors)
+            websocket_server.set_external_collector_manager(_external_collectors)
+            provider_names = ", ".join(adapter.name for adapter in _external_collectors.adapters)
+            info(f"外部采集服务调用已启用: {provider_names}", "main")
+    except Exception as e:
+        error(f"外部采集服务调用初始化失败（已跳过）: {e}", "main", exc_info=True)
+        _external_collectors = None
 
     info("=== 系统初始化完成 ===", "main")
     
@@ -330,6 +350,14 @@ async def main():
                 info("手环/指环记录服务已关闭", "main")
             except Exception as e:
                 error(f"关闭手环/指环记录服务时出错: {e}", "main")
+
+        if _external_collectors is not None:
+            info("正在关闭外部采集服务调用...", "main")
+            try:
+                _external_collectors.stop()
+                info("外部采集服务调用已关闭", "main")
+            except Exception as e:
+                error(f"关闭外部采集服务调用时出错: {e}", "main")
 
         try:
             db_manager.shutdown()

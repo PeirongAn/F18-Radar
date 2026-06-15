@@ -39,6 +39,7 @@ class HTTPServer:
         self.joystick_handler = None
         self._gaze_svc = None
         self._physio_svc = None
+        self._external_collectors = None
         self._runner = None
         self._setup_routes()
         self.seen_users = set()
@@ -89,6 +90,10 @@ class HTTPServer:
     def set_physio_service(self, physio_svc) -> None:
         """Inject the optional physiological recording service."""
         self._physio_svc = physio_svc
+
+    def set_external_collector_manager(self, external_collectors) -> None:
+        """Inject optional external physiological collector integrations."""
+        self._external_collectors = external_collectors
     
     def _setup_routes(self):
         """设置路由"""
@@ -112,6 +117,8 @@ class HTTPServer:
         self.app.router.add_get('/physio/dashboard', self.physio_dashboard_handler)
         self.app.router.add_get('/api/physio/status', self.physio_status_handler)
         self.app.router.add_post('/api/physio/export', self.physio_export_handler)
+        self.app.router.add_get('/api/external-collectors/status', self.external_collectors_status_handler)
+        self.app.router.add_get('/api/external-collectors/files', self.external_collectors_files_handler)
 
         # 静态文件路由
         self._setup_static_routes()
@@ -309,6 +316,7 @@ class HTTPServer:
                             message_data,
                             gaze_svc=self._gaze_svc,
                             physio_svc=self._physio_svc,
+                            external_collectors=self._external_collectors,
                         ):
                             await ws.send_str(json.dumps(reply, ensure_ascii=False))
                         continue
@@ -319,6 +327,7 @@ class HTTPServer:
                             message_data,
                             gaze_svc=self._gaze_svc,
                             physio_svc=self._physio_svc,
+                            external_collectors=self._external_collectors,
                         ):
                             await ws.send_str(json.dumps(reply, ensure_ascii=False))
                         continue
@@ -504,6 +513,47 @@ class HTTPServer:
         except Exception as e:
             self.logger.error(f"Physio export failed: {e}", exc_info=True)
             return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
+    async def external_collectors_status_handler(self, request: web.Request) -> web.Response:
+        """GET /api/external-collectors/status."""
+        if self._external_collectors is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"External collectors delayed initialization failed: {e}", exc_info=True)
+
+        if self._external_collectors is None:
+            return web.json_response({"ok": True, "enabled": False, "providers": {}})
+        try:
+            return web.json_response(self._external_collectors.status_payload())
+        except Exception as e:
+            self.logger.error(f"External collectors status failed: {e}", exc_info=True)
+            return web.json_response({"ok": False, "enabled": True, "providers": {}, "error": str(e)}, status=500)
+
+    async def external_collectors_files_handler(self, request: web.Request) -> web.Response:
+        """GET /api/external-collectors/files?task_id=...&provider=..."""
+        if self._external_collectors is None:
+            try:
+                from main import initialize_system
+                await initialize_system()
+            except Exception as e:
+                self.logger.error(f"External collectors delayed initialization failed: {e}", exc_info=True)
+
+        if self._external_collectors is None:
+            return web.json_response({"ok": True, "enabled": False, "files": []})
+        try:
+            return web.json_response({
+                "ok": True,
+                "enabled": True,
+                "files": self._external_collectors.task_files(
+                    provider=request.query.get("provider"),
+                    task_id=request.query.get("task_id"),
+                ),
+            })
+        except Exception as e:
+            self.logger.error(f"External collectors file lookup failed: {e}", exc_info=True)
+            return web.json_response({"ok": False, "enabled": True, "files": [], "error": str(e)}, status=500)
 
     async def questionnaire_submit_handler(self, request: web.Request) -> web.Response:
         """POST /api/questionnaire — 保存问卷提交到数据库"""

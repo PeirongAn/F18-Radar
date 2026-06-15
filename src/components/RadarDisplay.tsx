@@ -346,12 +346,13 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
         console.log(`[天线高度] 副轴 ${subY > 0 ? '+1' : '-1'} → 天线高度 ${radarStore.currentAntennaElevation} → ${newElevation}`);
         radarStore.setCurrentAntennaElevation(newElevation, 'user', sendMessage);
       }
+      const targetElevation = radarStore.targetAntennaElevation;
       console.log('get values 000', newElevation)
-      changeAntennaAdjustmentRequired(newElevation !== targetAntennaElevation && newElevation !== null)
+      changeAntennaAdjustmentRequired(targetElevation !== null && newElevation !== targetElevation)
     }
     
     previousSubYRef.current = subY;
-  }, [subY, joystickEnabled, lockedAntennaElevation, sendMessage]);
+  }, [subY, joystickEnabled, lockedAntennaElevation, sendMessage, changeAntennaAdjustmentRequired, radarStore.targetAntennaElevation, radarStore.currentAntennaElevation]);
   
   // 监听目标解锁时清除TDC位置锁定（如果是通过其他方式解锁的目标）
   React.useEffect(() => {
@@ -763,6 +764,15 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       return;
     }
 
+    if (!lockedTargetObject) {
+      setShowMissionConfirm(false);
+      setMissionCanComplete(false);
+      setMissionResultMessage('');
+      setIffMode(false);
+      console.log('[RadarDisplay] IFF click ignored because no target is locked.');
+      return;
+    }
+
     if (lockedTargetObject) {
       const targetInfo = calculateTargetInfo(lockedTargetObject);
       
@@ -838,6 +848,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 自定义渲染函数，添加IFF按钮的点击事件
   const renderCustomText = (props: any) => {
+    const isIffEnabled = !!lockedTargetObject;
     const originalElements = renderText({
       ...props,
       displayMode, // 传递当前显示模式
@@ -851,8 +862,9 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       <Group key="iff-click-area" x={props.framePositions.startX + 290} y={props.framePositions.startY - 40}>
         <Line
           points={[-5, -5, 30, -5, 30, 20, -5, 20, -5, -5]}
-          fill={iffMode ? 'rgba(0, 255, 0, 0.2)' : 'rgba(255, 0, 0, 0.2)'}
+          fill={iffMode ? 'rgba(0, 255, 0, 0.2)' : isIffEnabled ? 'rgba(255, 0, 0, 0.2)' : 'rgba(128, 128, 128, 0.12)'}
           closed={true}
+          listening={isIffEnabled}
           onClick={handleIffButtonClick}
           onTap={handleIffButtonClick}
         />

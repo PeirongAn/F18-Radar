@@ -123,6 +123,26 @@ class FakePhysio:
         self.cleared += 1
 
 
+class FakeExternalCollectors:
+    def __init__(self):
+        self.started = []
+        self.markers = []
+        self.stopped = []
+        self.cleared = 0
+
+    def start_task(self, task_name, subject_id, task_id, metadata=None):
+        self.started.append((task_name, subject_id, task_id, metadata or {}))
+
+    def marker(self, name, payload=None):
+        self.markers.append({"name": name, "payload": payload or {}})
+
+    def stop_task(self, task_id=None):
+        self.stopped.append(task_id)
+
+    def clear_subject(self):
+        self.cleared += 1
+
+
 def make_config():
     return {
         "current_level": "L0",
@@ -404,10 +424,29 @@ def test_sub_start_and_sub_end_emit_gaze_and_physio_markers(monkeypatch):
     setup_bridge(monkeypatch)
     gaze = FakeGaze()
     physio = FakePhysio()
+    external = FakeExternalCollectors()
 
-    bridge._handle_external_task(overall_start("1"), "platform_control", gaze_svc=gaze, physio_svc=physio)
-    bridge._handle_external_task(sub_start(), "platform_control", gaze_svc=gaze, physio_svc=physio)
-    bridge._handle_external_task(sub_end(), "platform_control", gaze_svc=gaze, physio_svc=physio)
+    bridge._handle_external_task(
+        overall_start("1"),
+        "platform_control",
+        gaze_svc=gaze,
+        physio_svc=physio,
+        external_collectors=external,
+    )
+    bridge._handle_external_task(
+        sub_start(),
+        "platform_control",
+        gaze_svc=gaze,
+        physio_svc=physio,
+        external_collectors=external,
+    )
+    bridge._handle_external_task(
+        sub_end(),
+        "platform_control",
+        gaze_svc=gaze,
+        physio_svc=physio,
+        external_collectors=external,
+    )
 
     assert gaze.started[0]["task_id"] == "42"
     assert gaze.started[0]["task_source"] == "platform_control"
@@ -429,6 +468,14 @@ def test_sub_start_and_sub_end_emit_gaze_and_physio_markers(monkeypatch):
     assert physio.markers[-1]["payload"]["fire_success_count"] == 1
     assert physio.stopped == 1
     assert physio.cleared == 1
+
+    assert external.started[0][0] == "PLATFORM_CONTROL"
+    assert external.started[0][1] == "DefaultID"
+    assert external.started[0][2] == "42"
+    assert [marker["name"] for marker in external.markers] == ["overall_start", "sub_start", "sub_end"]
+    assert external.markers[-1]["payload"]["fire_success_count"] == 1
+    assert external.stopped == ["42"]
+    assert external.cleared == 1
 
 
 def test_external_gaze_and_physio_cover_overall_task_until_all_subtasks_complete(monkeypatch):

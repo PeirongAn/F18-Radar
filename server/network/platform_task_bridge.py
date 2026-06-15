@@ -746,6 +746,7 @@ def _start_external_marker_context(
     timestamp_ms: Optional[int] = None,
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
 ) -> None:
     payload = _external_marker_payload(active, category, "overall_start", None, message_data, timestamp_ms)
     user_id = str(active.get("user_id") or "")
@@ -776,6 +777,13 @@ def _start_external_marker_context(
             physio_svc.marker("overall_start", payload)
         except Exception as e:
             logger.warning("physio external start_task failed: %s", e, exc_info=True)
+    if external_collectors is not None:
+        try:
+            external_run_id = str(active.get("gaze_task_id") or active.get("task_id"))
+            external_collectors.start_task(task_type, user_id, external_run_id, payload)
+            external_collectors.marker("overall_start", payload)
+        except Exception as e:
+            logger.warning("external collector overall_start failed: %s", e, exc_info=True)
 
 
 def _record_external_gaze_marker(
@@ -823,6 +831,7 @@ def _emit_external_marker(
     message_data: Dict[str, Any],
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
     timestamp_ms: Optional[int] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -834,6 +843,11 @@ def _emit_external_marker(
             physio_svc.marker(event_type, payload)
         except Exception as e:
             logger.warning("physio external marker failed: event=%s error=%s", event_type, e, exc_info=True)
+    if external_collectors is not None:
+        try:
+            external_collectors.marker(event_type, payload)
+        except Exception as e:
+            logger.warning("external collector marker failed: event=%s error=%s", event_type, e, exc_info=True)
 
 
 def _stop_external_gaze_task(
@@ -861,6 +875,7 @@ def _stop_external_marker_context(
     message_data: Dict[str, Any],
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
     sub_task_seq: Optional[int] = None,
     timestamp_ms: Optional[int] = None,
     extra: Optional[Dict[str, Any]] = None,
@@ -873,6 +888,7 @@ def _stop_external_marker_context(
         message_data,
         gaze_svc,
         physio_svc,
+        external_collectors,
         timestamp_ms=timestamp_ms,
         extra=extra,
     )
@@ -883,6 +899,12 @@ def _stop_external_marker_context(
             physio_svc.clear_subject()
         except Exception as e:
             logger.warning("physio external stop_task failed: %s", e, exc_info=True)
+    if external_collectors is not None:
+        try:
+            external_collectors.stop_task(str(active.get("gaze_task_id") or active.get("task_id") or ""))
+            external_collectors.clear_subject()
+        except Exception as e:
+            logger.warning("external collector stop_task failed: %s", e, exc_info=True)
 
 
 def _close_external_active_task(
@@ -894,6 +916,7 @@ def _close_external_active_task(
     raw_message_json: str,
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
 ) -> None:
     category, user_id = active_key
     tid = active.get("task_id")
@@ -922,6 +945,7 @@ def _close_external_active_task(
         message_data,
         gaze_svc=gaze_svc,
         physio_svc=physio_svc,
+        external_collectors=external_collectors,
         sub_task_seq=seq,
         timestamp_ms=timestamp_ms,
     )
@@ -1307,6 +1331,7 @@ def _handle_external_task(
     category: str,
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
 ) -> List[Dict[str, Any]]:
     user_id = str(message_data.get("ID") or "").strip()
     if not user_id:
@@ -1373,6 +1398,7 @@ def _handle_external_task(
                     raw_message_json=raw,
                     gaze_svc=gaze_svc,
                     physio_svc=physio_svc,
+                    external_collectors=external_collectors,
                 )
 
             expected = _expected_subtasks_from_normalized(normalized)
@@ -1446,6 +1472,7 @@ def _handle_external_task(
                 timestamp_ms=ts,
                 gaze_svc=gaze_svc,
                 physio_svc=physio_svc,
+                external_collectors=external_collectors,
             )
             return [{"type": "platform_task_ack", "status": "ok",
                      "task_id": tid, "task_type": task_type,
@@ -1488,6 +1515,7 @@ def _handle_external_task(
             message_data,
             gaze_svc=gaze_svc,
             physio_svc=physio_svc,
+            external_collectors=external_collectors,
             timestamp_ms=ts,
         )
         logger.info(
@@ -1574,6 +1602,7 @@ def _handle_external_task(
                 message_data,
                 gaze_svc=gaze_svc,
                 physio_svc=physio_svc,
+                external_collectors=external_collectors,
                 sub_task_seq=seq,
                 timestamp_ms=ts,
                 extra=metrics if result else None,
@@ -1588,6 +1617,7 @@ def _handle_external_task(
                 message_data,
                 gaze_svc=gaze_svc,
                 physio_svc=physio_svc,
+                external_collectors=external_collectors,
                 timestamp_ms=ts,
                 extra=metrics if result else None,
             )
@@ -1627,6 +1657,7 @@ def _handle_external_task(
             message_data,
             gaze_svc=gaze_svc,
             physio_svc=physio_svc,
+            external_collectors=external_collectors,
             timestamp_ms=ts,
         )
         _active_external_tasks.pop(key, None)
@@ -1651,6 +1682,7 @@ def handle_platform_task_result_ws(
     message_data: Dict[str, Any],
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
 ) -> List[Dict[str, Any]]:
     logger.info("RAW platform_task_result: %s", json.dumps(message_data, ensure_ascii=False))
     user_id = str(message_data.get("ID") or "").strip()
@@ -1705,6 +1737,7 @@ def handle_platform_task_result_ws(
         message_data,
         gaze_svc=gaze_svc,
         physio_svc=physio_svc,
+        external_collectors=external_collectors,
         sub_task_seq=seq,
         timestamp_ms=ts,
     )
@@ -1723,13 +1756,20 @@ async def handle_platform_task_ws(
     message_data: Dict[str, Any],
     gaze_svc: Any = None,
     physio_svc: Any = None,
+    external_collectors: Any = None,
 ) -> List[Dict[str, Any]]:
     logger.info("RAW platform message: %s",
                 json.dumps(message_data, ensure_ascii=False))
 
     category = _classify_task_category(message_data)
     if category in ("platform_control", "weapon_launch"):
-        return _handle_external_task(message_data, category, gaze_svc=gaze_svc, physio_svc=physio_svc)
+        return _handle_external_task(
+            message_data,
+            category,
+            gaze_svc=gaze_svc,
+            physio_svc=physio_svc,
+            external_collectors=external_collectors,
+        )
 
     if not _is_web_overlay_category(category):
         return [{"type": "platform_task_ack", "status": "error",

@@ -232,7 +232,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
             onAddMessageProp('info', `当前参数设置: 范围 ${settings.range} 海里, 扫描角度 ${settings.scanAngle}°`);
           }
         } else {
-          // onAddMessageProp('error', `参数验证失败: ${message}`);
+          onAddMessageProp('error', `参数验证失败: ${message}`);
         }
         validationOp._displayed = true;
       }
@@ -300,7 +300,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
           ── 雷达参数 ──
         </div>
 
-        {(antennaAdjustmentRequired || antennaPromptAttentionActive || true) && (
+        {(antennaAdjustmentRequired || antennaPromptAttentionActive) && (
           <div
             ref={antennaPromptRef}
             className={antennaPromptAttentionActive ? 'animate-pulse' : ''}

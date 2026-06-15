@@ -30,6 +30,23 @@ class FakePhysioService:
         self.calls.append(("clear_subject",))
 
 
+class FakeExternalCollectors:
+    def __init__(self):
+        self.calls = []
+
+    def start_task(self, task_name, subject_id, task_id, metadata=None):
+        self.calls.append(("start_task", task_name, subject_id, task_id, metadata or {}))
+
+    def marker(self, name, payload=None):
+        self.calls.append(("marker", name, payload or {}))
+
+    def stop_task(self, task_id=None):
+        self.calls.append(("stop_task", task_id))
+
+    def clear_subject(self):
+        self.calls.append(("clear_subject",))
+
+
 class FakeLslInfo:
     def __init__(self, name, stream_type, channel_count=1, nominal_srate=1.0):
         self._name = name
@@ -90,7 +107,9 @@ class FakeLslModule:
 def test_physio_start_task_records_formal_task():
     handler = MessageHandler()
     physio = FakePhysioService()
+    external = FakeExternalCollectors()
     handler.set_physio_service(physio)
+    handler.set_external_collector_manager(external)
 
     handler._physio_start_task(
         "RADAR_TARGETING",
@@ -113,12 +132,20 @@ def test_physio_start_task_records_formal_task():
     assert physio.calls[1][3] == "42"
     assert physio.calls[2][0] == "marker"
     assert physio.calls[2][1] == "task_start"
+    assert external.calls[0][0] == "start_task"
+    assert external.calls[0][1] == "RADAR_TARGETING"
+    assert external.calls[0][2] == "S001"
+    assert external.calls[0][3] == "42"
+    assert external.calls[1][0] == "marker"
+    assert external.calls[1][1] == "task_start"
 
 
 def test_physio_skips_practice_task():
     handler = MessageHandler()
     physio = FakePhysioService()
+    external = FakeExternalCollectors()
     handler.set_physio_service(physio)
+    handler.set_external_collector_manager(external)
 
     handler._physio_start_task(
         "SA_THREAT_RESPONSE",
@@ -130,12 +157,15 @@ def test_physio_skips_practice_task():
     )
 
     assert physio.calls == []
+    assert external.calls == []
 
 
 def test_physio_stop_task_writes_marker_then_clears_context():
     handler = MessageHandler()
     physio = FakePhysioService()
+    external = FakeExternalCollectors()
     handler.set_physio_service(physio)
+    handler.set_external_collector_manager(external)
 
     handler._physio_stop_task(
         "SA_THREAT_RESPONSE",
@@ -150,6 +180,9 @@ def test_physio_stop_task_writes_marker_then_clears_context():
     assert [call[0] for call in physio.calls] == ["marker", "stop_task", "clear_subject"]
     assert physio.calls[0][1] == "task_result_confirmed"
     assert physio.calls[0][2]["f18_task_id"] == 99
+    assert [call[0] for call in external.calls] == ["marker", "stop_task", "clear_subject"]
+    assert external.calls[0][1] == "task_result_confirmed"
+    assert external.calls[1][1] == "99"
 
 
 def _sample_row(subject_id, run_id, trial_id=None, stream="ppg", value=1.25):

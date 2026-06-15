@@ -161,6 +161,9 @@ export class RadarStore {
     if (this.currentAntennaElevation !== newElevation) {
       const previousElevation = this.currentAntennaElevation;
       this.currentAntennaElevation = newElevation;
+      if (this.targetAntennaElevation !== null) {
+        this.antennaAdjustmentRequired = newElevation !== this.targetAntennaElevation;
+      }
       console.log(`[RadarStore] Antenna elevation changed from ${previousElevation}° to ${newElevation}° by ${source}.`);
 
       // 如果提供了回调且源不是服务器（避免循环），则发送消息
@@ -181,6 +184,7 @@ export class RadarStore {
   
   setTargetAntennaElevation(elevation: number | null, receiveTimestamp?: number) {
     this.targetAntennaElevation = elevation;
+    this.antennaAdjustmentRequired = elevation !== null && this.currentAntennaElevation !== elevation;
     if (receiveTimestamp !== undefined) {
       this.adjustAntennaReceiveTimestamp = receiveTimestamp;
     }

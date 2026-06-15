@@ -34,6 +34,7 @@ class MessageHandler:
         # 眼动追踪服务（由 main.py 的 initialize_system 注入，可为 None）
         self._gaze_svc = None
         self._physio_svc = None
+        self._external_collectors = None
         self.logger = get_logger("message_handler")
 
     def set_gaze_service(self, gaze_svc) -> None:
@@ -43,6 +44,10 @@ class MessageHandler:
     def set_physio_service(self, physio_svc) -> None:
         """注入手环/指环生理记录服务（可为 None）。"""
         self._physio_svc = physio_svc
+
+    def set_external_collector_manager(self, external_collectors) -> None:
+        """Inject optional external physiological collector integrations."""
+        self._external_collectors = external_collectors
 
     def _gaze_start(self, task_id, user_id: str = "", task_name: str = "", task_source: str = "") -> None:
         """任务开始时启动 gaze 追踪（无 Tobii 设备时静默跳过）。"""
@@ -77,6 +82,9 @@ class MessageHandler:
     def _physio_should_record(self, session_state: Dict[str, Any]) -> bool:
         return self._physio_svc is not None and not session_state.get('is_practice', False)
 
+    def _external_collectors_should_record(self, session_state: Dict[str, Any]) -> bool:
+        return self._external_collectors is not None and not session_state.get('is_practice', False)
+
     def _physio_task_metadata(
         self,
         task_type: str,
@@ -108,13 +116,17 @@ class MessageHandler:
         current_scenario: Optional[Dict[str, Any]],
         session_state: Dict[str, Any],
     ) -> None:
-        if not self._physio_should_record(session_state):
+        if not self._physio_should_record(session_state) and not self._external_collectors_should_record(session_state):
             return
         try:
             metadata = self._physio_task_metadata(task_type, user_id, task_id, event_owner, current_scenario)
-            self._physio_svc.set_subject(user_id, {"source": "F18-Radar", "last_task_type": task_type})
-            self._physio_svc.start_task(task_type, metadata, run_id=str(task_id))
-            self._physio_svc.marker("task_start", metadata)
+            if self._physio_should_record(session_state):
+                self._physio_svc.set_subject(user_id, {"source": "F18-Radar", "last_task_type": task_type})
+                self._physio_svc.start_task(task_type, metadata, run_id=str(task_id))
+                self._physio_svc.marker("task_start", metadata)
+            if self._external_collectors_should_record(session_state):
+                self._external_collectors.start_task(task_type, user_id, str(task_id), metadata)
+                self._external_collectors.marker("task_start", metadata)
         except Exception as e:
             self.logger.warning("physio start_task failed: %s", e, exc_info=True)
 
@@ -125,7 +137,7 @@ class MessageHandler:
         session_state: Dict[str, Any],
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if not self._physio_should_record(session_state):
+        if not self._physio_should_record(session_state) and not self._external_collectors_should_record(session_state):
             return
         try:
             payload = {
@@ -140,7 +152,10 @@ class MessageHandler:
             }
             if extra:
                 payload.update(extra)
-            self._physio_svc.marker(name, payload)
+            if self._physio_should_record(session_state):
+                self._physio_svc.marker(name, payload)
+            if self._external_collectors_should_record(session_state):
+                self._external_collectors.marker(name, payload)
         except Exception as e:
             self.logger.warning("physio marker failed: name=%s error=%s", name, e, exc_info=True)
 
@@ -154,10 +169,10 @@ class MessageHandler:
         message: Dict[str, Any],
         session_state: Dict[str, Any],
     ) -> None:
-        if not self._physio_should_record(session_state):
+        if not self._physio_should_record(session_state) and not self._external_collectors_should_record(session_state):
             return
         try:
-            self._physio_svc.marker("task_result_confirmed", {
+            payload = {
                 "source": "F18-Radar",
                 "f18_task_id": task_id,
                 "task_type": task_type,
@@ -165,9 +180,15 @@ class MessageHandler:
                 "event_owner": event_owner,
                 "repetition_info": repetition_info,
                 "message": message,
-            })
-            self._physio_svc.stop_task()
-            self._physio_svc.clear_subject()
+            }
+            if self._physio_should_record(session_state):
+                self._physio_svc.marker("task_result_confirmed", payload)
+                self._physio_svc.stop_task()
+                self._physio_svc.clear_subject()
+            if self._external_collectors_should_record(session_state):
+                self._external_collectors.marker("task_result_confirmed", payload)
+                self._external_collectors.stop_task(str(task_id))
+                self._external_collectors.clear_subject()
         except Exception as e:
             self.logger.warning("physio stop_task failed: %s", e, exc_info=True)
 

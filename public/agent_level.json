@@ -32,7 +32,7 @@
     }
   ],
   "game_settings": {
-    "current_difficulty": "high",
+    "current_difficulty": "low",
     "audio_enabled": true,
     "max_repetitions": 1,
     "practice_repetitions": 1,

@@ -466,10 +466,13 @@ const Radar: React.FC<RadarProps> = (({
 
   useEffect(() => {
     // This effect detects when the manual or AI adjustment is complete.
-    if (antennaAdjustmentRequired && radarStore.targetAntennaElevation !== null) {
-      if (radarStore.currentAntennaElevation === radarStore.targetAntennaElevation) {
+    if (radarStore.targetAntennaElevation !== null) {
+      const isAntennaAligned = radarStore.currentAntennaElevation === radarStore.targetAntennaElevation;
+      if (antennaAdjustmentRequired && isAntennaAligned) {
         console.log('Antenna adjustment complete.');
         setMissionAntennaReady(true);
+      } else if (!isAntennaAligned) {
+        setMissionAntennaReady(false);
       }
     }
     // Handle the case where no adjustment is required.
@@ -1071,7 +1074,7 @@ const Radar: React.FC<RadarProps> = (({
             onTDCPositionSet={handleTDCPositionSet}
             showVectorHUD={showVectorHUD}
             range={RADAR_RANGES[rangeIndex]}
-            showUnknownTargets={showUnknownTargets}
+            showUnknownTargets={showUnknownTargets && missionAntennaReady}
             unknownTargetCount={unknownTargetCount}
             maxScanCount={maxScanCount} // 传递BR计数上限
             displayMode={displayMode} // 传递显示模式

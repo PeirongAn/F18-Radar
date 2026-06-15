@@ -35,6 +35,7 @@ interface AllRepetitionInfos {
 interface QuestionItem {
   id: number;
   text: string;
+  options?: string[];
 }
 
 interface QuestionnaireConfig {
@@ -82,16 +83,44 @@ interface QuestionnaireModalProps {
    Helpers
 ───────────────────────────────────────────────────────────── */
 const DEFAULT_CONFIG: QuestionnaireConfig = {
-  title: '智能助手信任度问卷',
-  scales: ['非常不同意', '不同意', '一般', '同意', '非常同意'],
+  title: '座舱认知状态问卷',
+  scales: ['1', '2', '3', '4', '5'],
   questions: [
-    { id: 1, text: '我对智能助手有信心。' },
-    { id: 2, text: '智能助手让我感到安心。' },
-    { id: 3, text: '智能助手诚实可信。' },
-    { id: 4, text: '智能助手值得依赖。' },
-    { id: 5, text: '智能助手运行稳定可靠。' },
-    { id: 6, text: '我愿意信任智能助手。' },
-    { id: 7, text: '我熟悉智能助手。' },
+    {
+      id: 1,
+      text: 'T1：我对该智能辅助系统有信心。',
+      options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
+    },
+    {
+      id: 2,
+      text: 'T2：我认为该智能辅助系统是可靠的。',
+      options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
+    },
+    {
+      id: 3,
+      text: 'T3：我愿意信任该辅助智能系统的判断或建议。',
+      options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
+    },
+    {
+      id: 4,
+      text: 'MF：请评估您当前的精神疲劳/困倦程度。',
+      options: ['非常清醒，状态良好', '清醒，但反应略慢', '既不清醒也不困倦', '有些困倦，精力下降', '非常困倦，难以保持清醒'],
+    },
+    {
+      id: 5,
+      text: 'PF：请评估你当前的身体疲劳程度。',
+      options: ['完全不疲劳', '轻微疲劳', '比较疲劳', '很疲劳', '非常疲劳'],
+    },
+    {
+      id: 6,
+      text: 'ML：请评估你刚才完成任务所投入的脑力努力程度。',
+      options: ['完全不费脑力', '轻微费脑力', '比较费脑力', '很费脑力', '非常费脑力'],
+    },
+    {
+      id: 7,
+      text: 'S：请评价你在本轮任务中感受到的压力或紧张程度。',
+      options: ['完全没有压力，非常放松', '轻度压力，基本放松', '中等压力，需要持续注意和应对', '压力较大，明显感到紧张或负担', '非常有压力，难以放松'],
+    },
   ],
 };
 
@@ -311,7 +340,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     const autonomyLabel = translateAutonomyLevel(info?.autonomy_level, config.autonomyLabels);
 
     const modalTitle =
-      config.taskTitles?.[currentTaskType] ?? config.title ?? '智能助手信任度问卷';
+      config.taskTitles?.[currentTaskType] ?? config.title ?? '座舱认知状态问卷';
 
     if (!isVisible) return null;
 
@@ -429,7 +458,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
             {/* Instruction */}
             <div style={{ fontSize: '13px', color: '#333', marginBottom: '20px' }}>
-              请根据您的真实体验，在每个题目后选择一个最符合您看法的评价。
+              请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。
             </div>
 
             {/* Validation error */}
@@ -507,21 +536,25 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                       <td style={{ padding: '11px 6px', color: '#222', lineHeight: 1.5 }}>
                         {q.id}. {q.text}
                       </td>
-                      {scales.map((_, scaleIdx) => {
+                      {scales.map((scale, scaleIdx) => {
                         const value = scaleIdx + 1;
                         const checked = answers[q.id] === value;
+                        const optionLabel = q.options?.[scaleIdx] ?? scale;
                         return (
                           <td
                             key={scaleIdx}
-                            style={{ textAlign: 'center', padding: '11px 4px' }}
+                            style={{ textAlign: 'center', padding: '11px 4px', verticalAlign: 'top' }}
                           >
                             <label
                               style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
+                                gap: '5px',
                                 width: '100%',
                                 cursor: 'pointer',
+                                fontSize: '12px',
+                                lineHeight: 1.35,
                               }}
                             >
                               <input
@@ -534,8 +567,10 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                                   height: '16px',
                                   cursor: 'pointer',
                                   accentColor: '#2563c0',
+                                  flexShrink: 0,
                                 }}
                               />
+                              <span>{optionLabel}</span>
                             </label>
                           </td>
                         );
