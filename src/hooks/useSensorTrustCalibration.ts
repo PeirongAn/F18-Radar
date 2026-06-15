@@ -51,13 +51,14 @@ export function useSensorTrustCalibration({
   const [manualReviewRequested, setManualReviewRequested] = useState(false);
   const [manualReviewDone, setManualReviewDone] = useState(false);
   const [tick, setTick] = useState(Date.now());
+  const stableNowRef = useRef(Date.now());
   const previousTrustStateRef = useRef<TrustState>("normal");
   const acceptedRecommendationRef = useRef<string | null>(null);
   const latestTrustEventsRef = useRef<TrustInteractionEvent[]>([]);
 
   useEffect(() => {
-    // 仅重置「当轮推荐」相关的瞬时状态；保留 trustEventHistory 与 previousTrustState，
-    // 让信任状态能跨任务按近期人工行为滑动累积（窗口已由 window_size 限长）。
+    // 仅重置「当轮推荐」相关的瞬时状态；保留 trustEventHistory，
+    // 让历史触发因子能跨任务按近期人工行为滑动累积（窗口已由 window_size 限长）。
     setRecommendation(null);
     setEvidenceViewed(false);
     setManualReviewRequested(false);
@@ -72,10 +73,14 @@ export function useSensorTrustCalibration({
     latestTrustEventsRef.current = [];
   }, [participantKey]);
 
+  const shouldRefreshTimeRisk = mergedConfig.enabled && mergedConfig.state.sensor === "normal";
+  const decisionNow = shouldRefreshTimeRisk ? tick : stableNowRef.current;
+
   useEffect(() => {
+    if (!shouldRefreshTimeRisk) return;
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [shouldRefreshTimeRisk]);
 
   const rememberTrustEvents = useCallback((events: TrustInteractionEvent | TrustInteractionEvent[]) => {
     const nextEvents = Array.isArray(events) ? events : [events];
@@ -252,7 +257,7 @@ export function useSensorTrustCalibration({
       manualReviewRequested,
       manualReviewDone,
       previousTrustState: previousTrustStateRef.current,
-      now: tick,
+      now: decisionNow,
     });
   }, [
     mergedConfig,
@@ -262,7 +267,7 @@ export function useSensorTrustCalibration({
     evidenceViewed,
     manualReviewRequested,
     manualReviewDone,
-    tick,
+    decisionNow,
   ]);
 
   useEffect(() => {
@@ -270,30 +275,6 @@ export function useSensorTrustCalibration({
       previousTrustStateRef.current = sensorTrustDecision.trustState;
     }
   }, [sensorTrustDecision]);
-
-  // 【临时诊断】每次事件历史变化时打印行为指标，定位信任状态为何不变；定位完成后可删除。
-  useEffect(() => {
-    const m = buildTrustBehaviorMetricsFromEvents(trustEventHistory, mergedConfig.sensor.window_size);
-    const lastDecision = trustEventHistory
-      .filter(e => e.eventType === "human_accept" || e.eventType === "human_reject")
-      .slice(-1)[0];
-    console.log("[TrustDebug:sensor]", {
-      trustState: sensorTrustDecision.trustState,
-      sampleCount: m.sampleCount,
-      consecutiveReject: m.consecutiveRejectCount,
-      truthKnown: m.truthKnownCount,
-      truthCoverage: Number(m.truthCoverage.toFixed(2)),
-      unwarrantedReject: m.unwarrantedRejectCount,
-      unwarrantedAccept: m.unwarrantedAcceptCount,
-      lastEventType: lastDecision?.eventType,
-      lastAiCorrect: lastDecision?.aiRecommendationCorrect,
-      thresholds: {
-        unwarrantedReject: mergedConfig.sensor.unwarranted_reject_threshold,
-        unwarrantedAccept: mergedConfig.sensor.unwarranted_accept_threshold,
-        minTruthCoverage: mergedConfig.sensor.min_truth_coverage,
-      },
-    });
-  }, [trustEventHistory, mergedConfig.sensor, sensorTrustDecision.trustState]);
 
   const buildLogExtra = useCallback(() => ({
     trust_calibration: buildTrustCalibrationLogPayload(sensorTrustDecision),

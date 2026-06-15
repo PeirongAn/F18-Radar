@@ -68,6 +68,7 @@ export function useThreatTrustCalibration({
   const [evidenceViewed, setEvidenceViewed] = useState(false);
   const [manualReviewDone, setManualReviewDone] = useState(false);
   const [tick, setTick] = useState(Date.now());
+  const stableNowRef = useRef(Date.now());
   const previousRankByIdRef = useRef<Record<string, number>>({});
   const previousTopThreatIdRef = useRef<string | null>(null);
   const presentedAtRef = useRef<number>(Date.now());
@@ -76,8 +77,8 @@ export function useThreatTrustCalibration({
   const latestTrustEventsRef = useRef<TrustInteractionEvent[]>([]);
 
   useEffect(() => {
-    // 仅重置「当轮排序」相关的瞬时状态；保留 trustEventHistory 与 previousTrustState，
-    // 让信任状态能跨任务按近期人工行为滑动累积（窗口已由 window_size 限长）。
+    // 仅重置「当轮排序」相关的瞬时状态；保留 trustEventHistory，
+    // 让历史触发因子能跨任务按近期人工行为滑动累积（窗口已由 window_size 限长）。
     setEvidenceViewed(false);
     setManualReviewDone(false);
     setRankingChange({ previousTopThreatId: null });
@@ -93,10 +94,14 @@ export function useThreatTrustCalibration({
     latestTrustEventsRef.current = [];
   }, [participantKey]);
 
+  const shouldRefreshTimeRisk = mergedConfig.enabled && mergedConfig.state.threat === "normal";
+  const decisionNow = shouldRefreshTimeRisk ? tick : stableNowRef.current;
+
   useEffect(() => {
+    if (!shouldRefreshTimeRisk) return;
     const timer = window.setInterval(() => setTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [shouldRefreshTimeRisk]);
 
   const candidates = useMemo(() => {
     return [...threats]
@@ -127,7 +132,7 @@ export function useThreatTrustCalibration({
       evidenceViewed,
       manualReviewDone,
       previousTrustState: previousTrustStateRef.current,
-      now: tick,
+      now: decisionNow,
     });
   }, [
     mergedConfig,
@@ -137,7 +142,7 @@ export function useThreatTrustCalibration({
     trustEventHistory,
     evidenceViewed,
     manualReviewDone,
-    tick,
+    decisionNow,
   ]);
 
   useEffect(() => {

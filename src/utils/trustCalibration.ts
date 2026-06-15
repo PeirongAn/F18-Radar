@@ -11,10 +11,15 @@ import {
   TrustConfigSnapshot,
   TrustControlTrigger,
   TrustState,
+  ConfiguredTrustState,
 } from "../types/trustCalibration";
 
 export const DEFAULT_TRUST_CALIBRATION_CONFIG: TrustCalibrationConfig = {
   enabled: true,
+  state: {
+    sensor: "normal",
+    threat: "normal",
+  },
   sensor: {
     high_confidence: 0.85,
     low_confidence_min: 0.6,
@@ -60,6 +65,10 @@ export function mergeTrustCalibrationConfig(
   return {
     ...DEFAULT_TRUST_CALIBRATION_CONFIG,
     ...(config ?? {}),
+    state: {
+      ...DEFAULT_TRUST_CALIBRATION_CONFIG.state,
+      ...(config?.state ?? {}),
+    },
     sensor: {
       ...DEFAULT_TRUST_CALIBRATION_CONFIG.sensor,
       ...(config?.sensor ?? {}),
@@ -73,6 +82,17 @@ export function mergeTrustCalibrationConfig(
       ...(config?.display ?? {}),
     },
   };
+}
+
+function isConfiguredTrustState(value: TrustState | undefined): value is ConfiguredTrustState {
+  return value === "normal" || value === "under_trust" || value === "over_trust";
+}
+
+function readConfiguredTrustState(
+  value: TrustState | undefined,
+  fallback: ConfiguredTrustState = "normal"
+): ConfiguredTrustState {
+  return isConfiguredTrustState(value) ? value : fallback;
 }
 
 export function createTrustInteractionEvent(
@@ -485,11 +505,10 @@ export function evaluateSensorTrustDecision(input: {
     config: sensorConfig,
   });
   const triggers = Array.from(new Set([...taskRisk.triggers, ...behaviorState.triggers]));
-  const underTrust = behaviorState.underTrust || (behaviorState.trustState === "normal" && taskRisk.explainRisk);
-  const overTrust = behaviorState.overTrust;
-  // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
-  const allowHardControl = !behaviorState.provisional;
-  const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && sensorConfig.require_evidence_before_confirm;
+  const configuredTrustState = readConfiguredTrustState(config.state.sensor);
+  const underTrust = configuredTrustState === "under_trust";
+  const overTrust = configuredTrustState === "over_trust";
+  const reviewNeeded = overTrust && taskRisk.reviewRisk && sensorConfig.require_evidence_before_confirm;
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick =
     reviewNeeded &&
@@ -499,9 +518,7 @@ export function evaluateSensorTrustDecision(input: {
   return {
     task: "sensor",
     enabled: true,
-    trustState: behaviorState.trustState === "normal" && taskRisk.explainRisk
-      ? "under_trust"
-      : behaviorState.trustState,
+    trustState: configuredTrustState,
     controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
     triggers,
     evidenceViewed: input.evidenceViewed,
@@ -511,15 +528,11 @@ export function evaluateSensorTrustDecision(input: {
     primaryMessage: reviewNeeded
       ? reviewComplete
         ? "复核已完成，可继续确认"
-        : "近期多次无证据接受了实际错误的推荐，需要人工复核"
+        : "当前建议证据不足，需要人工复核"
       : overTrust
-        ? "近期存在对错误推荐的过度接受倾向，请查看依据再确认"
+        ? "当前建议需要先查看依据再确认"
         : underTrust
-          ? behaviorState.triggers.includes("unwarranted_reject")
-            ? "近期多次拒绝了实际正确的推荐，建议展开依据再判断"
-            : "AI建议依据已展开"
-          : taskRisk.reviewRisk
-            ? "当前建议存在任务风险，请查看候选依据"
+          ? "AI建议依据已展开"
           : "",
     aiTargetId: recommendation.targetId,
     confidence,
@@ -580,20 +593,17 @@ export function evaluateThreatTrustDecision(input: {
     config: threatConfig,
   });
   const triggers = Array.from(new Set([...taskRisk.triggers, ...behaviorState.triggers]));
-  const underTrust = behaviorState.underTrust || (behaviorState.trustState === "normal" && taskRisk.explainRisk);
-  const overTrust = behaviorState.overTrust;
-  // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
-  const allowHardControl = !behaviorState.provisional;
-  const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && threatConfig.require_evidence_before_submit;
+  const configuredTrustState = readConfiguredTrustState(config.state.threat);
+  const underTrust = configuredTrustState === "under_trust";
+  const overTrust = configuredTrustState === "over_trust";
+  const reviewNeeded = overTrust && taskRisk.reviewRisk && threatConfig.require_evidence_before_submit;
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick = reviewNeeded && !reviewComplete;
 
   return {
     task: "threat",
     enabled: true,
-    trustState: behaviorState.trustState === "normal" && taskRisk.explainRisk
-      ? "under_trust"
-      : behaviorState.trustState,
+    trustState: configuredTrustState,
     controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
     triggers,
     evidenceViewed: input.evidenceViewed,
@@ -603,15 +613,11 @@ export function evaluateThreatTrustDecision(input: {
     primaryMessage: reviewNeeded
       ? reviewComplete
         ? "复核已完成，可继续查看结果"
-        : "近期多次无证据接受了实际错误的排序，需要人工确认"
+        : "当前排序证据不足，需要人工确认"
       : overTrust
-        ? "近期存在对错误排序的过度接受倾向，请查看证据再确认"
+        ? "当前排序需要先查看证据再确认"
         : underTrust
-          ? behaviorState.triggers.includes("unwarranted_reject")
-            ? "近期多次拒绝了实际正确的排序，建议展开依据再判断"
-            : "排序变化依据已展开"
-          : taskRisk.reviewRisk
-            ? "当前排序存在任务风险，请查看证据"
+          ? "排序变化依据已展开"
           : "",
     topThreatId: top?.id,
     secondThreatId: second?.id,

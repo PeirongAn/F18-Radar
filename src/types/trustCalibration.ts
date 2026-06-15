@@ -2,6 +2,8 @@ import { UnknownTargetData } from "../components/UnknownTarget";
 
 export type TrustState = "disabled" | "normal" | "under_trust" | "over_trust";
 
+export type ConfiguredTrustState = Exclude<TrustState, "disabled">;
+
 export type TrustControlLevel = "none" | "explain" | "review";
 
 export type TrustEventActor = "ai" | "human";
@@ -76,8 +78,14 @@ export interface TrustDisplayConfig {
   block_one_click_on_low_confidence: boolean;
 }
 
+export interface TrustStateConfig {
+  sensor: ConfiguredTrustState;
+  threat: ConfiguredTrustState;
+}
+
 export interface TrustCalibrationConfig {
   enabled: boolean;
+  state: TrustStateConfig;
   sensor: SensorTrustCalibrationConfig;
   threat: ThreatTrustCalibrationConfig;
   display: TrustDisplayConfig;

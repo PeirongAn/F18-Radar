@@ -120,7 +120,10 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
         const targetColor = getTargetColor(target);
         const candidateIndex = sensorTrustDecision?.candidates.findIndex(candidate => candidate.id === target.id) ?? -1;
         const isAiRecommendation = sensorTrustDecision?.aiTargetId === target.id;
-        const shouldAnnotate = sensorTrustDecision?.enabled && (isAiRecommendation || candidateIndex >= 0);
+        const shouldAnnotate =
+          sensorTrustDecision?.enabled &&
+          sensorTrustDecision.controlLevel !== 'none' &&
+          (isAiRecommendation || candidateIndex >= 0);
 	        const stroke = sensorTrustDecision?.controlLevel === 'review'
 	          ? '#ff9a2e'
 	          : isAiRecommendation

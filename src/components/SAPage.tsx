@@ -1315,8 +1315,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const isSelected = missile.id === selectedThreatId;
       const isHighestPriority = missile.id === highestPriorityThreat?.id;
       const shouldAttentionBlink = isHighestPriority && highestThreatAttentionVisible;
-      const isTrustTop = threatTrustDecision.enabled && missile.id === threatTrustDecision.topThreatId;
-      const isTrustSecond = threatTrustDecision.enabled && missile.id === threatTrustDecision.secondThreatId;
+      const shouldShowTrustOverlay = threatTrustDecision.enabled && threatTrustDecision.controlLevel !== 'none';
+      const isTrustTop = shouldShowTrustOverlay && missile.id === threatTrustDecision.topThreatId;
+      const isTrustSecond = shouldShowTrustOverlay && missile.id === threatTrustDecision.secondThreatId;
       const trustStroke = threatTrustDecision.controlLevel === 'review' ? '#ff9a2e' : '#1ca8ff';
 
       return (
@@ -2013,8 +2014,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   const isSelected = threat.id === selectedThreatId;
                   const isHighestPriority = threat.id === highestPriorityThreat?.id;
                   const shouldAttentionBlink = isHighestPriority && highestThreatAttentionVisible;
-                  const isTrustTop = threatTrustDecision.enabled && threat.id === threatTrustDecision.topThreatId;
-                  const isTrustSecond = threatTrustDecision.enabled && threat.id === threatTrustDecision.secondThreatId;
+                  const shouldShowTrustOverlay = threatTrustDecision.enabled && threatTrustDecision.controlLevel !== 'none';
+                  const isTrustTop = shouldShowTrustOverlay && threat.id === threatTrustDecision.topThreatId;
+                  const isTrustSecond = shouldShowTrustOverlay && threat.id === threatTrustDecision.secondThreatId;
                   const trustStroke = threatTrustDecision.controlLevel === 'review' ? '#ff9a2e' : '#1ca8ff';
                   
                   // 获取位置数据

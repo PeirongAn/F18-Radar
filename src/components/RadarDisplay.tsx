@@ -121,6 +121,10 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 获取重复信息和摇杆数据
   const { repetitionInfos, mainPos, subY, button1, button2, button7, joystickEnabled, targetAntennaElevation, antennaAdjustmentRequired, changeAntennaAdjustmentRequired } = useRadarData();
+  const visibleSensorTrustDecision =
+    sensorTrustDecision?.enabled && sensorTrustDecision.controlLevel !== 'none'
+      ? sensorTrustDecision
+      : undefined;
  
   
   // 计算当前难度和AI状态
@@ -936,7 +940,7 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               onTargetClick={handleTargetClickInIFF}
               cognitiveLoad={cognitiveLoad}
               range={range}
-              sensorTrustDecision={sensorTrustDecision}
+              sensorTrustDecision={visibleSensorTrustDecision}
             />
           )}
           

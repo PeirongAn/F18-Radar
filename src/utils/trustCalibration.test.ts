@@ -3,11 +3,15 @@ import {
   DEFAULT_TRUST_CALIBRATION_CONFIG,
   buildTrustBehaviorMetricsFromEvents,
   createTrustInteractionEvent,
+  evaluateSensorTrustDecision,
   evaluateTrustState,
   evaluateThreatTrustDecision,
+  mergeTrustCalibrationConfig,
 } from "./trustCalibration";
 import {
+  SensorAIRecommendation,
   ThreatCandidateEvidence,
+  TrustCalibrationConfig,
   TrustInteractionEvent,
   TrustInteractionEventType,
 } from "../types/trustCalibration";
@@ -36,7 +40,11 @@ function humanDecision(
   });
 }
 
-function evalThreat(metricsEvents: TrustInteractionEvent[], scoreGapSmall: boolean) {
+function evalThreat(
+  metricsEvents: TrustInteractionEvent[],
+  scoreGapSmall: boolean,
+  config: TrustCalibrationConfig = DEFAULT_TRUST_CALIBRATION_CONFIG
+) {
   // scoreGapSmall=true 时构造接近的候选分数，触发 taskRisk.reviewRisk
   const candidates: ThreatCandidateEvidence[] = scoreGapSmall
     ? [
@@ -48,10 +56,32 @@ function evalThreat(metricsEvents: TrustInteractionEvent[], scoreGapSmall: boole
         { id: "b", label: "B", score: 0.3, reason: "" },
       ];
   return evaluateThreatTrustDecision({
-    config: DEFAULT_TRUST_CALIBRATION_CONFIG,
+    config,
     candidates,
     generationTimestamp: undefined,
     behaviorMetrics: buildTrustBehaviorMetricsFromEvents(metricsEvents, WINDOW),
+    evidenceViewed: false,
+    manualReviewDone: false,
+    previousTrustState: "normal",
+    now: Date.now(),
+  });
+}
+
+function evalSensor(config: TrustCalibrationConfig) {
+  const recommendation: SensorAIRecommendation = {
+    targetId: "target-a",
+    confidence: 0.62,
+    recommendedAt: Date.now(),
+    candidates: [
+      { id: "target-a", label: "A", confidence: 0.62, reason: "test" },
+      { id: "target-b", label: "B", confidence: 0.6, reason: "test" },
+    ],
+  };
+  return evaluateSensorTrustDecision({
+    config,
+    recommendation,
+    iffMode: true,
+    behaviorMetrics: buildTrustBehaviorMetricsFromEvents([], config.sensor.window_size),
     evidenceViewed: false,
     manualReviewDone: false,
     previousTrustState: "normal",
@@ -175,25 +205,71 @@ describe("evaluateTrustState — 真值优先", () => {
 });
 
 describe("evaluateThreatTrustDecision — 强干预闸门", () => {
-  it("真值确认的过信任 + 任务风险 → review + 拦一键", () => {
+  it("后台配置为过信任 + 任务风险 → review + 拦一键", () => {
     const events = [
       humanDecision("human_accept", { aiCorrect: false, evidenceViewed: false }),
       humanDecision("human_accept", { aiCorrect: false, evidenceViewed: false }),
     ];
-    const d = evalThreat(events, /* scoreGapSmall */ true);
+    const config = mergeTrustCalibrationConfig({
+      state: { sensor: "normal", threat: "over_trust" },
+    });
+    const d = evalThreat(events, /* scoreGapSmall */ true, config);
     expect(d.trustState).toBe("over_trust");
     expect(d.controlLevel).toBe("review");
     expect(d.blockedOneClick).toBe(true);
   });
 
-  it("暂定（真值不足）的过信任 + 任务风险 → 只 explain，不拦一键", () => {
+  it("后台配置为正常时，历史行为不覆盖最终信任状态", () => {
     const events = [
       humanDecision("human_accept", { evidenceViewed: false }),
       humanDecision("human_accept", { evidenceViewed: false }),
       humanDecision("human_accept", { evidenceViewed: false }),
     ];
     const d = evalThreat(events, /* scoreGapSmall */ true);
-    expect(d.controlLevel).toBe("explain");
+    expect(d.trustState).toBe("normal");
+    expect(d.controlLevel).toBe("none");
     expect(d.blockedOneClick).toBe(false);
+  });
+
+  it("后台配置为正常时，即使任务风险命中也不触发面板信息", () => {
+    const d = evalThreat([], /* scoreGapSmall */ true);
+    expect(d.trustState).toBe("normal");
+    expect(d.controlLevel).toBe("none");
+    expect(d.primaryMessage).toBe("");
+  });
+});
+
+describe("configured trust state — 后台配置作为状态来源", () => {
+  it("state.sensor = under_trust 时传感器决策为欠信任", () => {
+    const config = mergeTrustCalibrationConfig({
+      state: { sensor: "under_trust", threat: "normal" },
+    });
+    const d = evalSensor(config);
+    expect(d.trustState).toBe("under_trust");
+    expect(d.controlLevel).toBe("explain");
+  });
+
+  it("state.sensor = over_trust 时低置信场景触发 review + block", () => {
+    const config = mergeTrustCalibrationConfig({
+      state: { sensor: "over_trust", threat: "normal" },
+    });
+    const d = evalSensor(config);
+    expect(d.trustState).toBe("over_trust");
+    expect(d.controlLevel).toBe("review");
+    expect(d.blockedOneClick).toBe(true);
+  });
+
+  it("state.sensor = normal 时，即使低置信场景也不触发面板信息", () => {
+    const d = evalSensor(DEFAULT_TRUST_CALIBRATION_CONFIG);
+    expect(d.trustState).toBe("normal");
+    expect(d.controlLevel).toBe("none");
+    expect(d.primaryMessage).toBe("");
+    expect(d.blockedOneClick).toBe(false);
+  });
+
+  it("缺失 trust_calibration.state 的旧配置回退为 normal", () => {
+    const config = mergeTrustCalibrationConfig({});
+    expect(config.state.sensor).toBe("normal");
+    expect(config.state.threat).toBe("normal");
   });
 });

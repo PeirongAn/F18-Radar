@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import agentStore from '../stores/AgentStore';
-import { TrustCalibrationConfig } from '../types/trustCalibration';
+import { ConfiguredTrustState, TrustCalibrationConfig } from '../types/trustCalibration';
 import {
   DEFAULT_TRUST_CALIBRATION_CONFIG,
   mergeTrustCalibrationConfig,
@@ -181,6 +181,17 @@ const eventTypeLabel = (eventType?: string) => {
     case 'manual_review_requested': return '请求人工复核';
     case 'manual_review_done': return '人工复核完成';
     default: return eventType || '未知事件';
+  }
+};
+
+const configuredStateMeta = (state: ConfiguredTrustState) => {
+  switch (state) {
+    case 'under_trust':
+      return { label: '欠信任', state: 'under' as DecisionState };
+    case 'over_trust':
+      return { label: '过信任', state: 'over' as DecisionState };
+    default:
+      return { label: '信任适当', state: 'normal' as DecisionState };
   }
 };
 
@@ -560,6 +571,44 @@ const getDecisionTone = (state: DecisionState) => {
   return { label: '正常', color: '#00ff88', bg: 'rgba(0, 42, 18, 0.72)', border: '#1aa85a' };
 };
 
+const TrustStateSelect: React.FC<{
+  label: string;
+  value: ConfiguredTrustState;
+  onChange: (value: ConfiguredTrustState) => void;
+}> = ({ label, value, onChange }) => {
+  const meta = configuredStateMeta(value);
+  const tone = getDecisionTone(meta.state);
+  return (
+    <div style={{
+      ...panelStyle,
+      padding: '14px 16px',
+      borderColor: tone.border,
+      background: `linear-gradient(135deg, ${tone.bg}, rgba(1,14,6,0.9) 62%)`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'center' }}>
+        <div>
+          <div style={{ color: '#d4ffe0', fontSize: '14px', letterSpacing: '0.08em', marginBottom: '4px' }}>{label}</div>
+          <div style={fieldLabelStyle}>后台配置值，任务调控按该值执行</div>
+        </div>
+        <select
+          value={value}
+          onChange={event => onChange(event.target.value as ConfiguredTrustState)}
+          style={{
+            ...inputStyle,
+            width: '128px',
+            color: tone.color,
+            borderColor: tone.border,
+          }}
+        >
+          <option value="normal">信任适当</option>
+          <option value="under_trust">欠信任</option>
+          <option value="over_trust">过信任</option>
+        </select>
+      </div>
+    </div>
+  );
+};
+
 const DecisionBadge: React.FC<{
   state: DecisionState;
   reason: string;
@@ -842,7 +891,7 @@ const DataCollectionNotice: React.FC<{
   }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', marginBottom: '8px' }}>
       <div style={{ color: sampleSufficient ? '#9effb5' : '#ffdf73', fontSize: '16px', fontWeight: 700, letterSpacing: '0.08em' }}>
-        {loading ? '正在读取历史行为数据' : sampleSufficient ? '历史行为数据：可用于规则验证' : '历史行为数据：样本量不足'}
+      {loading ? '正在读取历史行为数据' : sampleSufficient ? '历史行为数据：可用于规则验证' : '历史行为数据：样本量不足'}
       </div>
       <button type="button" style={{ ...secondaryButtonStyle, height: '28px', padding: '0 10px', fontSize: '11px' }} onClick={onRefresh}>
         刷新
@@ -851,7 +900,7 @@ const DataCollectionNotice: React.FC<{
     <div style={{ color: '#e9ffef', fontSize: '12px', lineHeight: 1.65 }}>
       {error
         ? `读取失败：${error}`
-        : `已采集人工决策样本 ${sampleCount} / ${minimumSampleSize}。当前筛选：${history?.filters?.user_id || '全部用户'}。AI 自动动作会进入历史日志，但不会计入人工接受/拒绝样本。`}
+        : `已采集人工决策样本 ${sampleCount} / ${minimumSampleSize}。当前筛选：${history?.filters?.user_id || '全部用户'}。AI 自动动作会进入历史日志，但不会计入人工接受/拒绝样本；历史数据只用于校准规则阈值。`}
     </div>
     {summary && (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px' }}>
@@ -884,25 +933,46 @@ const DataCollectionNotice: React.FC<{
   );
 };
 
-const RealStatusCard: React.FC<{ history: TrustHistoryResponse | null; loading: boolean }> = ({ history, loading }) => {
-  const sampleCount = history?.summary?.human_decision_count ?? 0;
-  const minimumSampleSize = history?.minimum_sample_size ?? 30;
-  const sampleSufficient = Boolean(history?.sample_sufficient);
+const BackendStateCard: React.FC<{
+  sensorState: ConfiguredTrustState;
+  threatState: ConfiguredTrustState;
+}> = ({ sensorState, threatState }) => {
+  const sensorMeta = configuredStateMeta(sensorState);
+  const threatMeta = configuredStateMeta(threatState);
+  const sensorTone = getDecisionTone(sensorMeta.state);
+  const threatTone = getDecisionTone(threatMeta.state);
   return (
   <div style={{
-    border: `1px solid ${sampleSufficient ? 'rgba(0, 255, 136, 0.55)' : 'rgba(255, 223, 115, 0.55)'}`,
-    background: sampleSufficient ? 'rgba(0, 44, 18, 0.42)' : 'rgba(45, 36, 0, 0.42)',
+    border: '1px solid rgba(0, 255, 136, 0.35)',
+    background: 'rgba(0, 35, 16, 0.30)',
     borderRadius: '4px',
     padding: '14px 16px',
   }}>
-    <div style={{ color: '#8dbb91', fontSize: '11px', letterSpacing: '0.12em', marginBottom: '6px' }}>真实用户状态</div>
-    <div style={{ color: sampleSufficient ? '#00ff88' : '#ffdf73', fontSize: '24px', fontWeight: 800, letterSpacing: '0.12em', marginBottom: '6px' }}>
-      {loading ? '读取中' : sampleSufficient ? '可验证' : '未评估'}
+    <div style={{ color: '#8dbb91', fontSize: '11px', letterSpacing: '0.12em', marginBottom: '8px' }}>后台状态配置</div>
+    <div style={{ display: 'grid', gap: '8px' }}>
+      {[
+        ['传感器', sensorMeta.label, sensorTone],
+        ['威胁排序', threatMeta.label, threatTone],
+      ].map(([label, value, tone]) => {
+        const itemTone = tone as ReturnType<typeof getDecisionTone>;
+        return (
+          <div key={label as string} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+            <span style={{ color: '#d8ffe3', fontSize: '12px' }}>{label as string}</span>
+            <span style={{
+              color: itemTone.color,
+              border: `1px solid ${itemTone.border}`,
+              background: itemTone.bg,
+              padding: '4px 8px',
+              borderRadius: '3px',
+              fontSize: '12px',
+              fontWeight: 700,
+            }}>{value as string}</span>
+          </div>
+        );
+      })}
     </div>
     <div style={{ color: '#d8ffe3', fontSize: '12px', lineHeight: 1.55 }}>
-      {sampleSufficient
-        ? `已达到 ${sampleCount} 个人工决策样本，可结合规则阈值复核状态。`
-        : `样本 ${sampleCount} / ${minimumSampleSize}，暂不显示过信任/欠信任结论。`}
+      前端按该配置执行解释、复核和拦截；历史数据只作为规则校准参考。
     </div>
   </div>
   );
@@ -981,7 +1051,7 @@ const ExperimentStatusPanel: React.FC<{
     <DataCollectionNotice history={history} loading={loading} error={error} onRefresh={onRefresh} />
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '14px' }}>
       {[
-        ['实验样本', `${sampleCount} / ${minimumSampleSize}`, history?.sample_sufficient ? '已达到验证样本量' : '达到样本量后才显示真实评估'],
+        ['实验样本', `${sampleCount} / ${minimumSampleSize}`, history?.sample_sufficient ? '已达到规则验证样本量' : '达到样本量后可辅助校准规则'],
         ['行为因子', summary ? `${summary.human_accept_count}/${summary.max_consecutive_reject_count}` : '待采集', '人工接受 / 最大连续拒绝'],
         ['证据查看', summary ? `${summary.evidence_viewed_count}` : '待采集', '用于区分直接接受与有证据接受'],
       ].map(([label, value, hint]) => (
@@ -1486,6 +1556,9 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
   }, [loadTrustHistory]);
 
   const setEnabled = (enabled: boolean) => setDraft(prev => ({ ...prev, enabled }));
+  const updateConfiguredState = (task: keyof TrustCalibrationConfig['state'], value: ConfiguredTrustState) => {
+    setDraft(prev => ({ ...prev, state: { ...prev.state, [task]: value } }));
+  };
   const updateSensor = <K extends keyof TrustCalibrationConfig['sensor']>(key: K, value: TrustCalibrationConfig['sensor'][K]) => {
     setDraft(prev => ({ ...prev, sensor: { ...prev.sensor, [key]: value } }));
   };
@@ -1736,6 +1809,10 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
         checked={draft.enabled}
         onChange={setEnabled}
       />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '14px' }}>
+        <TrustStateSelect label="传感器后台状态" value={draft.state.sensor} onChange={value => updateConfiguredState('sensor', value)} />
+        <TrustStateSelect label="威胁排序后台状态" value={draft.state.threat} onChange={value => updateConfiguredState('threat', value)} />
+      </div>
       <DataCollectionNotice
         history={history}
         loading={historyLoading}
@@ -1745,15 +1822,15 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
       <div style={{ ...panelStyle, padding: '18px', borderColor: '#176a8a', background: 'rgba(0, 24, 20, 0.76)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 240px', gap: '18px', alignItems: 'center' }}>
           <div>
-            <div style={{ color: '#5ec8ff', fontSize: '13px', letterSpacing: '0.14em', marginBottom: '8px' }}>一个分数判断状态</div>
+            <div style={{ color: '#5ec8ff', fontSize: '13px', letterSpacing: '0.14em', marginBottom: '8px' }}>规则预览分数</div>
             <div style={{ color: '#dfffea', fontSize: '22px', letterSpacing: '0.08em', marginBottom: '10px' }}>
               S = 欠信任风险 - 过信任风险
             </div>
             <div style={{ color: '#cdebd4', fontSize: '12px', lineHeight: 1.7 }}>
-              S 往左是过信任复核区，往右是欠信任解释区。真实 S 需要实验日志；当前只做规则预览。
+              S 往左是过信任复核区，往右是欠信任解释区；这里只演示规则阈值，不展示当前用户状态。
             </div>
           </div>
-          <RealStatusCard history={history} loading={historyLoading} />
+          <BackendStateCard sensorState={draft.state.sensor} threatState={draft.state.threat} />
         </div>
         <div style={{ marginTop: '18px' }}>
           <ScoreAxis score={0} />
@@ -1781,8 +1858,8 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
   const renderSensor = () => (
     <div style={{ display: 'grid', gap: '14px' }}>
       <RuleConfigNotice
-        title="这里配置的是规则边界，不是用户状态"
-        body="调高低置信上限会更容易进入过信任复核；调低高置信阈值会更容易进入欠信任解释。行为类阈值只在实验日志采集后参与真实评估。"
+        title="这里配置的是规则边界"
+        body="调高低置信上限会更容易进入复核；调低高置信阈值会更容易进入解释。后台状态在总览中配置，行为类阈值只作为实验日志校准依据。"
       />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '14px' }}>
         <RangeField label="高置信阈值" hint="达到该值且超时未确认时，判定欠信任" value={draft.sensor.high_confidence} min={0.5} max={1} step={0.01} highlight={sensorHighConfidenceHit ? 'under' : undefined} statusText={sensorHighConfidenceHit ? `模拟置信度 ${simSensorConfidence.toFixed(2)} ≥ ${draft.sensor.high_confidence}，且等待 ${simSensorAgeMs}ms ≥ ${draft.sensor.unconfirmed_timeout_ms}ms` : `当前模拟未触发：需置信度 ≥ ${draft.sensor.high_confidence} 且未确认时间 ≥ ${draft.sensor.unconfirmed_timeout_ms}ms`} onChange={value => updateSensor('high_confidence', value)} />
@@ -1804,7 +1881,7 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
     <div style={{ display: 'grid', gap: '14px' }}>
       <RuleConfigNotice
         title="排序规则同样只做预览"
-        body="分差和延迟主要推高过信任风险；排序长时间未确认、连续拒绝主要推高欠信任风险。真实状态仍依赖实验数据采集。"
+        body="分差和延迟主要推高复核风险；排序长时间未确认、连续拒绝主要推高解释需求。后台状态在总览中配置，历史数据只用于校准阈值。"
       />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '14px' }}>
         <RangeField label="排序分差阈值" hint="第一/第二威胁分差小于该值时标记排序不稳定" value={draft.threat.score_gap_threshold} min={0.01} max={0.5} step={0.01} highlight={threatGapHit ? 'over' : undefined} statusText={threatGapHit ? `模拟分差 ${simThreatGap.toFixed(2)} < ${draft.threat.score_gap_threshold}` : `当前模拟未触发：排序分差需 < ${draft.threat.score_gap_threshold}`} onChange={value => updateThreat('score_gap_threshold', value)} />
@@ -1867,7 +1944,7 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
         <div className="panel-label">SETTINGS</div>
         <h2 style={{ margin: '0 0 6px', color: '#00ff88', fontSize: '20px', letterSpacing: '0.12em' }}>信任调控设置</h2>
         <p style={{ margin: '0 0 18px', color: '#5f9a68', fontSize: '12px', lineHeight: 1.6 }}>
-          先配置规则预览。真实过信任/欠信任状态，需要用户实验日志达到样本量后再显示。
+          后台配置每个任务的调控状态；规则预览和历史样本只用于校准阈值。
         </p>
         <div style={{ display: 'grid', gap: '10px' }}>
           <NavButton active={section === 'overview'} label="总览" description="一个指数，一眼判断" onClick={() => setSection('overview')} />
@@ -1883,7 +1960,7 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
           <div>
             <div style={{ color: '#5ec8ff', fontSize: '12px', letterSpacing: '0.2em', marginBottom: '5px' }}>TRUST CALIBRATION</div>
             <h1 style={{ margin: 0, color: '#dfffea', fontSize: '24px', letterSpacing: '0.08em' }}>
-              信任校准设置：规则预览，而不是用户结论
+              信任校准设置：后台状态与规则预览
             </h1>
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
@@ -1937,7 +2014,7 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
             borderRadius: '4px',
             marginBottom: '10px',
           }}>
-            <div style={{ color: '#ffdf73', fontSize: '13px', fontWeight: 700, marginBottom: '5px' }}>仅模拟，不代表真实用户状态</div>
+            <div style={{ color: '#ffdf73', fontSize: '13px', fontWeight: 700, marginBottom: '5px' }}>仅模拟，不代表后台状态</div>
             <div style={{ color: '#d8ffe3', fontSize: '11px', lineHeight: 1.5 }}>用于观察规则阈值改动会把模拟样例推向哪个区间。</div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
@@ -1948,9 +2025,9 @@ const TrustCalibrationSettings: React.FC<TrustCalibrationSettingsProps> = observ
               </div>
             </div>
             <div style={{ border: '1px solid rgba(0,255,136,0.28)', background: 'rgba(0,35,16,0.24)', padding: '10px', borderRadius: '4px' }}>
-              <div style={{ color: '#86c58f', fontSize: '11px', marginBottom: '4px' }}>真实状态</div>
+              <div style={{ color: '#86c58f', fontSize: '11px', marginBottom: '4px' }}>规则验证</div>
               <div style={{ color: history?.sample_sufficient ? '#00ff88' : '#ffdf73', fontSize: '18px', fontWeight: 800 }}>
-                {historyLoading ? '读取中' : history?.sample_sufficient ? '可验证' : '未评估'}
+                {historyLoading ? '读取中' : history?.sample_sufficient ? '样本充足' : '样本不足'}
               </div>
             </div>
           </div>

@@ -33,6 +33,12 @@
   ],
   "trust_calibration": {
     "enabled": true,
+    "state": {
+      "sensor": "under_trust",
+      "sensor_1": "over_trust",
+      "sensor_2": "under_trust",
+      "threat": "over_trust"
+    },
     "sensor": {
       "high_confidence": 0.85,
       "low_confidence_min": 0.6,
