@@ -1,7 +1,8 @@
 {
-  "userId": "test_pilot_102",
-  "includeAI": true,
+  "userId": "DefaultID",
+  "includeAI": false,
   "taskType": "sa",
-  "isPractice": true,
-  "useJoystick": true
+  "isPractice": false,
+  "useJoystick": true,
+  "taskNumber": 3
 }

@@ -10,8 +10,15 @@
   "taskType": "radar",
   "isPractice": false,
   "useJoystick": true,
+  "taskNumber": 3,
   "current_difficulty": "high",
-  "audio_enabled": false
+  "audio_enabled": false,
+  "trust_calibration": {
+    "enabled": true,
+    "sensor": {},
+    "threat": {},
+    "display": {}
+  }
 }
 """
 
@@ -29,8 +36,9 @@ PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..',
 INIT_CONFIG_PATH = os.path.join(PUBLIC_DIR, 'init_config.json')
 AGENT_LEVEL_PATH = os.path.join(PUBLIC_DIR, 'agent_level.json')
 
-INIT_CONFIG_KEYS = {'userId', 'includeAI', 'taskType', 'isPractice', 'useJoystick'}
+INIT_CONFIG_KEYS = {'userId', 'includeAI', 'taskType', 'isPractice', 'useJoystick', 'taskNumber'}
 AGENT_LEVEL_KEYS = {'current_difficulty', 'audio_enabled'}
+TRUST_CALIBRATION_KEY = 'trust_calibration'
 
 
 def _read_json(path: str) -> Dict[str, Any]:
@@ -56,14 +64,32 @@ def apply_config_update(message: Dict[str, Any]) -> Dict[str, Any]:
         changes['init_config'] = init_fields
         logger.info(f"init_config.json updated: {init_fields}")
 
-    # --- agent_level.json (game_settings 子字段) ---
+    # --- agent_level.json (game_settings 子字段 + trust_calibration 顶层字段) ---
     agent_fields = {k: message[k] for k in AGENT_LEVEL_KEYS if k in message}
-    if agent_fields:
+    trust_calibration = message.get(TRUST_CALIBRATION_KEY)
+    if agent_fields or trust_calibration is not None:
         agent_config = _read_json(AGENT_LEVEL_PATH)
-        game_settings = agent_config.setdefault('game_settings', {})
-        game_settings.update(agent_fields)
+        agent_changes: Dict[str, Any] = {}
+
+        if agent_fields:
+            game_settings = agent_config.setdefault('game_settings', {})
+            game_settings.update(agent_fields)
+            agent_changes.update(agent_fields)
+
+        if trust_calibration is not None:
+            if not isinstance(trust_calibration, dict):
+                raise ValueError('trust_calibration must be an object')
+            agent_config[TRUST_CALIBRATION_KEY] = trust_calibration
+            agent_changes[TRUST_CALIBRATION_KEY] = trust_calibration
+
         _write_json(AGENT_LEVEL_PATH, agent_config)
-        changes['agent_level'] = agent_fields
-        logger.info(f"agent_level.json updated: {agent_fields}")
+        changes['agent_level'] = agent_changes
+        logger.info(f"agent_level.json updated: {agent_changes}")
+
+        try:
+            from managers import config_manager
+            config_manager.load_config()
+        except Exception as exc:
+            logger.warning(f"agent_level.json updated, but in-memory config reload failed: {exc}")
 
     return changes

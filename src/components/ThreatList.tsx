@@ -1,4 +1,5 @@
 import React from 'react';
+import { ThreatTrustDecision } from '../types/trustCalibration';
 
 export interface ThreatRow {
   id: string;
@@ -28,6 +29,7 @@ export interface ThreatListData {
 
 interface ThreatListProps extends ThreatListData {
   showDetailedInfo?: boolean;
+  trustDecision?: ThreatTrustDecision;
 }
 
 const MONO: React.CSSProperties = {
@@ -56,7 +58,7 @@ const formatDistance = (distance: number) => (
     : '--'
 );
 
-const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedInfo = false }) => {
+const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedInfo = false, trustDecision }) => {
   void showDetailedInfo;
 
   const renderEmpty = (text: string) => (
@@ -72,6 +74,26 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
     </div>
   );
 
+  const renderTrustNotice = () => {
+    if (!trustDecision?.enabled || trustDecision.controlLevel === 'none') {
+      return null;
+    }
+    return (
+      <div style={{
+        ...MONO,
+        fontSize: '12px',
+        color: trustDecision.controlLevel === 'review' ? '#ffb45c' : '#5ec8ff',
+        border: `1px solid ${trustDecision.controlLevel === 'review' ? '#9a5b1d' : '#155f8a'}`,
+        padding: '5px 7px',
+        marginBottom: '6px',
+        background: 'rgba(0,20,8,0.65)',
+      }}>
+        {trustDecision.primaryMessage}
+        {trustDecision.scoreGap !== undefined ? ` / 分差 ${trustDecision.scoreGap.toFixed(2)}` : ''}
+      </div>
+    );
+  };
+
   return (
     <div style={{
       padding: '10px 14px 12px',
@@ -82,6 +104,7 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
     }}>
       <section style={{ minWidth: 0 }}>
         <div className="panel-label">威胁列表</div>
+        {renderTrustNotice()}
         {(!threats || threats.length === 0) ? renderEmpty('暂无威胁数据') : (
           <div style={{
             border: '1px solid #0d2a10',

@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <title>F/A-18 HUD military standard redraw</title>
+  <defs>
+    <style>
+      .bg { fill: #07110c; }
+      .grid { stroke: #104626; stroke-width: 1; opacity: .35; }
+      .hud { fill: none; stroke: #4cff8f; stroke-width: 3; stroke-linecap: square; stroke-linejoin: miter; }
+      .hud-thin { fill: none; stroke: #4cff8f; stroke-width: 2; stroke-linecap: square; stroke-linejoin: miter; }
+      .hud-faint { fill: none; stroke: #4cff8f; stroke-width: 1.5; opacity: .48; }
+      .txt { fill: #4cff8f; font-family: "DIN Condensed", "Arial Narrow", Arial, sans-serif; font-size: 32px; letter-spacing: 1px; }
+      .txt-sm { fill: #4cff8f; font-family: "DIN Condensed", "Arial Narrow", Arial, sans-serif; font-size: 24px; letter-spacing: 1px; }
+      .txt-xs { fill: #4cff8f; font-family: "DIN Condensed", "Arial Narrow", Arial, sans-serif; font-size: 18px; letter-spacing: .5px; }
+      .warn { fill: #ffdc5a; font-family: "DIN Condensed", "Arial Narrow", Arial, sans-serif; font-size: 26px; letter-spacing: 1px; }
+      .clip { stroke: #4cff8f; stroke-width: 2; opacity: .2; }
+    </style>
+    <filter id="phosphor" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.1" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect class="bg" width="1600" height="900"/>
+  <g id="background-reference-grid">
+    <path class="grid" d="M0 150H1600M0 300H1600M0 450H1600M0 600H1600M0 750H1600"/>
+    <path class="grid" d="M200 0V900M400 0V900M600 0V900M800 0V900M1000 0V900M1200 0V900M1400 0V900"/>
+  </g>
+
+  <g id="hud" filter="url(#phosphor)">
+    <g id="combiner-boundary">
+      <path class="hud-faint" d="M305 116H1295M305 784H1295M260 180V720M1340 180V720"/>
+      <path class="hud-faint" d="M260 180l45-64M1340 180l-45-64M260 720l45 64M1340 720l-45 64"/>
+    </g>
+
+    <g id="heading-tape">
+      <path class="hud" d="M530 92H1070"/>
+      <path class="hud-thin" d="M560 92v26M620 92v16M680 92v26M740 92v16M800 92v32M860 92v16M920 92v26M980 92v16M1040 92v26"/>
+      <text class="txt-sm" x="546" y="68">30</text>
+      <text class="txt-sm" x="666" y="68">33</text>
+      <text class="txt" x="780" y="68">360</text>
+      <text class="txt-sm" x="906" y="68">03</text>
+      <text class="txt-sm" x="1026" y="68">06</text>
+      <path class="hud" d="M800 124l-18 28h36z"/>
+      <text class="txt-sm" x="725" y="166">HDG 360</text>
+    </g>
+
+    <g id="velocity-and-altitude-tapes">
+      <path class="hud" d="M185 275h124v340H185z"/>
+      <path class="hud-thin" d="M309 315h-36M309 360h-22M309 405h-36M309 450h-22M309 495h-36M309 540h-22M309 585h-36"/>
+      <text class="txt-sm" x="199" y="251">AIRSPEED</text>
+      <text class="txt" x="205" y="437">420</text>
+      <path class="hud" d="M180 410h78l28 27-28 27h-78"/>
+      <text class="txt-xs" x="193" y="649">M 0.82</text>
+      <text class="txt-xs" x="195" y="681">AOA 6.4</text>
+
+      <path class="hud" d="M1291 275h124v340h-124z"/>
+      <path class="hud-thin" d="M1291 315h36M1291 360h22M1291 405h36M1291 450h22M1291 495h36M1291 540h22M1291 585h36"/>
+      <text class="txt-sm" x="1304" y="251">ALTITUDE</text>
+      <text class="txt" x="1316" y="437">1520</text>
+      <path class="hud" d="M1420 410h-78l-28 27 28 27h78"/>
+      <text class="txt-xs" x="1308" y="649">BARO</text>
+      <text class="txt-xs" x="1308" y="681">VVI +05</text>
+    </g>
+
+    <g id="attitude-reference">
+      <path class="hud" d="M438 450H702M898 450h264"/>
+      <text class="txt-xs" x="744" y="457">WATERLINE</text>
+
+      <g id="pitch-ladder">
+        <path class="hud-thin" d="M635 360h95m140 0h95"/>
+        <text class="txt-sm" x="592" y="369">+10</text>
+        <text class="txt-sm" x="981" y="369">+10</text>
+        <path class="hud-thin" d="M600 405h130m140 0h130"/>
+        <text class="txt-sm" x="564" y="414">+5</text>
+        <text class="txt-sm" x="1014" y="414">+5</text>
+        <path class="hud-thin" d="M600 495h130m140 0h130"/>
+        <text class="txt-sm" x="572" y="504">-5</text>
+        <text class="txt-sm" x="1016" y="504">-5</text>
+        <path class="hud-thin" d="M635 540h95m140 0h95"/>
+        <text class="txt-sm" x="593" y="549">-10</text>
+        <text class="txt-sm" x="982" y="549">-10</text>
+        <path class="hud-thin" d="M672 585h58m140 0h58"/>
+        <text class="txt-sm" x="620" y="594">-15</text>
+        <text class="txt-sm" x="947" y="594">-15</text>
+      </g>
+    </g>
+
+    <g id="flight-path-marker">
+      <circle class="hud" cx="800" cy="430" r="34"/>
+      <path class="hud" d="M766 430h-70M834 430h70M800 396v-52"/>
+      <path class="hud-thin" d="M782 420l18 18 18-18"/>
+      <text class="txt-xs" x="754" y="492">FPM</text>
+    </g>
+
+    <g id="boresight-and-steering">
+      <path class="hud" d="M800 304v42M779 325h42"/>
+      <circle class="hud-thin" cx="800" cy="325" r="11"/>
+      <path class="hud-thin" d="M705 329l28-28h72M895 329l-28-28h-72"/>
+      <text class="txt-xs" x="681" y="286">GUN CROSS / BORESIGHT</text>
+      <path class="hud-thin" d="M800 430C828 396 846 367 857 330"/>
+      <circle class="hud-thin" cx="857" cy="330" r="8"/>
+      <text class="txt-xs" x="875" y="336">STEER</text>
+    </g>
+
+    <g id="bank-angle-scale">
+      <path class="hud-thin" d="M585 756A245 245 0 0 1 1015 756"/>
+      <path class="hud-thin" d="M619 709l-22-18M671 671l-16-25M735 649l-8-28M800 641v-36M865 649l8-28M929 671l16-25M981 709l22-18"/>
+      <path class="hud" d="M800 742l-16 30h32z"/>
+      <text class="txt-xs" x="744" y="808">BANK ANGLE</text>
+    </g>
+
+    <g id="weapon-and-navigation-status">
+      <text class="txt-sm" x="395" y="740">NAV</text>
+      <text class="txt-sm" x="395" y="775">WYPT 03</text>
+      <text class="txt-sm" x="395" y="810">RNG 12.4</text>
+
+      <text class="txt-sm" x="1088" y="740">A/A</text>
+      <text class="txt-sm" x="1088" y="775">AIM-9X</text>
+      <text class="txt-sm" x="1088" y="810">MASTER ARM SAFE</text>
+      <text class="warn" x="693" y="702">PULL UP</text>
+    </g>
+
+    <g id="engine-and-fuel">
+      <text class="txt-xs" x="1260" y="772">L RPM 92</text>
+      <text class="txt-xs" x="1260" y="800">R RPM 91</text>
+      <text class="txt-xs" x="1260" y="828">FUEL 078</text>
+    </g>
+
+    <g id="radar-reference-cue">
+      <path class="hud-thin" d="M479 655a86 86 0 0 1 172 0"/>
+      <path class="hud-thin" d="M479 655h24M627 655h24M565 569v24M512 587l13 21M618 587l-13 21"/>
+      <circle class="hud" cx="565" cy="655" r="5"/>
+      <text class="txt-xs" x="516" y="695">ROLL / RADAR CUE</text>
+    </g>
+  </g>
+</svg>

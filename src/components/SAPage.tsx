@@ -9,8 +9,10 @@ import agentStore from '../stores/AgentStore';
 import { observer } from 'mobx-react-lite';
 import radarStore from '../stores/RadarStore';
 import audioManager from '../managers/AudioManager';
-import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils';
 import type { ThreatListData } from './ThreatList';
+import { useThreatTrustCalibration } from '../hooks/useThreatTrustCalibration';
+import { ThreatTrustDecision } from '../types/trustCalibration';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -24,6 +26,11 @@ interface SAPageProps {
   onThreatListUpdate?: (threatData: ThreatListData) => void; // 新增：威胁数据回调
   onShowDetailedInfoChange?: (showDetailed: boolean) => void; // 新增：详细信息显示状态回调
   onResultConfirmed?: () => void;
+  onTrustDecisionUpdate?: (decision: ThreatTrustDecision) => void;
+  onTrustActionsUpdate?: (actions: {
+    markEvidenceViewed: () => void;
+    markManualReviewDone: () => void;
+  } | null) => void;
 }
 
 // 添加威胁数据接口
@@ -278,7 +285,7 @@ const getStableAttackSource = (threat: any): string => {
   return ATTACK_SOURCES[stableHash(String(threat?.id ?? threat?.label ?? 'attack')) % ATTACK_SOURCES.length];
 };
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed, onTrustDecisionUpdate, onTrustActionsUpdate }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
   const [userId, setUserId] = useState(originalUserId);
@@ -656,6 +663,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
+      if (threatTrustDecision.blockedOneClick) {
+        onAddMessage?.('warning', `信任调控：${threatTrustDecision.primaryMessage}，请先查看证据或人工确认`);
+        return;
+      }
       if (isSAAllCompleted) {
         console.log('[SAPage] SA result ignored because task is already ALL_COMPLETED.');
         onResultConfirmed?.();
@@ -682,7 +693,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           task_id: radarStore.taskId,
           timestamp: Date.now(),
           user_id: userId,
+          event_owner: 'manual',
+          extra: buildThreatTrustLogExtra(),
         });
+        recordResultConfirmed(userSelection?.threat?.id);
       } else {
         console.log('[SAPage] SA result viewed without a selection; current task is not marked completed.');
       }
@@ -775,6 +789,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   };
 
   // 计算按钮容器尺寸
+  const sideButtonWidth = 48;
+  const sideButtonGap = 16;
+  const totalDisplayWidth = width + (sideButtonWidth + sideButtonGap) * 2;
   const topContainerWidth = width; // 使顶部容器宽度与雷达宽度相同
   const sideContainerHeight = height * 0.8; // 侧边容器高度与雷达高度的80%相同
 
@@ -1233,6 +1250,44 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 将对"选中"和"最高优先级"目标的引用移动到这里
   const highestPriorityThreat = useMemo(() => getCurrentHighestPriorityThreat(), [getCurrentHighestPriorityThreat]);
   const selectedThreatId = useMemo(() => userSelection?.threat?.id, [userSelection]);
+  const trustThreatInputs = useMemo(() => {
+    return threatsWithScore.map(item => ({
+      id: item.threat.id,
+      type: item.threat.type,
+      label: item.threat.label,
+      score: item.score,
+      is_missile: item.isMissile,
+      priority: item.isMissile || item.threat.type?.includes('Primary') ? 'high' : 'medium',
+      source: item.threat.label,
+    }));
+  }, [threatsWithScore]);
+  const {
+    threatTrustDecision,
+    recordThreatSelection,
+    recordResultConfirmed,
+    markEvidenceViewed: markThreatEvidenceViewed,
+    markManualReviewDone: markThreatManualReviewDone,
+    buildLogExtra: buildThreatTrustLogExtra,
+  } = useThreatTrustCalibration({
+    config: agentStore.trustCalibrationConfig,
+    threats: trustThreatInputs,
+    generationTimestamp: radarData?.timestamp,
+    taskKey: `${userId || ''}:${lastEmergencyReceiveTimestampRef.current || ''}`,
+    participantKey: userId || null,
+    groundTruth: { correctId: highestPriorityThreat?.id ?? null },
+  });
+  useEffect(() => {
+    onTrustDecisionUpdate?.(threatTrustDecision);
+  }, [onTrustDecisionUpdate, threatTrustDecision]);
+
+  useEffect(() => {
+    onTrustActionsUpdate?.({
+      markEvidenceViewed: markThreatEvidenceViewed,
+      markManualReviewDone: markThreatManualReviewDone,
+    });
+    return () => onTrustActionsUpdate?.(null);
+  }, [markThreatEvidenceViewed, markThreatManualReviewDone, onTrustActionsUpdate]);
+
   const eyeFeedbackThreatId = agentStore.isAIActive ? aiSelectedThreatRef.current?.id : null;
   const fanThreatPositions = useMemo(() => {
     const positions = new Map<string, FanThreatPosition>();
@@ -1538,6 +1593,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       threat,
       isCorrect: !!isClickedHighestPriority
     });
+    recordThreatSelection(threat.id, eventOwner === 'AI' ? 'AI' : 'manual');
 
     if (eventOwner === 'AI') {
       aiSelectedThreatRef.current = threat;
@@ -1570,6 +1626,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         user_id: userId,
         event_owner: eventOwner,
         operation_type: 'icon_click', // 标识这是通过图标点击的操作
+        extra: buildThreatTrustLogExtra(),
       });
     }
     
@@ -1579,7 +1636,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
       onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
-  }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef]);
+  }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -1593,9 +1650,34 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const showRecommendationFrame = !showTaskComplete && shouldAttentionBlink;
       const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
       const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
+      const isTrustTop = threatTrustDecision.enabled && missile.id === threatTrustDecision.topThreatId;
+      const isTrustSecond = threatTrustDecision.enabled && missile.id === threatTrustDecision.secondThreatId;
+      const trustStroke = threatTrustDecision.controlLevel === 'review' ? '#ff9a2e' : '#1ca8ff';
 
       return (
         <Group key={missile.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(missile, 'manual')}>
+          {(isTrustTop || (threatTrustDecision.rankingUnstable && isTrustSecond)) && (
+            <Rect
+              x={position.x - 26}
+              y={position.y - 31}
+              width={52}
+              height={62}
+              stroke={trustStroke}
+              strokeWidth={2}
+              dash={[6, 4]}
+              cornerRadius={6}
+            />
+          )}
+          {threatTrustDecision.rankingUnstable && isTrustSecond && (
+            <Text
+              x={position.x + 24}
+              y={position.y - 30}
+              text="~"
+              fontSize={22}
+              fill="#ffb45c"
+              fontFamily="monospace"
+            />
+          )}
           {showRecommendationFrame && (
             <Rect
               x={position.x - 26}
@@ -2108,25 +2190,25 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       useEnhancedProtocol, enhancedThreats, threatList]); // 保持threatList以确保显示顺序更新
 
   return (
-    <div className="font-mono flex flex-col items-center relative" style={{ padding: '8px 4px 0' }}>
+    <div className="font-mono flex flex-col items-center relative" style={{ width: totalDisplayWidth, minWidth: totalDisplayWidth, padding: '8px 0 0' }}>
      
 
-      <div className="flex flex-col items-center">
+      <div className="flex flex-col items-center" style={{ width: totalDisplayWidth }}>
         {/* 顶部按钮 - 使用justify-between均匀分布 */}
         <div 
           className="flex justify-between mb-2" 
-          style={{ width: topContainerWidth, padding: '0 20px' }}
+          style={{ width: topContainerWidth, padding: '0 20px', position: 'relative', zIndex: 20 }}
         >
           {topButtons.map(label => (
             <Button key={label} label={label} onClick={() => handleButtonClick(label)} disabled={label === '查看结果' && agentStore.isAIActive && userSelection?.threat === undefined}/>
           ))}
         </div>
         
-        <div className="flex">
+        <div className="flex" style={{ width: totalDisplayWidth }}>
           {/* 左侧按钮 - 使用flex-col和justify-between均匀分布 */}
           <div 
             className="flex flex-col justify-between mr-4 mt-12" 
-            style={{ height: sideContainerHeight }}
+            style={{ width: sideButtonWidth, flex: `0 0 ${sideButtonWidth}px`, height: sideContainerHeight, position: 'relative', zIndex: 20 }}
           >
             {leftButtons.map((label, idx) => (
               <div key={label} className="relative">
@@ -2438,6 +2520,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   const isSelected = threat.id === selectedThreatId;
                   const isHighestPriority = threat.id === highestPriorityThreat?.id;
                   const shouldAttentionBlink = threat.id === eyeFeedbackThreatId && highestThreatAttentionVisible;
+                  const isTrustTop = threatTrustDecision.enabled && threat.id === threatTrustDecision.topThreatId;
+                  const isTrustSecond = threatTrustDecision.enabled && threat.id === threatTrustDecision.secondThreatId;
+                  const trustStroke = threatTrustDecision.controlLevel === 'review' ? '#ff9a2e' : '#1ca8ff';
                   
                   // 获取位置数据
                   const position = fanThreatPositions.get(threat.id) || (threat.position // 如果威胁对象有position字段，直接使用
@@ -2455,6 +2540,28 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
                   return (
                     <Group key={threat.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(threat, 'manual')}>
+                      {(isTrustTop || (threatTrustDecision.rankingUnstable && isTrustSecond)) && (
+                        <Rect
+                          x={position.x  - ICON_SIZE / 2 - 11}
+                          y={position.y  - ICON_SIZE / 2 - 11}
+                          width={ICON_SIZE + 22}
+                          height={ICON_SIZE + 22}
+                          stroke={trustStroke}
+                          strokeWidth={2}
+                          dash={[6, 4]}
+                          cornerRadius={6}
+                        />
+                      )}
+                      {threatTrustDecision.rankingUnstable && isTrustSecond && (
+                        <Text
+                          x={position.x + ICON_SIZE / 2 + 8}
+                          y={position.y - ICON_SIZE / 2 - 12}
+                          text="~"
+                          fontSize={22}
+                          fill="#ffb45c"
+                          fontFamily="monospace"
+                        />
+                      )}
                       {showRecommendationFrame && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 12}
@@ -2546,7 +2653,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           {/* 右侧按钮 - 使用flex-col和justify-between均匀分布 */}
           <div 
             className="flex flex-col justify-between ml-4 mt-12" 
-            style={{ height: sideContainerHeight }}
+            style={{ width: sideButtonWidth, flex: `0 0 ${sideButtonWidth}px`, height: sideContainerHeight, position: 'relative', zIndex: 20 }}
           >
             {/* 音频控制按钮 - 状态直接来自 agentStore */}
             

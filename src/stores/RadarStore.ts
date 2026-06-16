@@ -5,7 +5,7 @@ import agentStore from './AgentStore'; // Restore the import for agentStore
 interface RadarDataHook {
   sendMessage: (message: any) => void;
   settingsValidationTimestamp: number | null;
-  initializeSystem: (userId: string, includeAI: boolean, isPractice: boolean) => void;
+  initializeSystem: (userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => void;
   validateSettings: (settings: { range: number, scanAngle: number }) => boolean;
   submitSettings: (settings: { range: number, scanAngle: number }) => void;
   resetTargets: () => void;
@@ -39,6 +39,7 @@ export class RadarStore {
   scanAngle: number = 60;  // 默认60度
   settingsValidationTimestamp: number | null = null; // 声明
   isPractice: boolean = false; // 添加 isPractice 状态
+  taskNumber: number | undefined = undefined;
   
   // 内部变量
   private radarDataHook: RadarDataHook | null = null;
@@ -83,13 +84,14 @@ export class RadarStore {
   
   // 系统启动
 
-  startSystem = (userId: string, includeAI: boolean, isPractice: boolean) => {
+  startSystem = (userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => {
     // This action should ONLY update the state.
     this.userId = userId;
     this.isStarted = true;
     this.isPractice = isPractice; // 保存 isPractice 状态
+    this.taskNumber = taskNumber;
     agentStore.setAIActive(includeAI); // It's okay to call another store's action here
-    console.log(`[RadarStore] System state started. UserID: ${this.userId}, AI: ${includeAI}, Practice: ${isPractice}`);
+    console.log(`[RadarStore] System state started. UserID: ${this.userId}, AI: ${includeAI}, Practice: ${isPractice}, TaskNumber: ${taskNumber ?? 'default'}`);
   }
   
   // 设置任务ID
@@ -146,6 +148,7 @@ export class RadarStore {
     this.antennaAdjustmentRequired = false;
     this.radarRange = 20;
     this.scanAngle = 60;
+    this.taskNumber = undefined;
     
     // 调用雷达数据hook中的重置方法
     if (this.radarDataHook && this.radarDataHook.resetTargets) {

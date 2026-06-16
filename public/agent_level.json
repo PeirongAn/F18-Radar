@@ -27,10 +27,44 @@
       "threat_select_delay_ms": 100,
       "tdc_select_delay_ms": 100,
       "decision_probabilities": [
-        1.0
+        0.5
       ]
     }
   ],
+  "trust_calibration": {
+    "enabled": true,
+    "sensor": {
+      "high_confidence": 0.85,
+      "low_confidence_min": 0.6,
+      "low_confidence_max": 0.7,
+      "candidate_gap_threshold": 0.1,
+      "unconfirmed_timeout_ms": 5000,
+      "consecutive_reject_threshold": 2,
+      "direct_accept_threshold": 2,
+      "window_size": 5,
+      "hysteresis": 1,
+      "latency_threshold_ms": 4500,
+      "require_evidence_before_confirm": true
+    },
+    "threat": {
+      "score_gap_threshold": 0.1,
+      "data_delay_ms": 1800,
+      "unconfirmed_timeout_ms": 5000,
+      "consecutive_reject_threshold": 2,
+      "direct_accept_threshold": 2,
+      "window_size": 5,
+      "hysteresis": 1,
+      "latency_threshold_ms": 4500,
+      "require_evidence_before_submit": true
+    },
+    "display": {
+      "show_explanation_panel": true,
+      "show_candidate_comparison": true,
+      "show_data_quality_bar": true,
+      "show_capability_boundary": true,
+      "block_one_click_on_low_confidence": true
+    }
+  },
   "game_settings": {
     "current_difficulty": "low",
     "audio_enabled": true,
