@@ -1,8 +1,43 @@
 {
-  "userId": "DefaultID",
-  "includeAI": false,
+  "userId": "zhaomiyao100003",
+  "includeAI": true,
   "taskType": "sa",
   "isPractice": false,
   "useJoystick": true,
-  "taskNumber": 3
+  "taskNumber": 3,
+  "platformTask": {
+    "raw": {
+      "TaskName": "威胁排序任务",
+      "ID": "zhaomiyao100003",
+      "Gender": "1",
+      "DefaultControlMode": "1",
+      "AIAutonomyLeve": "3",
+      "TaskMode": "1",
+      "Difficulty": "3",
+      "TaskNumber": "3",
+      "aiprecision": "1",
+      "Action": "task_start"
+    },
+    "normalized": {
+      "task_name": "威胁排序任务",
+      "platform_task_id": "zhaomiyao100003",
+      "task_type": "SA_THREAT_RESPONSE",
+      "task_category": "sa",
+      "gender": "1",
+      "default_control_mode": "1",
+      "ai_autonomy_level": "L2",
+      "current_level": "L2",
+      "task_mode": "1",
+      "difficulty_key": "low",
+      "difficulty_display": "3",
+      "difficulty_raw": "3",
+      "task_number": "3",
+      "ai_precision": "1",
+      "include_ai": true,
+      "is_practice": false,
+      "repetition_total_override": 3,
+      "web_task_kind": "sa",
+      "entry_mode": "web_overlay"
+    }
+  }
 }

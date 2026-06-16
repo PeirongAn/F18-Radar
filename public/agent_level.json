@@ -34,7 +34,7 @@
   "trust_calibration": {
     "enabled": true,
     "state": {
-      "sensor": "under_trust",
+      "sensor": "over_trust",
       "threat": "over_trust"
     },
     "sensor": {
