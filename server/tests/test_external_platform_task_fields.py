@@ -165,6 +165,9 @@ def setup_bridge(monkeypatch):
     bridge._pending = None
     bridge._active_web_task_overlays.clear()
     bridge._active_external_tasks.clear()
+    tmpdir = tempfile.TemporaryDirectory()
+    monkeypatch.setattr(bridge, "INIT_CONFIG_PATH", str(Path(tmpdir.name) / "init_config.json"))
+    monkeypatch.setattr(bridge, "_test_tmpdir", tmpdir, raising=False)
     monkeypatch.setattr(bridge, "db_manager", fake_db)
     monkeypatch.setattr(bridge, "generate_task_id", lambda: next(ids))
     monkeypatch.setattr(bridge.config_manager, "get_config", make_config)
@@ -290,6 +293,10 @@ def test_web_overlay_entry_semantics_and_task_scoped_pending(monkeypatch):
     assert overlay["repetition_total_override"] == 4
     assert meta["normalized"]["platform_task_id"] == "SaUser"
     assert meta["normalized"]["task_type"] == "SA_THREAT_RESPONSE"
+    cached = json.loads(Path(bridge.INIT_CONFIG_PATH).read_text(encoding="utf-8"))
+    assert cached["userId"] == "SaUser"
+    assert cached["taskType"] == "sa"
+    assert cached["taskNumber"] == 4
 
 
 def test_simple_task_start_records_sub_start(monkeypatch):

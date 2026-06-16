@@ -10,11 +10,8 @@ import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
-import audioManager from './managers/AudioManager';
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
-import InitialFormModal from './components/InitialFormModal';
-import TrustCalibrationSettings from './components/TrustCalibrationSettings';
 import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
 interface TargetSelectParams {
   targetId: string | undefined;
@@ -448,13 +445,11 @@ const MainApp: React.FC = observer(() => {
   const [selectedTarget] = useState<string | null>(null);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
-  const [defaultTaskNumber, setDefaultTaskNumber] = useState<number | undefined>(undefined);
   const [isStarted, setIsStarted] = useState<boolean>(false);
   const [showGazePoint, setShowGazePoint] = useState<boolean>(false);
   const [gazePointDebug, setGazePointDebug] = useState<GazePointDebug | null>(null);
   const [useJoystick, setUseJoystick] = useState<boolean>(false);
   const currentUserIdRef = useRef<string>('');
-  const [showTrustSettings, setShowTrustSettings] = useState<boolean>(false);
   const joystickInitedRef = useRef<boolean>(false);
   const lastStartRequestRef = useRef<{ key: string; timestamp: number } | null>(null);
   const [radarRange, setRadarRange] = useState<number>(20);
@@ -766,22 +761,6 @@ const MainApp: React.FC = observer(() => {
     globalWS.sendMessage({ type: 'joystick_subscribe', timestamp: Date.now(), user_id: userId });
   }, [isStarted, connected, useJoystick, userId]);
 
-  /* ── 启动弹窗默认任务次数：从 init_config.json 读取 ── */
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/init_config.json', { cache: 'no-store' })
-      .then(res => (res.ok ? res.json() : null))
-      .then(cfg => {
-        if (cancelled || !cfg) return;
-        const parsed = Number(cfg.taskNumber);
-        if (Number.isFinite(parsed) && parsed > 0) {
-          setDefaultTaskNumber(Math.min(100, Math.max(1, Math.floor(parsed))));
-        }
-      })
-      .catch(() => { /* 读取失败时回退到弹窗内置默认值 */ });
-    return () => { cancelled = true; };
-  }, []);
-
   useEffect(() => {
     if (!platformAutoStart) return;
     handleStartApp(
@@ -793,18 +772,6 @@ const MainApp: React.FC = observer(() => {
       platformAutoStart.taskNumber,
     );
   }, [platformAutoStart, handleStartApp]);
-
-  const handleStartFromModal = useCallback((
-    id: string,
-    withAI: boolean,
-    taskType: 'radar' | 'sa',
-    practice: boolean,
-    modalUseJoystick: boolean,
-    taskNumber: number,
-  ) => {
-    audioManager.unlock();
-    handleStartApp(id, withAI, taskType, practice, modalUseJoystick, taskNumber);
-  }, [handleStartApp]);
 
   /* ── 雷达参数更新 ─────────────────────────────── */
   const handleRadarParamsUpdate = useCallback((range: number, angle: number) => {
@@ -903,17 +870,6 @@ const MainApp: React.FC = observer(() => {
         }}
       />
       <GazePointOverlay enabled={showGazePoint} onGazePointChange={setGazePointDebug} />
-      {/* ── Startup Modal ──────────────────────────────── */}
-      {!isStarted && !showTrustSettings && (
-        <InitialFormModal
-          onStart={handleStartFromModal}
-          defaultUserId={userId}
-          defaultIncludeAI={includeAI}
-          defaultTaskNumber={defaultTaskNumber}
-          onOpenTrustSettings={() => setShowTrustSettings(true)}
-        />
-      )}
-
       {/* ── Top Status Bar ─────────────────────────────── */}
       <header style={{
         height: '58px', flexShrink: 0,
@@ -1076,41 +1032,12 @@ const MainApp: React.FC = observer(() => {
           </div>
         )}
 
-        {isStarted && (
-          <button
-            type="button"
-            onClick={() => setShowTrustSettings(prev => !prev)}
-            style={{
-              margin: '0 14px 0 0',
-              height: '34px',
-              padding: '0 14px',
-              background: showTrustSettings ? 'rgba(0,180,90,0.18)' : 'transparent',
-              border: `1px solid ${showTrustSettings ? '#00aa55' : '#1a5530'}`,
-              color: showTrustSettings ? '#00ff88' : '#2aaa55',
-              borderRadius: '3px',
-              cursor: 'pointer',
-              fontFamily: "'SimHei', 'Microsoft YaHei', sans-serif",
-              fontSize: '13px',
-              letterSpacing: '0.12em',
-            }}
-          >
-            信任设置
-          </button>
-        )}
         <div style={{ marginLeft: 'auto', padding: '0 20px', fontSize: '13px', letterSpacing: '0.1em', color: '#3a7a48' }}>
           {displayLabel}
         </div>
       </header>
 
       {/* ── Main Layout ────────────────────────────────── */}
-      {showTrustSettings ? (
-        <TrustCalibrationSettings
-          connected={connected}
-          currentUserId={userId}
-          sendMessage={sendMessage}
-          onClose={() => setShowTrustSettings(false)}
-        />
-      ) : (
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* Left — 主显示区 ───────────────────────────── */}
@@ -1234,7 +1161,6 @@ const MainApp: React.FC = observer(() => {
 
         </div>
       </div>
-      )}
 
       {completionNoticeTask && (
         <div style={{

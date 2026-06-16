@@ -8,6 +8,7 @@ import {
   TrustBehaviorMetrics,
   TrustCalibrationConfig,
   TrustCalibrationLogPayload,
+  TrustCalibrationStateConfig,
   TrustConfigSnapshot,
   TrustControlTrigger,
   TrustState,
@@ -15,6 +16,10 @@ import {
 
 export const DEFAULT_TRUST_CALIBRATION_CONFIG: TrustCalibrationConfig = {
   enabled: true,
+  state: {
+    sensor: "normal",
+    threat: "normal",
+  },
   sensor: {
     high_confidence: 0.85,
     low_confidence_min: 0.6,
@@ -57,9 +62,17 @@ export const DEFAULT_TRUST_CALIBRATION_CONFIG: TrustCalibrationConfig = {
 export function mergeTrustCalibrationConfig(
   config?: Partial<TrustCalibrationConfig> | null
 ): TrustCalibrationConfig {
+  const incomingState = (config as { state?: TrustCalibrationStateConfig | TrustState } | null | undefined)?.state;
+  const state = typeof incomingState === "string"
+    ? { sensor: incomingState, threat: incomingState }
+    : {
+      ...DEFAULT_TRUST_CALIBRATION_CONFIG.state,
+      ...(incomingState ?? {}),
+    };
   return {
     ...DEFAULT_TRUST_CALIBRATION_CONFIG,
     ...(config ?? {}),
+    state,
     sensor: {
       ...DEFAULT_TRUST_CALIBRATION_CONFIG.sensor,
       ...(config?.sensor ?? {}),

@@ -51,6 +51,16 @@ def _write_json(path: str, data: Dict[str, Any]) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def apply_config_update(message: Dict[str, Any]) -> Dict[str, Any]:
     """根据消息内容更新配置文件，返回实际被修改的字段摘要"""
     changes: Dict[str, Any] = {}
@@ -79,8 +89,12 @@ def apply_config_update(message: Dict[str, Any]) -> Dict[str, Any]:
         if trust_calibration is not None:
             if not isinstance(trust_calibration, dict):
                 raise ValueError('trust_calibration must be an object')
-            agent_config[TRUST_CALIBRATION_KEY] = trust_calibration
-            agent_changes[TRUST_CALIBRATION_KEY] = trust_calibration
+            existing_trust_config = agent_config.get(TRUST_CALIBRATION_KEY)
+            if not isinstance(existing_trust_config, dict):
+                existing_trust_config = {}
+            merged_trust_config = _merge_dict(existing_trust_config, trust_calibration)
+            agent_config[TRUST_CALIBRATION_KEY] = merged_trust_config
+            agent_changes[TRUST_CALIBRATION_KEY] = merged_trust_config
 
         _write_json(AGENT_LEVEL_PATH, agent_config)
         changes['agent_level'] = agent_changes

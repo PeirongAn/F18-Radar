@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import time as _time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -30,6 +31,9 @@ _WEB_KIND_BY_TASK_TYPE = {
     "RADAR_TARGETING": "radar",
     "SA_THREAT_RESPONSE": "sa",
 }
+
+PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "public"))
+INIT_CONFIG_PATH = os.path.join(PUBLIC_DIR, "init_config.json")
 
 
 def _valid_levels(config: Dict[str, Any]) -> List[str]:
@@ -298,6 +302,45 @@ def _build_external_task_db_fields(normalized: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
+def _persist_web_init_config(raw: Dict[str, Any], normalized: Dict[str, Any]) -> None:
+    """Cache the latest platform web-task start config for diagnostics/reload visibility."""
+    web_kind = normalized.get("web_task_kind")
+    if web_kind not in ("radar", "sa"):
+        return
+    try:
+        config: Dict[str, Any] = {}
+        if os.path.exists(INIT_CONFIG_PATH):
+            with open(INIT_CONFIG_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    config = loaded
+        task_number = normalized.get("repetition_total_override")
+        if task_number is None:
+            task_number = normalized.get("task_number")
+        config.update({
+            "userId": str(normalized.get("platform_task_id") or ""),
+            "includeAI": bool(normalized.get("include_ai")),
+            "taskType": web_kind,
+            "isPractice": bool(normalized.get("is_practice")),
+            "taskNumber": task_number,
+            "platformTask": {
+                "raw": raw,
+                "normalized": normalized,
+            },
+        })
+        config.setdefault("useJoystick", True)
+        with open(INIT_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        logger.info(
+            "cached platform web task config to init_config.json: user=%s kind=%s taskNumber=%s",
+            config.get("userId"),
+            config.get("taskType"),
+            config.get("taskNumber"),
+        )
+    except Exception as exc:
+        logger.warning("failed to cache platform web task config to init_config.json: %s", exc, exc_info=True)
+
+
 def _attach_entry_semantics(normalized: Dict[str, Any], category: str, entry_mode: str) -> Dict[str, Any]:
     normalized["task_category"] = category
     normalized["task_type"] = _task_type_for_category(category)
@@ -316,6 +359,7 @@ def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
     if not _is_web_overlay_category(category):
         category = "sa" if normalized.get("web_task_kind") == "sa" else "radar"
     normalized = _attach_entry_semantics(normalized, category, "web_overlay")
+    _persist_web_init_config(raw, normalized)
     cfg = config_manager.get_config()
     logger.info(
         "[REMOTE_TASK_COUNT] parsed platform_task id=%s name=%s raw_TaskNumber=%s "

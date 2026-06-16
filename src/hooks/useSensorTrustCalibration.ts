@@ -51,7 +51,7 @@ export function useSensorTrustCalibration({
   const [manualReviewRequested, setManualReviewRequested] = useState(false);
   const [manualReviewDone, setManualReviewDone] = useState(false);
   const [tick, setTick] = useState(Date.now());
-  const previousTrustStateRef = useRef<TrustState>("normal");
+  const previousTrustStateRef = useRef<TrustState>(mergedConfig.state.sensor ?? "normal");
   const acceptedRecommendationRef = useRef<string | null>(null);
   const latestTrustEventsRef = useRef<TrustInteractionEvent[]>([]);
 
@@ -68,9 +68,9 @@ export function useSensorTrustCalibration({
   // 被试切换：清空行为窗口与历史状态，避免跨被试累积
   useEffect(() => {
     setTrustEventHistory([]);
-    previousTrustStateRef.current = "normal";
+    previousTrustStateRef.current = mergedConfig.state.sensor ?? "normal";
     latestTrustEventsRef.current = [];
-  }, [participantKey]);
+  }, [participantKey, mergedConfig.state.sensor]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);

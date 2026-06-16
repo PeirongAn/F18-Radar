@@ -33,6 +33,10 @@
   ],
   "trust_calibration": {
     "enabled": true,
+    "state": {
+      "sensor": "under_trust",
+      "threat": "over_trust"
+    },
     "sensor": {
       "high_confidence": 0.85,
       "low_confidence_min": 0.6,
@@ -44,7 +48,10 @@
       "window_size": 5,
       "hysteresis": 1,
       "latency_threshold_ms": 4500,
-      "require_evidence_before_confirm": true
+      "require_evidence_before_confirm": true,
+      "min_truth_coverage": 0.5,
+      "unwarranted_reject_threshold": 2,
+      "unwarranted_accept_threshold": 1
     },
     "threat": {
       "score_gap_threshold": 0.1,
@@ -55,7 +62,10 @@
       "window_size": 5,
       "hysteresis": 1,
       "latency_threshold_ms": 4500,
-      "require_evidence_before_submit": true
+      "require_evidence_before_submit": true,
+      "min_truth_coverage": 0.5,
+      "unwarranted_reject_threshold": 2,
+      "unwarranted_accept_threshold": 1
     },
     "display": {
       "show_explanation_panel": true,

@@ -72,7 +72,7 @@ export function useThreatTrustCalibration({
   const previousTopThreatIdRef = useRef<string | null>(null);
   const presentedAtRef = useRef<number>(Date.now());
   const [rankingChange, setRankingChange] = useState<RankingChange>({ previousTopThreatId: null });
-  const previousTrustStateRef = useRef<TrustState>("normal");
+  const previousTrustStateRef = useRef<TrustState>(mergedConfig.state.threat ?? "normal");
   const latestTrustEventsRef = useRef<TrustInteractionEvent[]>([]);
 
   useEffect(() => {
@@ -89,9 +89,9 @@ export function useThreatTrustCalibration({
   // 被试切换：清空行为窗口与历史状态，避免跨被试累积
   useEffect(() => {
     setTrustEventHistory([]);
-    previousTrustStateRef.current = "normal";
+    previousTrustStateRef.current = mergedConfig.state.threat ?? "normal";
     latestTrustEventsRef.current = [];
-  }, [participantKey]);
+  }, [participantKey, mergedConfig.state.threat]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(Date.now()), 1000);

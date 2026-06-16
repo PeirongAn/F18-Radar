@@ -76,8 +76,14 @@ export interface TrustDisplayConfig {
   block_one_click_on_low_confidence: boolean;
 }
 
+export interface TrustCalibrationStateConfig {
+  sensor: TrustState;
+  threat: TrustState;
+}
+
 export interface TrustCalibrationConfig {
   enabled: boolean;
+  state: TrustCalibrationStateConfig;
   sensor: SensorTrustCalibrationConfig;
   threat: ThreatTrustCalibrationConfig;
   display: TrustDisplayConfig;
