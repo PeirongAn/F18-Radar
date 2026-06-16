@@ -255,4 +255,28 @@ describe("configured trust state", () => {
     expect(d.controlLevel).toBe("explain");
     expect(d.triggers).toContain("configured_trust_state");
   });
+
+  it("does not let SA task risk override configured threat state", () => {
+    const d = evaluateThreatTrustDecision({
+      config: {
+        ...DEFAULT_TRUST_CALIBRATION_CONFIG,
+        state: { sensor: "normal", threat: "over_trust" },
+      },
+      candidates: [
+        { id: "a", label: "A", score: 0.9, reason: "" },
+        { id: "b", label: "B", score: 0.3, reason: "" },
+      ],
+      previousTopThreatId: "b",
+      generationTimestamp: Date.now(),
+      behaviorMetrics: buildTrustBehaviorMetricsFromEvents([], WINDOW),
+      evidenceViewed: false,
+      manualReviewDone: false,
+      previousTrustState: "normal",
+      now: Date.now(),
+    });
+
+    expect(d.trustState).toBe("over_trust");
+    expect(d.triggers).toContain("ranking_changed");
+    expect(d.triggers).toContain("configured_trust_state");
+  });
 });

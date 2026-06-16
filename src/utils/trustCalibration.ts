@@ -502,10 +502,7 @@ export function evaluateSensorTrustDecision(input: {
     config: sensorConfig,
   });
   const configuredState = configuredTrustState(config.state.sensor);
-  const derivedTrustState = behaviorState.trustState === "normal" && taskRisk.explainRisk
-    ? "under_trust"
-    : behaviorState.trustState;
-  const effectiveTrustState = configuredState === "normal" ? derivedTrustState : configuredState;
+  const effectiveTrustState = configuredState;
   const triggers = Array.from(new Set([
     ...taskRisk.triggers,
     ...behaviorState.triggers,
@@ -604,10 +601,7 @@ export function evaluateThreatTrustDecision(input: {
     config: threatConfig,
   });
   const configuredState = configuredTrustState(config.state.threat);
-  const derivedTrustState = behaviorState.trustState === "normal" && taskRisk.explainRisk
-    ? "under_trust"
-    : behaviorState.trustState;
-  const effectiveTrustState = configuredState === "normal" ? derivedTrustState : configuredState;
+  const effectiveTrustState = configuredState;
   const triggers = Array.from(new Set([
     ...taskRisk.triggers,
     ...behaviorState.triggers,
