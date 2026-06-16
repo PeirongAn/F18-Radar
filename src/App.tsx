@@ -1058,7 +1058,6 @@ const MainApp: React.FC = observer(() => {
             overflowX: 'auto',
           }}
         >
-          <TaskTrustStatusBadge decision={activeDisplay === 'radar' ? sensorTrustDecision : saTrustDecision} />
           {activeDisplay === 'radar' ? (
             <Radar
               width={700}
