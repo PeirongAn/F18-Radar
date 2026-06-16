@@ -513,6 +513,11 @@ export function evaluateSensorTrustDecision(input: {
   // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
   const allowHardControl = configuredState !== "normal" || !behaviorState.provisional;
   const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && sensorConfig.require_evidence_before_confirm;
+  const controlLevel = effectiveTrustState === "over_trust"
+    ? "review"
+    : effectiveTrustState === "under_trust"
+      ? "explain"
+      : "none";
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick =
     reviewNeeded &&
@@ -523,7 +528,7 @@ export function evaluateSensorTrustDecision(input: {
     task: "sensor",
     enabled: true,
     trustState: effectiveTrustState,
-    controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
+    controlLevel,
     triggers,
     evidenceViewed: input.evidenceViewed,
     manualReviewRequested: Boolean(input.manualReviewRequested),
@@ -612,6 +617,11 @@ export function evaluateThreatTrustDecision(input: {
   // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
   const allowHardControl = configuredState !== "normal" || !behaviorState.provisional;
   const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && threatConfig.require_evidence_before_submit;
+  const controlLevel = effectiveTrustState === "over_trust"
+    ? "review"
+    : effectiveTrustState === "under_trust"
+      ? "explain"
+      : "none";
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick = reviewNeeded && !reviewComplete;
 
@@ -619,7 +629,7 @@ export function evaluateThreatTrustDecision(input: {
     task: "threat",
     enabled: true,
     trustState: effectiveTrustState,
-    controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
+    controlLevel,
     triggers,
     evidenceViewed: input.evidenceViewed,
     manualReviewRequested: Boolean(input.manualReviewRequested),

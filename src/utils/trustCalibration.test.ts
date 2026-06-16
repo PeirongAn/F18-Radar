@@ -252,7 +252,7 @@ describe("configured trust state", () => {
     });
 
     expect(d.trustState).toBe("over_trust");
-    expect(d.controlLevel).toBe("explain");
+    expect(d.controlLevel).toBe("review");
     expect(d.triggers).toContain("configured_trust_state");
   });
 
@@ -276,6 +276,7 @@ describe("configured trust state", () => {
     });
 
     expect(d.trustState).toBe("over_trust");
+    expect(d.controlLevel).toBe("review");
     expect(d.triggers).toContain("ranking_changed");
     expect(d.triggers).toContain("configured_trust_state");
   });
