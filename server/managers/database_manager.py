@@ -129,7 +129,14 @@ class DatabaseManager:
         """异步执行SQL语句"""
         self.writer_queue.put((sql, params))
 
-    def build_task_setting_key(self, scenario: Dict[str, Any], user_id: str, event_owner: str, task_type: str = '') -> Tuple[Any, ...]:
+    def build_task_setting_key(
+        self,
+        scenario: Dict[str, Any],
+        user_id: str,
+        event_owner: str,
+        task_type: str = '',
+        trust_state: str = '',
+    ) -> Tuple[Any, ...]:
         """生成任务设置去重键。"""
         difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
         return (
@@ -141,11 +148,19 @@ class DatabaseManager:
             scenario.get('ai_level_name') or '',
             difficulty_name,
             int(bool(scenario['audio_enabled'])),
+            trust_state or '',
         )
 
-    def find_existing_task_setting_id(self, scenario: Dict[str, Any], user_id: str, event_owner: str, task_type: str = '') -> Optional[int]:
+    def find_existing_task_setting_id(
+        self,
+        scenario: Dict[str, Any],
+        user_id: str,
+        event_owner: str,
+        task_type: str = '',
+        trust_state: str = '',
+    ) -> Optional[int]:
         """查找同一任务设置组合和重复序号是否已经有 task_id。"""
-        task_setting_key = self.build_task_setting_key(scenario, user_id, event_owner, task_type)
+        task_setting_key = self.build_task_setting_key(scenario, user_id, event_owner, task_type, trust_state)
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -160,6 +175,7 @@ class DatabaseManager:
                       AND IFNULL(ai_level_name, '') = ?
                       AND difficulty_name = ?
                       AND audio_enabled = ?
+                      AND IFNULL(trust_state, '') = ?
                     ORDER BY task_id
                     LIMIT 1
                     """,
@@ -185,13 +201,13 @@ class DatabaseManager:
     
     def record_task_settings(self, task_id: int, scenario: Dict[str, Any], 
                            user_id: str, event_owner: str, is_practice: bool,
-                           task_type: str = '') -> None:
+                           task_type: str = '', trust_state: str = '') -> None:
         """记录任务设置"""
         if is_practice:
             self.logger.debug(f"练习模式，跳过 task_settings 记录: task_id {task_id}")
             return
 
-        task_setting_key = self.build_task_setting_key(scenario, user_id, event_owner, task_type)
+        task_setting_key = self.build_task_setting_key(scenario, user_id, event_owner, task_type, trust_state)
 
         with self._task_settings_lock:
             if task_setting_key in self._pending_task_setting_keys:
@@ -215,6 +231,7 @@ class DatabaseManager:
                           AND IFNULL(ai_level_name, '') = ?
                           AND difficulty_name = ?
                           AND audio_enabled = ?
+                          AND IFNULL(trust_state, '') = ?
                         LIMIT 1
                         """,
                         task_setting_key
@@ -233,8 +250,8 @@ class DatabaseManager:
         sql = """
             INSERT INTO task_settings (
                 task_id, task_type, user_id, event_owner, repetition_count, is_ai_active, 
-                ai_level_config, difficulty_config, audio_enabled, ai_level_name, difficulty_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ai_level_config, difficulty_config, audio_enabled, ai_level_name, difficulty_name, trust_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
         params = (
@@ -248,7 +265,8 @@ class DatabaseManager:
             json.dumps(scenario['difficulty_config']),
             scenario['audio_enabled'],
             scenario.get('ai_level_name'),
-            difficulty_name
+            difficulty_name,
+            trust_state or '',
         )
         self.execute_async(sql, params)
         self.logger.info(f"记录任务设置: task_id {task_id}")
@@ -682,6 +700,7 @@ class DatabaseManager:
                     audio_enabled BOOLEAN NOT NULL,
                     ai_level_name TEXT,
                     difficulty_name TEXT NOT NULL,
+                    trust_state TEXT,
                     FOREIGN KEY (task_id) REFERENCES user_operations (task_id)
                 )
             """)
@@ -709,6 +728,11 @@ class DatabaseManager:
         if 'task_type' not in columns:
             self.logger.info("正在添加 task_type 列...")
             cursor.execute("ALTER TABLE task_settings ADD COLUMN task_type TEXT")
+            conn.commit()
+
+        if 'trust_state' not in columns:
+            self.logger.info("姝ｅ湪娣诲姞 trust_state 鍒?..")
+            cursor.execute("ALTER TABLE task_settings ADD COLUMN trust_state TEXT")
             conn.commit()
 
         self._backfill_task_settings_task_type(cursor, conn)

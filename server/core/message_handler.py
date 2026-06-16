@@ -37,6 +37,18 @@ class MessageHandler:
         self._external_collectors = None
         self.logger = get_logger("message_handler")
 
+    def _get_task_trust_state(self, task_type: str) -> str:
+        """Return the configured trust state for the task type stored in task_settings."""
+        trust_config = config_manager.get_trust_calibration_config()
+        state_config = trust_config.get('state') if isinstance(trust_config, dict) else None
+        if isinstance(state_config, str):
+            return state_config
+        if not isinstance(state_config, dict):
+            return ''
+        state_key = 'threat' if task_type == 'SA_THREAT_RESPONSE' else 'sensor'
+        state = state_config.get(state_key)
+        return state if isinstance(state, str) else ''
+
     def set_gaze_service(self, gaze_svc) -> None:
         """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
         self._gaze_svc = gaze_svc
@@ -396,11 +408,13 @@ class MessageHandler:
             current_scenario = task_manager.current_scenario
         
         self.current_session[f'{task_type}_scenario'] = current_scenario
+        trust_state = self._get_task_trust_state(task_type)
         existing_task_id = db_manager.find_existing_task_setting_id(
             current_scenario,
             user_id,
             event_owner,
             task_type,
+            trust_state,
         )
         is_retrying_incomplete_task = bool(
             existing_task_id and
@@ -435,6 +449,7 @@ class MessageHandler:
             event_owner,
             session_state.get('is_practice', False),
             task_type,
+            trust_state,
         )
         target_manager.initialize_targets(current_scenario['difficulty_config'])
 
@@ -871,11 +886,13 @@ class MessageHandler:
             task_manager.apply_repetition_override(repetition_override, overwrite=True)
             current_scenario = task_manager.current_scenario
 
+        trust_state = self._get_task_trust_state(task_type)
         existing_task_id = db_manager.find_existing_task_setting_id(
             current_scenario,
             user_id,
             event_owner,
             task_type,
+            trust_state,
         )
         is_retrying_incomplete_task = bool(
             existing_task_id and
@@ -912,6 +929,7 @@ class MessageHandler:
             event_owner,
             session_state.get('is_practice', False),
             task_type,
+            trust_state,
         )
         if self.use_enhanced_protocol:
             # 使用增强协议生成完整威胁数据
