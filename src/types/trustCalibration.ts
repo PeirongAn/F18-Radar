@@ -34,7 +34,8 @@ export type TrustControlTrigger =
   | "manual_review_required"
   | "unwarranted_reject"
   | "unwarranted_accept"
-  | "low_truth_coverage";
+  | "low_truth_coverage"
+  | "configured_trust_state";
 
 export interface SensorTrustCalibrationConfig {
   high_confidence: number;

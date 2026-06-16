@@ -459,6 +459,10 @@ function disabledThreatDecision(config: TrustCalibrationConfig): ThreatTrustDeci
   } as ThreatTrustDecision;
 }
 
+function configuredTrustState(state?: TrustState): Exclude<TrustState, "disabled"> {
+  return state === "under_trust" || state === "over_trust" ? state : "normal";
+}
+
 export function evaluateSensorTrustDecision(input: {
   config: TrustCalibrationConfig;
   recommendation?: SensorAIRecommendation | null;
@@ -497,11 +501,20 @@ export function evaluateSensorTrustDecision(input: {
       .some(candidate => candidate.id === recommendation.targetId && candidate.target?.type === "army"),
     config: sensorConfig,
   });
-  const triggers = Array.from(new Set([...taskRisk.triggers, ...behaviorState.triggers]));
-  const underTrust = behaviorState.underTrust || (behaviorState.trustState === "normal" && taskRisk.explainRisk);
-  const overTrust = behaviorState.overTrust;
+  const configuredState = configuredTrustState(config.state.sensor);
+  const derivedTrustState = behaviorState.trustState === "normal" && taskRisk.explainRisk
+    ? "under_trust"
+    : behaviorState.trustState;
+  const effectiveTrustState = configuredState === "normal" ? derivedTrustState : configuredState;
+  const triggers = Array.from(new Set([
+    ...taskRisk.triggers,
+    ...behaviorState.triggers,
+    ...(configuredState !== "normal" ? ["configured_trust_state" as TrustControlTrigger] : []),
+  ]));
+  const underTrust = effectiveTrustState === "under_trust";
+  const overTrust = effectiveTrustState === "over_trust";
   // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
-  const allowHardControl = !behaviorState.provisional;
+  const allowHardControl = configuredState !== "normal" || !behaviorState.provisional;
   const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && sensorConfig.require_evidence_before_confirm;
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick =
@@ -512,9 +525,7 @@ export function evaluateSensorTrustDecision(input: {
   return {
     task: "sensor",
     enabled: true,
-    trustState: behaviorState.trustState === "normal" && taskRisk.explainRisk
-      ? "under_trust"
-      : behaviorState.trustState,
+    trustState: effectiveTrustState,
     controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
     triggers,
     evidenceViewed: input.evidenceViewed,
@@ -592,11 +603,20 @@ export function evaluateThreatTrustDecision(input: {
     rankingChanged,
     config: threatConfig,
   });
-  const triggers = Array.from(new Set([...taskRisk.triggers, ...behaviorState.triggers]));
-  const underTrust = behaviorState.underTrust || (behaviorState.trustState === "normal" && taskRisk.explainRisk);
-  const overTrust = behaviorState.overTrust;
+  const configuredState = configuredTrustState(config.state.threat);
+  const derivedTrustState = behaviorState.trustState === "normal" && taskRisk.explainRisk
+    ? "under_trust"
+    : behaviorState.trustState;
+  const effectiveTrustState = configuredState === "normal" ? derivedTrustState : configuredState;
+  const triggers = Array.from(new Set([
+    ...taskRisk.triggers,
+    ...behaviorState.triggers,
+    ...(configuredState !== "normal" ? ["configured_trust_state" as TrustControlTrigger] : []),
+  ]));
+  const underTrust = effectiveTrustState === "under_trust";
+  const overTrust = effectiveTrustState === "over_trust";
   // 真值不足导致的暂定状态不触发强干预（复核/拦一键），只做软提示
-  const allowHardControl = !behaviorState.provisional;
+  const allowHardControl = configuredState !== "normal" || !behaviorState.provisional;
   const reviewNeeded = allowHardControl && overTrust && taskRisk.reviewRisk && threatConfig.require_evidence_before_submit;
   const reviewComplete = input.evidenceViewed || input.manualReviewDone;
   const blockedOneClick = reviewNeeded && !reviewComplete;
@@ -604,9 +624,7 @@ export function evaluateThreatTrustDecision(input: {
   return {
     task: "threat",
     enabled: true,
-    trustState: behaviorState.trustState === "normal" && taskRisk.explainRisk
-      ? "under_trust"
-      : behaviorState.trustState,
+    trustState: effectiveTrustState,
     controlLevel: reviewNeeded ? "review" : (underTrust || overTrust) ? "explain" : "none",
     triggers,
     evidenceViewed: input.evidenceViewed,

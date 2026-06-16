@@ -368,6 +368,7 @@ const TRUST_TRIGGER_LABELS: Record<TrustControlTrigger, string> = {
   unwarranted_reject: '拒绝了正确推荐',
   unwarranted_accept: '接受了错误推荐',
   low_truth_coverage: '真值不足',
+  configured_trust_state: '配置状态',
 };
 
 /** 任务面板常驻信任状态徽标：始终显示当前信任状态，含 normal */

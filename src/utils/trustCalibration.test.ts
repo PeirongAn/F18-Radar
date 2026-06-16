@@ -3,6 +3,7 @@ import {
   DEFAULT_TRUST_CALIBRATION_CONFIG,
   buildTrustBehaviorMetricsFromEvents,
   createTrustInteractionEvent,
+  evaluateSensorTrustDecision,
   evaluateTrustState,
   evaluateThreatTrustDecision,
 } from "./trustCalibration";
@@ -195,5 +196,63 @@ describe("evaluateThreatTrustDecision — 强干预闸门", () => {
     const d = evalThreat(events, /* scoreGapSmall */ true);
     expect(d.controlLevel).toBe("explain");
     expect(d.blockedOneClick).toBe(false);
+  });
+});
+
+describe("configured trust state", () => {
+  it("uses configured sensor state for the Radar task UI decision", () => {
+    const d = evaluateSensorTrustDecision({
+      config: {
+        ...DEFAULT_TRUST_CALIBRATION_CONFIG,
+        state: { sensor: "under_trust", threat: "normal" },
+      },
+      recommendation: {
+        targetId: "t1",
+        confidence: 0.9,
+        recommendedAt: Date.now(),
+        candidates: [
+          {
+            id: "t1",
+            label: "T1",
+            confidence: 0.9,
+            reason: "",
+            target: { id: "t1", type: "army" } as any,
+          },
+        ],
+      },
+      iffMode: true,
+      behaviorMetrics: buildTrustBehaviorMetricsFromEvents([], WINDOW),
+      evidenceViewed: false,
+      manualReviewDone: false,
+      previousTrustState: "normal",
+      now: Date.now(),
+    });
+
+    expect(d.trustState).toBe("under_trust");
+    expect(d.controlLevel).toBe("explain");
+    expect(d.triggers).toContain("configured_trust_state");
+  });
+
+  it("uses configured threat state for the SA task UI decision", () => {
+    const d = evaluateThreatTrustDecision({
+      config: {
+        ...DEFAULT_TRUST_CALIBRATION_CONFIG,
+        state: { sensor: "normal", threat: "over_trust" },
+      },
+      candidates: [
+        { id: "a", label: "A", score: 0.9, reason: "" },
+        { id: "b", label: "B", score: 0.3, reason: "" },
+      ],
+      generationTimestamp: undefined,
+      behaviorMetrics: buildTrustBehaviorMetricsFromEvents([], WINDOW),
+      evidenceViewed: false,
+      manualReviewDone: false,
+      previousTrustState: "normal",
+      now: Date.now(),
+    });
+
+    expect(d.trustState).toBe("over_trust");
+    expect(d.controlLevel).toBe("explain");
+    expect(d.triggers).toContain("configured_trust_state");
   });
 });
