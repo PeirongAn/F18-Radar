@@ -63,6 +63,17 @@ export function useThreatTrustCalibration({
   groundTruth?: { correctId?: string | null };
 }) {
   const mergedConfig = useMemo(() => mergeTrustCalibrationConfig(config), [config]);
+  const trustConfigReady = useMemo(() => {
+    const state = config?.state;
+    return typeof state === "string" || (
+      !!state &&
+      typeof state === "object" &&
+      typeof state.threat === "string"
+    );
+  }, [config]);
+  const activeConfig = useMemo<TrustCalibrationConfig>(() => (
+    trustConfigReady ? mergedConfig : { ...mergedConfig, enabled: false }
+  ), [mergedConfig, trustConfigReady]);
   const correctId = groundTruth?.correctId ?? null;
   const [trustEventHistory, setTrustEventHistory] = useState<TrustInteractionEvent[]>([]);
   const [evidenceViewed, setEvidenceViewed] = useState(false);
@@ -111,26 +122,26 @@ export function useThreatTrustCalibration({
     latestTrustEventsRef.current = nextEvents;
     nextEvents.forEach(debugTrustInteractionEvent);
     setTrustEventHistory(history => {
-      const historyLimit = Math.max(20, mergedConfig.threat.window_size * 6);
+      const historyLimit = Math.max(20, activeConfig.threat.window_size * 6);
       return [...history, ...nextEvents].slice(-historyLimit);
     });
-  }, [mergedConfig.threat.window_size]);
+  }, [activeConfig.threat.window_size]);
 
   const threatTrustDecision: ThreatTrustDecision = useMemo(() => {
     return evaluateThreatTrustDecision({
-      config: mergedConfig,
+      config: activeConfig,
       candidates,
       generationTimestamp,
       previousTopThreatId: rankingChange.previousTopThreatId,
       previousTopThreatRank: rankingChange.previousTopThreatRank,
-      behaviorMetrics: buildTrustBehaviorMetricsFromEvents(trustEventHistory, mergedConfig.threat.window_size),
+      behaviorMetrics: buildTrustBehaviorMetricsFromEvents(trustEventHistory, activeConfig.threat.window_size),
       evidenceViewed,
       manualReviewDone,
       previousTrustState: previousTrustStateRef.current,
       now: tick,
     });
   }, [
-    mergedConfig,
+    activeConfig,
     candidates,
     generationTimestamp,
     rankingChange,

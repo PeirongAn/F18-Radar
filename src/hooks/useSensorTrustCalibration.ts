@@ -38,6 +38,17 @@ export function useSensorTrustCalibration({
   groundTruth?: { correctType?: string };
 }) {
   const mergedConfig = useMemo(() => mergeTrustCalibrationConfig(config), [config]);
+  const trustConfigReady = useMemo(() => {
+    const state = config?.state;
+    return typeof state === "string" || (
+      !!state &&
+      typeof state === "object" &&
+      typeof state.sensor === "string"
+    );
+  }, [config]);
+  const activeConfig = useMemo<TrustCalibrationConfig>(() => (
+    trustConfigReady ? mergedConfig : { ...mergedConfig, enabled: false }
+  ), [mergedConfig, trustConfigReady]);
   const correctType = groundTruth?.correctType;
   // 解析某目标是否为「正确选择」：true/false 已知，undefined 表示真值未知
   const resolveCorrect = useCallback((targetId?: string): boolean | undefined => {
@@ -82,10 +93,10 @@ export function useSensorTrustCalibration({
     latestTrustEventsRef.current = nextEvents;
     nextEvents.forEach(debugTrustInteractionEvent);
     setTrustEventHistory(history => {
-      const historyLimit = Math.max(20, mergedConfig.sensor.window_size * 6);
+      const historyLimit = Math.max(20, activeConfig.sensor.window_size * 6);
       return [...history, ...nextEvents].slice(-historyLimit);
     });
-  }, [mergedConfig.sensor.window_size]);
+  }, [activeConfig.sensor.window_size]);
 
   const recordAIRecommendation = useCallback((target: SensorCandidateInput, fallbackConfidence?: number) => {
     if (!target?.id) return undefined;
@@ -106,10 +117,10 @@ export function useSensorTrustCalibration({
     setManualReviewDone(false);
     acceptedRecommendationRef.current = null;
     const nextDecision = evaluateSensorTrustDecision({
-      config: mergedConfig,
+      config: activeConfig,
       recommendation: nextRecommendation,
       iffMode,
-      behaviorMetrics: buildTrustBehaviorMetricsFromEvents(trustEventHistory, mergedConfig.sensor.window_size),
+      behaviorMetrics: buildTrustBehaviorMetricsFromEvents(trustEventHistory, activeConfig.sensor.window_size),
       evidenceViewed: false,
       manualReviewRequested: false,
       manualReviewDone: false,
@@ -145,7 +156,7 @@ export function useSensorTrustCalibration({
       trust_calibration: buildTrustCalibrationLogPayload(nextDecision),
       trust_events: trustEvents,
     };
-  }, [externalTargets, iffMode, mergedConfig, rememberTrustEvents, trustEventHistory]);
+  }, [externalTargets, iffMode, activeConfig, rememberTrustEvents, trustEventHistory]);
 
   const recordManualSelection = useCallback((targetId?: string) => {
     if (!targetId || !recommendation) return;
@@ -244,10 +255,10 @@ export function useSensorTrustCalibration({
 
   const sensorTrustDecision: SensorTrustDecision = useMemo(() => {
     return evaluateSensorTrustDecision({
-      config: mergedConfig,
+      config: activeConfig,
       recommendation,
       iffMode,
-      behaviorMetrics: buildTrustBehaviorMetricsFromEvents(trustEventHistory, mergedConfig.sensor.window_size),
+      behaviorMetrics: buildTrustBehaviorMetricsFromEvents(trustEventHistory, activeConfig.sensor.window_size),
       evidenceViewed,
       manualReviewRequested,
       manualReviewDone,
@@ -255,7 +266,7 @@ export function useSensorTrustCalibration({
       now: tick,
     });
   }, [
-    mergedConfig,
+    activeConfig,
     recommendation,
     iffMode,
     trustEventHistory,
