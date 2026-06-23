@@ -161,16 +161,17 @@ const fontBase: React.CSSProperties = {
 };
 
 const selectStyle: React.CSSProperties = {
-  padding: '2px 6px',
-  border: '1px solid #7a9ab5',
-  borderRadius: '2px',
+  padding: '5px 10px',
+  border: '1px solid #b9c7d6',
+  borderRadius: '6px',
   fontSize: '13px',
-  background: 'white',
-  color: '#008000',
-  WebkitTextFillColor: '#008000',
+  background: '#f8fafc',
+  color: '#14532d',
+  WebkitTextFillColor: '#14532d',
   opacity: 1,
   cursor: 'default',
   outline: 'none',
+  fontWeight: 600,
   ...fontBase,
 };
 
@@ -341,6 +342,10 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     const modalTitle =
       config.taskTitles?.[currentTaskType] ?? config.title ?? '座舱认知状态问卷';
+    const answeredCount = Object.keys(answers).length;
+    const progressPercent = config.questions.length > 0
+      ? Math.round((answeredCount / config.questions.length) * 100)
+      : 0;
 
     if (!isVisible) return null;
 
@@ -351,22 +356,24 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
           position: 'fixed',
           inset: 0,
           zIndex: 10000,
-          background: 'rgba(0,0,0,0.55)',
+          background: 'rgba(7, 16, 28, 0.62)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          padding: '24px',
           ...fontBase,
         }}
       >
         <div
           style={{
-            background: '#f0f0f0',
-            border: '1px solid #888',
-            borderRadius: '3px',
-            width: '820px',
+            background: '#f6f8fb',
+            border: '1px solid rgba(148, 163, 184, 0.55)',
+            borderRadius: '12px',
+            width: '1040px',
+            maxWidth: 'calc(100vw - 48px)',
             maxHeight: '92vh',
             overflowY: 'auto',
-            boxShadow: '6px 6px 24px rgba(0,0,0,0.45)',
+            boxShadow: '0 28px 70px rgba(15, 23, 42, 0.38)',
             display: 'flex',
             flexDirection: 'column',
           }}
@@ -374,14 +381,14 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
           {/* ── Title bar ── */}
           <div
             style={{
-              background: 'linear-gradient(180deg, #3a7bd5 0%, #2563c0 100%)',
+              background: '#1f5fbf',
               color: 'white',
-              padding: '7px 14px',
+              padding: '13px 18px',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              fontSize: '14px',
-              fontWeight: 'bold',
+              gap: '10px',
+              fontSize: '16px',
+              fontWeight: 700,
               userSelect: 'none',
               flexShrink: 0,
             }}
@@ -398,11 +405,11 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 background: 'rgba(255,255,255,0.15)',
                 border: '1px solid rgba(255,255,255,0.3)',
                 color: 'white',
-                width: '22px',
-                height: '22px',
-                borderRadius: '2px',
+                width: '30px',
+                height: '30px',
+                borderRadius: '6px',
                 cursor: 'pointer',
-                fontSize: '13px',
+                fontSize: '16px',
                 lineHeight: 1,
                 display: 'flex',
                 alignItems: 'center',
@@ -414,33 +421,38 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
           </div>
 
           {/* ── Body ── */}
-          <div style={{ padding: '20px 28px 28px', flex: 1 }}>
+          <div style={{ padding: '22px 30px 28px', flex: 1 }}>
 
             {/* Subject info row */}
-            <div style={{ display: 'flex', gap: '40px', marginBottom: '14px', fontSize: '15px' }}>
-              <span>
-                <strong>被试姓名：</strong>
-                <span style={{ fontWeight: 'bold' }}>{userId || '-'}</span>
-              </span>
-            </div>
-
-            {/* Task attribute row */}
             <div
               style={{
                 display: 'flex',
                 flexWrap: 'wrap',
                 alignItems: 'center',
-                gap: '8px',
-                marginBottom: '14px',
-                fontSize: '14px',
+                gap: '10px',
+                marginBottom: '16px',
               }}
             >
-              <span style={{ color: '#cc0000', fontWeight: 'bold' }}>任务类型：</span>
+              <span style={{ fontSize: '14px', color: '#475569' }}>被试姓名</span>
+              <span
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  background: '#e9f7ef',
+                  border: '1px solid #b7e4c7',
+                  color: '#047857',
+                  fontWeight: 700,
+                }}
+              >
+                {userId || '-'}
+              </span>
+              <span style={{ color: '#64748b', margin: '0 2px' }}>·</span>
+              <span style={{ fontSize: '14px', color: '#475569' }}>任务类型</span>
               <select style={selectStyle} value={taskLabel} disabled onChange={() => {}}>
                 <option>{taskLabel}</option>
               </select>
 
-              <span style={{ color: '#cc0000', fontWeight: 'bold', marginLeft: '8px' }}>任务难度：</span>
+              <span style={{ fontSize: '14px', color: '#475569' }}>任务难度</span>
               <select
                 style={selectStyle}
                 value={difficultyLabel}
@@ -450,14 +462,25 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 <option>{difficultyLabel}</option>
               </select>
 
-              <span style={{ color: '#cc0000', fontWeight: 'bold', marginLeft: '8px' }}>自主等级：</span>
+              <span style={{ fontSize: '14px', color: '#475569' }}>自主等级</span>
               <select style={selectStyle} value={autonomyLabel} disabled onChange={() => {}}>
                 <option>{autonomyLabel}</option>
               </select>
             </div>
 
             {/* Instruction */}
-            <div style={{ fontSize: '13px', color: '#333', marginBottom: '20px' }}>
+            <div
+              style={{
+                fontSize: '14px',
+                color: '#334155',
+                marginBottom: '18px',
+                padding: '12px 14px',
+                background: '#eef4fb',
+                border: '1px solid #d7e2ef',
+                borderRadius: '8px',
+                lineHeight: 1.6,
+              }}
+            >
               请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。
             </div>
 
@@ -467,127 +490,149 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 style={{
                   background: '#fff0f0',
                   border: '1px solid #e74c3c',
-                  borderRadius: '3px',
-                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  padding: '10px 14px',
                   marginBottom: '16px',
                   color: '#c0392b',
-                  fontSize: '13px',
+                  fontSize: '14px',
                 }}
               >
                 ⚠ 请完成所有题目的评分后再提交。
               </div>
             )}
 
-            {/* Questions table */}
-            <table
+            {/* Questions */}
+            <div
               style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                fontSize: '14px',
+                display: 'grid',
+                gap: '12px',
               }}
             >
-              <thead>
-                <tr style={{ borderBottom: '2px solid #b0b0b0' }}>
-                  <th
+              {config.questions.map(q => {
+                const isAnswered = answers[q.id] !== undefined;
+                const isMissing = validationError && !isAnswered;
+
+                return (
+                  <div
+                    key={q.id}
                     style={{
-                      textAlign: 'left',
-                      padding: '8px 6px',
-                      fontWeight: 'bold',
-                      width: '44%',
-                      color: '#222',
+                      background: isMissing ? '#fff7ed' : '#ffffff',
+                      border: `1px solid ${isMissing ? '#fb923c' : '#d9e2ec'}`,
+                      borderRadius: '10px',
+                      padding: '14px 16px 16px',
+                      boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)',
                     }}
                   >
-                    题目
-                  </th>
-                  {scales.map(scale => (
-                    <th
-                      key={scale}
+                    <div
                       style={{
-                        textAlign: 'center',
-                        padding: '8px 4px',
-                        fontWeight: 'bold',
-                        color: '#333',
-                        whiteSpace: 'nowrap',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '12px',
+                        marginBottom: '12px',
                       }}
                     >
-                      {scale}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {config.questions.map((q, idx) => {
-                  const isAnswered = answers[q.id] !== undefined;
-                  const rowBg = validationError && !isAnswered
-                    ? '#fff5f5'
-                    : idx % 2 === 1
-                    ? '#f7f7f7'
-                    : 'transparent';
-
-                  return (
-                    <tr
-                      key={q.id}
+                      <span
+                        style={{
+                          minWidth: '28px',
+                          height: '28px',
+                          borderRadius: '6px',
+                          background: isAnswered ? '#dbeafe' : '#edf2f7',
+                          color: isAnswered ? '#1d4ed8' : '#475569',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 700,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}
+                      >
+                        {q.id}
+                      </span>
+                      <div style={{ color: '#172033', fontSize: '15px', lineHeight: 1.55, fontWeight: 600 }}>
+                        {q.text}
+                      </div>
+                    </div>
+                    <div
                       style={{
-                        background: rowBg,
-                        borderBottom: '1px solid #e8e8e8',
-                        transition: 'background 0.15s',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                        gap: '8px',
                       }}
                     >
-                      <td style={{ padding: '11px 6px', color: '#222', lineHeight: 1.5 }}>
-                        {q.id}. {q.text}
-                      </td>
                       {scales.map((scale, scaleIdx) => {
                         const value = scaleIdx + 1;
                         const checked = answers[q.id] === value;
                         const optionLabel = q.options?.[scaleIdx] ?? scale;
                         return (
-                          <td
+                          <label
                             key={scaleIdx}
-                            style={{ textAlign: 'center', padding: '11px 4px', verticalAlign: 'top' }}
+                            style={{
+                              minHeight: '58px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              cursor: 'pointer',
+                              padding: '9px 10px',
+                              borderRadius: '8px',
+                              border: `1px solid ${checked ? '#2563eb' : '#d2dbe8'}`,
+                              background: checked ? '#eff6ff' : '#f8fafc',
+                              color: checked ? '#1e40af' : '#334155',
+                              transition: 'border-color 0.16s, background 0.16s, box-shadow 0.16s',
+                            }}
                           >
-                            <label
+                            <input
+                              type="radio"
+                              name={`q_${q.id}`}
+                              checked={checked}
+                              onChange={() => handleAnswer(q.id, value)}
                               style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '5px',
-                                width: '100%',
+                                width: '17px',
+                                height: '17px',
                                 cursor: 'pointer',
-                                fontSize: '12px',
-                                lineHeight: 1.35,
+                                accentColor: '#2563eb',
+                                flexShrink: 0,
                               }}
-                            >
-                              <input
-                                type="radio"
-                                name={`q_${q.id}`}
-                                checked={checked}
-                                onChange={() => handleAnswer(q.id, value)}
-                                style={{
-                                  width: '16px',
-                                  height: '16px',
-                                  cursor: 'pointer',
-                                  accentColor: '#2563c0',
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <span>{optionLabel}</span>
-                            </label>
-                          </td>
+                            />
+                            <span style={{ display: 'grid', gap: '2px', minWidth: 0 }}>
+                              <span style={{ fontSize: '13px', lineHeight: 1, fontWeight: 700 }}>{scale}</span>
+                              <span style={{ fontSize: '12px', lineHeight: 1.35 }}>{optionLabel}</span>
+                            </span>
+                          </label>
                         );
                       })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
             {/* Progress indicator */}
-            <div style={{ marginTop: '14px', fontSize: '12px', color: '#888', textAlign: 'right' }}>
-              已完成：{Object.keys(answers).length} / {config.questions.length} 题
+            <div
+              style={{
+                marginTop: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                color: '#64748b',
+                fontSize: '13px',
+              }}
+            >
+              <div style={{ flex: 1, height: '8px', borderRadius: '999px', background: '#dbe3ee', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${progressPercent}%`,
+                    height: '100%',
+                    background: '#2563eb',
+                    transition: 'width 0.2s',
+                  }}
+                />
+              </div>
+              <span style={{ minWidth: '110px', textAlign: 'right' }}>
+                已完成：{answeredCount} / {config.questions.length} 题
+              </span>
             </div>
 
             {/* Submit area */}
-            <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            <div style={{ marginTop: '22px', textAlign: 'center' }}>
               {submitted ? (
                 <div
                   style={{
@@ -595,10 +640,10 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                     alignItems: 'center',
                     gap: '8px',
                     padding: '12px 32px',
-                    background: '#e8f8e8',
-                    border: '1px solid #4caf50',
-                    borderRadius: '4px',
-                    color: '#2e7d32',
+                    background: '#ecfdf5',
+                    border: '1px solid #86efac',
+                    borderRadius: '8px',
+                    color: '#166534',
                     fontWeight: 'bold',
                     fontSize: '15px',
                   }}
@@ -613,24 +658,25 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                   onClick={handleSubmit}
                   disabled={isSubmitting}
                   style={{
-                    padding: '10px 72px',
-                    background: isSubmitting ? '#88bb88' : '#22aa22',
+                    minWidth: '220px',
+                    padding: '12px 72px',
+                    background: isSubmitting ? '#93c5fd' : '#1f5fbf',
                     color: 'white',
                     border: 'none',
-                    borderRadius: '3px',
+                    borderRadius: '8px',
                     fontSize: '16px',
                     fontWeight: 'bold',
                     cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                    letterSpacing: '0.1em',
-                    boxShadow: '0 2px 6px rgba(0,120,0,0.25)',
-                    transition: 'background 0.2s',
+                    letterSpacing: '0.08em',
+                    boxShadow: '0 10px 24px rgba(31, 95, 191, 0.26)',
+                    transition: 'background 0.2s, transform 0.2s',
                     ...fontBase,
                   }}
                   onMouseEnter={e => {
-                    if (!isSubmitting) (e.currentTarget as HTMLButtonElement).style.background = '#1a8a1a';
+                    if (!isSubmitting) (e.currentTarget as HTMLButtonElement).style.background = '#174ea6';
                   }}
                   onMouseLeave={e => {
-                    if (!isSubmitting) (e.currentTarget as HTMLButtonElement).style.background = '#22aa22';
+                    if (!isSubmitting) (e.currentTarget as HTMLButtonElement).style.background = '#1f5fbf';
                   }}
                 >
                   提交
