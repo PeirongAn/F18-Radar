@@ -336,7 +336,7 @@ class TaskScenarioManager:
         diff_conf = all_difficulties.get(current_diff, {}).copy()
         diff_conf['difficulty_name'] = current_diff
 
-        current_level_name = self.config.get('current_level', 'L0')
+        current_level_name = self.config.get('current_level', 'L1')
         current_level_conf = None
         for lv in self.config.get('levels', []):
             if lv.get('level') == current_level_name:

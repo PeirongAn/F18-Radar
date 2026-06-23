@@ -145,8 +145,8 @@ class FakeExternalCollectors:
 
 def make_config():
     return {
-        "current_level": "L0",
-        "levels": [{"level": "L0"}, {"level": "L1"}, {"level": "L2"}],
+        "current_level": "L1",
+        "levels": [{"level": "L1"}, {"level": "L2"}, {"level": "L3"}],
         "game_settings": {
             "current_difficulty": "low",
             "difficulty_levels": {
@@ -172,6 +172,35 @@ def setup_bridge(monkeypatch):
     monkeypatch.setattr(bridge, "generate_task_id", lambda: next(ids))
     monkeypatch.setattr(bridge.config_manager, "get_config", make_config)
     return fake_db
+
+
+def test_platform_numeric_fields_follow_external_protocol(monkeypatch):
+    setup_bridge(monkeypatch)
+    _, normalized = bridge._normalize_platform_task_fields({
+        "TaskName": "\u6b66\u5668\u53d1\u5c04\u4efb\u52a1",
+        "ID": "DefaultID",
+        "Gender": "1",
+        "DefaultControlMode": "1",
+        "AIAutonomyLeve": "1",
+        "TaskMode": "0",
+        "Difficulty": "3",
+        "aiprecision": "1",
+        "TaskNumber": "0",
+        "Action": "task_start",
+    })
+
+    assert normalized["ai_autonomy_level"] == "L3"
+    assert normalized["current_level"] == "L3"
+    assert normalized["difficulty_key"] == "high"
+    assert normalized["difficulty_raw"] == "3"
+
+
+def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):
+    setup_bridge(monkeypatch)
+    config = make_config()
+    config["current_level"] = "L2"
+
+    assert bridge._normalize_current_level("0", config) == "L2"
 
 
 def overall_start(task_number="3"):
@@ -330,6 +359,25 @@ def test_sub_end_records_event_result_and_completes_by_task_number(monkeypatch):
     assert fake_db.results[0]["switch_count"] == 1
     assert fake_db.results[0]["fire_count"] == 2
     assert fake_db.results[0]["fire_success_count"] == 1
+
+
+def test_sub_end_maintains_task_count_without_sub_start(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    bridge._handle_external_task(overall_start("2"), "platform_control")
+
+    first = bridge._handle_external_task(sub_end(), "platform_control")
+    second = bridge._handle_external_task(sub_end(), "platform_control")
+
+    assert first[0]["sub_task_seq"] == 1
+    assert first[0]["completed_subtasks"] == 1
+    assert first[0]["task_status"] == "active"
+    assert second[0]["sub_task_seq"] == 2
+    assert second[0]["completed_subtasks"] == 2
+    assert second[0]["task_status"] == "completed"
+    assert fake_db.runs[42]["current_subtask_seq"] == 2
+    assert fake_db.runs[42]["completed_subtasks"] == 2
+    assert fake_db.runs[42]["status"] == "completed"
+    assert [event["sub_task_seq"] for event in fake_db.events if event["event_type"] == "sub_end"] == [1, 2]
 
 
 def test_overall_task_start_resumes_unfinished_task(monkeypatch):

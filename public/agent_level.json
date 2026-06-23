@@ -1,8 +1,8 @@
 {
-  "current_level": "L2",
+  "current_level": "L3",
   "levels": [
     {
-      "level": "L0",
+      "level": "L1",
       "desc": "低级智能体，延时最长，自动处理最慢",
       "threat_select_delay_ms": 1000,
       "tdc_select_delay_ms": 1000,
@@ -12,7 +12,7 @@
       ]
     },
     {
-      "level": "L1",
+      "level": "L2",
       "desc": "中级智能体，延时适中",
       "threat_select_delay_ms": 500,
       "tdc_select_delay_ms": 500,
@@ -22,7 +22,7 @@
       ]
     },
     {
-      "level": "L2",
+      "level": "L3",
       "desc": "高级智能体，延时最短，自动处理最快",
       "threat_select_delay_ms": 100,
       "tdc_select_delay_ms": 100,
@@ -104,9 +104,9 @@
         "low"
       ],
       "level_order": [
-        "L0",
         "L1",
-        "L2"
+        "L2",
+        "L3"
       ],
       "audio_options": [
         true,

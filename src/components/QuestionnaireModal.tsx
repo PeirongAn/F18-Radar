@@ -142,13 +142,12 @@ function translateAutonomyLevel(level: string | undefined, labels?: Record<strin
   if (!level) return '-';
   if (labels?.[level]) return labels[level];
   switch (level) {
-    case '0':
-    case '1':
-    case 'L0': return 'L0';
-    case '2':
     case 'L1': return 'L1';
-    case '3':
     case 'L2': return 'L2';
+    case 'L3': return 'L3';
+    case '1': return 'L3';
+    case '2': return 'L2';
+    case '3': return 'L1';
     default: return level;
   }
 }

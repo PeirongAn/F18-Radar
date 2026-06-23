@@ -42,7 +42,7 @@ def _valid_levels(config: Dict[str, Any]) -> List[str]:
 
 def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
     valid = _valid_levels(config)
-    default = config.get("current_level") or (valid[0] if valid else "L0")
+    default = config.get("current_level") or (valid[0] if valid else "L1")
     if raw is None or str(raw).strip() == "":
         return default
     s = str(raw).strip()
@@ -53,18 +53,19 @@ def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
         return su
     if len(s) >= 2 and s[0].upper() == "L" and s[1:].isdigit():
         cand = "L" + s[1:]
-        if cand in valid:
+        if cand in valid or cand == "L3":
             return cand
     try:
         n = int(float(s))
-        # 平台包里的 AIAutonomyLeve 与界面展示一致：0=L0, 1=L1, 2=L2。
-        # 若旧包仍发送 3，则夹到最高可用等级，避免落到不存在的 L3。
-        idx = max(0, n)
-        cand = f"L{idx}"
-        if cand in valid:
+        # External platform protocol: 1=L3, 2=L2, 3=L1.
+        protocol_map = {
+            1: "L3",
+            2: "L2",
+            3: "L1",
+        }
+        cand = protocol_map.get(n)
+        if cand:
             return cand
-        if valid:
-            return valid[min(idx, len(valid) - 1)]
     except ValueError:
         pass
     return default
@@ -108,13 +109,13 @@ def _normalize_difficulty_key(raw: Any, config: Dict[str, Any]) -> str:
         return s
     try:
         n = int(float(s))
-        # 平台协议：1=高, 2=中, 3=低（与直觉相反）
+        # External platform protocol: 1=low, 2=medium, 3=high.
         if n <= 1:
-            pick = "high"
+            pick = "low"
         elif n == 2:
             pick = "medium"
         else:  # n >= 3
-            pick = "low"
+            pick = "high"
         return pick
     except ValueError:
         pass
@@ -551,7 +552,7 @@ def get_progress_key_for_task(user_id: str, task_type: str) -> str:
     mode = normalized.get("default_control_mode")
     if mode is None or str(mode).strip() == "":
         mode = "1" if normalized.get("include_ai") else "0"
-    level = normalized.get("current_level") or normalized.get("ai_autonomy_level") or "L0"
+    level = normalized.get("current_level") or normalized.get("ai_autonomy_level") or "L1"
     difficulty = normalized.get("difficulty_key") or ""
     combo = f"{str(mode).strip()}-{str(level).strip()}-{str(difficulty).strip()}"
     progress_key = f"{task_type}::{combo}"
@@ -1601,10 +1602,10 @@ def _handle_external_task(
     tid = active["task_id"]
 
     if action == "sub_end":
-        seq = int(active.get("current_subtask_seq") or 0)
-        if seq <= 0:
-            seq = int(active.get("completed_subtasks") or 0) + 1
-            active["current_subtask_seq"] = seq
+        completed_before = int(active.get("completed_subtasks") or 0)
+        current_seq = int(active.get("current_subtask_seq") or 0)
+        seq = current_seq if current_seq > completed_before else completed_before + 1
+        active["current_subtask_seq"] = seq
         result = message_data.get("result") if isinstance(message_data.get("result"), dict) else {}
         db_manager.record_task_event(
             task_id=tid,
@@ -1627,13 +1628,14 @@ def _handle_external_task(
                 timestamp_ms=ts,
                 **metrics,
             )
-        completed = int(active.get("completed_subtasks") or 0) + 1
+        completed = completed_before + 1
         active["completed_subtasks"] = completed
         expected = int(active.get("expected_subtasks") or 0)
         status = "completed" if expected and completed >= expected else "active"
         db_manager.update_task_run_progress(
             task_id=tid,
             completed_subtasks=completed,
+            current_subtask_seq=seq,
             status=status,
             completed_at_ms=ts if status == "completed" else None,
             raw_message_json=raw,

@@ -1,8 +1,8 @@
 {
-  "current_level": "L2",
+  "current_level": "L3",
   "levels": [
     {
-      "level": "L0",
+      "level": "L1",
       "desc": "低级智能体，延时最长，自动处理最慢",
       "threat_select_delay_ms": 1000,
       "tdc_select_delay_ms": 1000,
@@ -12,7 +12,7 @@
       ]
     },
     {
-      "level": "L1",
+      "level": "L2",
       "desc": "中级智能体，延时适中",
       "threat_select_delay_ms": 500,
       "tdc_select_delay_ms": 500,
@@ -22,7 +22,7 @@
       ]
     },
     {
-      "level": "L2",
+      "level": "L3",
       "desc": "高级智能体，延时最短，自动处理最快",
       "threat_select_delay_ms": 100,
       "tdc_select_delay_ms": 100,
@@ -33,6 +33,10 @@
   ],
   "trust_calibration": {
     "enabled": true,
+    "state": {
+      "sensor": "over_trust",
+      "threat": "over_trust"
+    },
     "sensor": {
       "high_confidence": 0.85,
       "low_confidence_min": 0.6,
@@ -44,7 +48,10 @@
       "window_size": 5,
       "hysteresis": 1,
       "latency_threshold_ms": 4500,
-      "require_evidence_before_confirm": true
+      "require_evidence_before_confirm": true,
+      "min_truth_coverage": 0.5,
+      "unwarranted_reject_threshold": 2,
+      "unwarranted_accept_threshold": 1
     },
     "threat": {
       "score_gap_threshold": 0.1,
@@ -55,7 +62,10 @@
       "window_size": 5,
       "hysteresis": 1,
       "latency_threshold_ms": 4500,
-      "require_evidence_before_submit": true
+      "require_evidence_before_submit": true,
+      "min_truth_coverage": 0.5,
+      "unwarranted_reject_threshold": 2,
+      "unwarranted_accept_threshold": 1
     },
     "display": {
       "show_explanation_panel": true,
@@ -94,9 +104,9 @@
         "low"
       ],
       "level_order": [
-        "L0",
         "L1",
-        "L2"
+        "L2",
+        "L3"
       ],
       "audio_options": [
         true,
