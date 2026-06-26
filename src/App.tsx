@@ -769,7 +769,7 @@ const MainApp: React.FC = observer(() => {
       platformAutoStart.includeAI,
       platformAutoStart.taskType,
       platformAutoStart.isPractice,
-      false,
+      platformAutoStart.useJoystick,
       platformAutoStart.taskNumber,
     );
   }, [platformAutoStart, handleStartApp]);

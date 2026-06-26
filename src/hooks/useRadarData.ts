@@ -551,6 +551,7 @@ const useRadarData = (
     taskType: 'radar' | 'sa';
     includeAI: boolean;
     isPractice: boolean;
+    useJoystick: boolean;
     taskNumber?: number;
   } | null>(null);
 
@@ -1089,6 +1090,7 @@ const useRadarData = (
           taskType,
           includeAI: Boolean(message.normalized.include_ai),
           isPractice: Boolean(message.normalized.is_practice),
+          useJoystick: message.useJoystick !== false,
           taskNumber,
         });
       }
