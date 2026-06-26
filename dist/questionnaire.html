@@ -7,40 +7,50 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html, body {
+      width: 100%;
+      min-height: 100%;
+    }
+
     body {
       font-family: 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Noto Sans SC', sans-serif;
-      background: #e4e8ec;
-      min-height: 100vh;
+      background: #dfe7f1;
+      height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 12px;
+      overflow: hidden;
     }
 
     /* ── Dialog window ── */
     .dialog {
-      background: #f0f0f0;
-      border: 1px solid #888;
-      border-radius: 3px;
-      width: 820px;
-      max-width: 100%;
-      box-shadow: 6px 6px 24px rgba(0,0,0,0.45);
+      background: #f6f8fb;
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      border-radius: 12px;
+      width: min(1500px, calc(100vw - 24px));
+      height: calc(100vh - 24px);
+      max-width: calc(100vw - 24px);
+      max-height: calc(100vh - 24px);
+      box-shadow: 0 28px 70px rgba(15, 23, 42, 0.28);
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
 
     /* ── Title bar ── */
     .titlebar {
-      background: linear-gradient(180deg, #3a7bd5 0%, #2563c0 100%);
+      background: #1f5fbf;
       color: white;
-      padding: 7px 14px;
+      padding: 13px 18px;
       display: flex;
       align-items: center;
-      gap: 8px;
-      font-size: 14px;
-      font-weight: bold;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 700;
       user-select: none;
-      border-radius: 3px 3px 0 0;
+      border-radius: 12px 12px 0 0;
+      flex-shrink: 0;
     }
     .titlebar svg { flex-shrink: 0; }
     .titlebar-title { flex: 1; }
@@ -66,120 +76,196 @@
     .ws-dot.error     { background: #ff4444; }
 
     /* ── Body ── */
-    .body { padding: 20px 28px 28px; }
+    .body {
+      padding: 18px 28px 24px;
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
 
     /* ── Info rows ── */
     .info-row {
       display: flex;
-      gap: 40px;
-      margin-bottom: 14px;
-      font-size: 15px;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 14px;
+      align-items: center;
+      color: #475569;
     }
-    .info-row .subject-name { font-weight: bold; }
+    .info-row .subject-name {
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 6px;
+      background: #e9f7ef;
+      border: 1px solid #b7e4c7;
+      color: #047857;
+    }
     .info-row .exp-no { color: #1a5fb4; font-weight: bold; }
 
     .attr-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 14px;
+      gap: 10px;
+      margin-bottom: 16px;
       font-size: 14px;
+      color: #475569;
     }
-    .attr-label { color: #cc0000; font-weight: bold; }
+    .attr-label { color: #475569; font-weight: 400; }
     .attr-label + select { margin-right: 8px; }
 
     select.attr-select {
-      padding: 2px 6px;
-      border: 1px solid #7a9ab5;
-      border-radius: 2px;
+      padding: 5px 10px;
+      border: 1px solid #b9c7d6;
+      border-radius: 6px;
       font-size: 13px;
-      background: white;
-      color: #008000;
-      -webkit-text-fill-color: #008000;
+      background: #f8fafc;
+      color: #14532d;
+      -webkit-text-fill-color: #14532d;
       opacity: 1;
       font-family: inherit;
+      font-weight: 600;
       cursor: default;
       outline: none;
     }
 
     .instruction {
-      font-size: 13px;
-      color: #333;
-      margin-bottom: 20px;
+      font-size: 14px;
+      color: #334155;
+      margin-bottom: 18px;
+      padding: 12px 14px;
+      background: #eef4fb;
+      border: 1px solid #d7e2ef;
+      border-radius: 8px;
+      line-height: 1.6;
     }
 
     /* ── Validation error ── */
     .error-banner {
       background: #fff0f0;
       border: 1px solid #e74c3c;
-      border-radius: 3px;
-      padding: 8px 14px;
+      border-radius: 8px;
+      padding: 10px 14px;
       margin-bottom: 16px;
       color: #c0392b;
-      font-size: 13px;
+      font-size: 14px;
       display: none;
     }
     .error-banner.show { display: block; }
 
-    /* ── Table ── */
-    table.q-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
+    /* ── Questions ── */
+    .q-list {
+      display: grid;
+      gap: 10px;
     }
-    table.q-table thead tr {
-      border-bottom: 2px solid #b0b0b0;
+    .q-card {
+      background: #fff;
+      border: 1px solid #d9e2ec;
+      border-radius: 10px;
+      padding: 12px 14px 14px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
     }
-    table.q-table thead th {
-      padding: 8px 4px;
-      font-weight: bold;
-      color: #333;
-      text-align: center;
-      white-space: nowrap;
+    .q-card.unanswered {
+      background: #fff7ed;
+      border-color: #fb923c;
     }
-    table.q-table thead th:first-child {
-      text-align: left;
-      padding-left: 6px;
-      width: 44%;
-      color: #222;
+    .q-title {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 10px;
     }
-    table.q-table tbody tr {
-      border-bottom: 1px solid #e8e8e8;
-      transition: background 0.15s;
-    }
-    table.q-table tbody tr:nth-child(even) { background: #f7f7f7; }
-    table.q-table tbody tr.unanswered   { background: #fff5f5 !important; }
-
-    table.q-table td {
-      padding: 11px 4px;
-      text-align: center;
-    }
-    table.q-table td:first-child {
-      text-align: left;
-      padding-left: 6px;
-      color: #222;
-      line-height: 1.5;
-    }
-    table.q-table td label {
+    .q-number {
+      min-width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: #edf2f7;
+      color: #475569;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 100%;
-      cursor: pointer;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
     }
-    table.q-table input[type="radio"] {
-      width: 16px;
-      height: 16px;
+    .q-card.answered .q-number {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+    .q-text {
+      color: #172033;
+      font-size: 15px;
+      line-height: 1.55;
+      font-weight: 600;
+    }
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .option-choice {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
       cursor: pointer;
-      accent-color: #2563c0;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #d2dbe8;
+      background: #f8fafc;
+      color: #334155;
+      transition: border-color 0.16s, background 0.16s;
+    }
+    .option-choice.selected {
+      border-color: #2563eb;
+      background: #eff6ff;
+      color: #1e40af;
+    }
+    .option-choice input[type="radio"] {
+      width: 17px;
+      height: 17px;
+      cursor: pointer;
+      accent-color: #2563eb;
+      flex-shrink: 0;
+    }
+    .option-text {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .option-scale {
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 700;
+    }
+    .option-label {
+      font-size: 12px;
+      line-height: 1.35;
     }
 
     /* ── Progress ── */
     .progress-line {
-      margin-top: 14px;
-      font-size: 12px;
-      color: #888;
+      margin-top: 16px;
+      font-size: 13px;
+      color: #64748b;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .progress-track {
+      flex: 1;
+      height: 8px;
+      border-radius: 999px;
+      background: #dbe3ee;
+      overflow: hidden;
+    }
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      background: #2563eb;
+      transition: width 0.2s;
+    }
+    .progress-text {
+      min-width: 110px;
       text-align: right;
     }
 
@@ -187,21 +273,22 @@
     .submit-area { margin-top: 20px; text-align: center; }
 
     .btn-submit {
-      padding: 10px 72px;
-      background: #22aa22;
+      min-width: 220px;
+      padding: 12px 72px;
+      background: #1f5fbf;
       color: white;
       border: none;
-      border-radius: 3px;
+      border-radius: 8px;
       font-size: 16px;
       font-weight: bold;
       cursor: pointer;
-      letter-spacing: 0.1em;
-      box-shadow: 0 2px 6px rgba(0,120,0,0.25);
+      letter-spacing: 0.08em;
+      box-shadow: 0 10px 24px rgba(31, 95, 191, 0.26);
       transition: background 0.2s;
       font-family: inherit;
     }
-    .btn-submit:hover:not(:disabled) { background: #1a8a1a; }
-    .btn-submit:disabled { background: #88bb88; cursor: not-allowed; }
+    .btn-submit:hover:not(:disabled) { background: #174ea6; }
+    .btn-submit:disabled { background: #93c5fd; cursor: not-allowed; }
 
     .success-box {
       display: none;
@@ -209,10 +296,10 @@
       justify-content: center;
       gap: 8px;
       padding: 12px 32px;
-      background: #e8f8e8;
-      border: 1px solid #4caf50;
-      border-radius: 4px;
-      color: #2e7d32;
+      background: #ecfdf5;
+      border: 1px solid #86efac;
+      border-radius: 8px;
+      color: #166534;
       font-weight: bold;
       font-size: 15px;
     }
@@ -226,6 +313,30 @@
       color: #888;
       padding: 40px;
       font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      body { padding: 8px; }
+      .dialog {
+        width: calc(100vw - 16px);
+        height: calc(100vh - 16px);
+        max-width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+      }
+      .body { padding: 14px 16px 20px; }
+      .option-grid { grid-template-columns: 1fr; }
+      .progress-line {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .progress-track {
+        width: 100%;
+        flex: none;
+      }
+      .progress-text {
+        min-width: 0;
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -273,16 +384,12 @@
 
     <!-- Questions -->
     <div class="loading" id="loadingTip">正在加载问卷...</div>
-    <table class="q-table" id="qTable" style="display:none">
-      <thead>
-        <tr id="tableHeader"></tr>
-      </thead>
-      <tbody id="tableBody"></tbody>
-    </table>
+    <div class="q-list" id="qTable" style="display:none"></div>
 
     <!-- Progress -->
     <div class="progress-line" id="progressLine" style="display:none">
-      已完成：<span id="answeredCount">0</span> / <span id="totalCount">0</span> 题
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <span class="progress-text">已完成：<span id="answeredCount">0</span> / <span id="totalCount">0</span> 题</span>
     </div>
 
     <!-- Submit -->
@@ -395,26 +502,21 @@ function renderContext() {
   document.getElementById('displayUserId').textContent = userId || '-';
 
   // Task type label
-  const FALLBACK_TASK_LABELS = {
-    RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务',
-    PLATFORM_CONTROL: '平台控制', WEAPON_FIRING: '武器发射',
-  };
-  const taskLabel = config?.taskTypeLabels?.[taskType]
-    ?? FALLBACK_TASK_LABELS[taskType] ?? taskType ?? '-';
+  const taskLabel = config?.taskTypeLabels?.[taskType] ?? taskType ?? '-';
   setSelectValue('selTaskType', taskLabel);
 
   // Difficulty
-  const diffLabels = config?.difficultyLabels || { low: '低', medium: '中', high: '高', 1: '高', 2: '中', 3: '低' };
+  const diffLabels = config?.difficultyLabels || {};
   const diffLabel  = diffLabels[difficulty] || difficulty || '-';
   setSelectValue('selDifficulty', diffLabel);
 
   // Autonomy
-  const aiLabels = config?.autonomyLabels || { 1: 'L3', 2: 'L2', 3: 'L1', L1: 'L1', L2: 'L2', L3: 'L3' };
+  const aiLabels = config?.autonomyLabels || {};
   const autoLabel = aiLabels[autonomyLevel] || autonomyLevel || '-';
   setSelectValue('selAutonomy', autoLabel);
 
   // Title
-  const title = config?.taskTitles?.[taskType] ?? config?.title ?? '座舱认知状态问卷';
+  const title = config?.taskTitles?.[taskType] ?? config?.title ?? document.title;
   document.getElementById('titleText').textContent = title;
   document.title = title;
 }
@@ -429,36 +531,49 @@ function setSelectValue(id, value) {
   sel.value = value;
 }
 
+function createEmptyConfig() {
+  return {
+    title: document.title || 'Questionnaire',
+    taskTitles: {},
+    taskTypeLabels: {},
+    difficultyLabels: {},
+    autonomyLabels: {},
+    scales: [],
+    questions: [],
+  };
+}
+
+function normalizeConfig(raw) {
+  const base = createEmptyConfig();
+  const merged = { ...base, ...(raw || {}) };
+  merged.taskTitles = merged.taskTitles || {};
+  merged.taskTypeLabels = merged.taskTypeLabels || {};
+  merged.difficultyLabels = merged.difficultyLabels || {};
+  merged.autonomyLabels = merged.autonomyLabels || {};
+  merged.scales = Array.isArray(merged.scales) ? merged.scales : [];
+  merged.questions = Array.isArray(merged.questions) ? merged.questions : [];
+  return merged;
+}
+
 /* ═══════════════════════════════════════════════════════
    Load config & build table
 ═══════════════════════════════════════════════════════ */
 async function loadConfig() {
   try {
-    const res = await fetch('/questionnaire_config.json');
-    config = await res.json();
+    const res = await fetch('questionnaire_config.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    config = normalizeConfig(await res.json());
   } catch(e) {
-    console.warn('无法加载 questionnaire_config.json，使用默认配置');
-    config = {
-      title: '座舱认知状态问卷',
-      scales: ['1', '2', '3', '4', '5'],
-      questions: [
-        { id: 1, text: 'T1：我对该智能辅助系统有信心。', options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'] },
-        { id: 2, text: 'T2：我认为该智能辅助系统是可靠的。', options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'] },
-        { id: 3, text: 'T3：我愿意信任该辅助智能系统的判断或建议。', options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'] },
-        { id: 4, text: 'MF：请评估您当前的精神疲劳/困倦程度。', options: ['非常清醒，状态良好', '清醒，但反应略慢', '既不清醒也不困倦', '有些困倦，精力下降', '非常困倦，难以保持清醒'] },
-        { id: 5, text: 'PF：请评估你当前的身体疲劳程度。', options: ['完全不疲劳', '轻微疲劳', '比较疲劳', '很疲劳', '非常疲劳'] },
-        { id: 6, text: 'ML：请评估你刚才完成任务所投入的脑力努力程度。', options: ['完全不费脑力', '轻微费脑力', '比较费脑力', '很费脑力', '非常费脑力'] },
-        { id: 7, text: 'S：请评价你在本轮任务中感受到的压力或紧张程度。', options: ['完全没有压力，非常放松', '轻度压力，基本放松', '中等压力，需要持续注意和应对', '压力较大，明显感到紧张或负担', '非常有压力，难以放松'] },
-      ],
-    };
+    console.warn('无法加载 questionnaire_config.json，问卷内容保持为空', e);
+    config = createEmptyConfig();
   }
 
   buildTable();
   renderContext();
 
   document.getElementById('loadingTip').style.display   = 'none';
-  document.getElementById('qTable').style.display       = 'table';
-  document.getElementById('progressLine').style.display = 'block';
+  document.getElementById('qTable').style.display       = 'grid';
+  document.getElementById('progressLine').style.display = 'flex';
   document.getElementById('submitArea').style.display   = 'block';
 }
 
@@ -466,55 +581,64 @@ function buildTable() {
   const scales    = config.scales || ['1', '2', '3', '4', '5'];
   const questions = config.questions || [];
 
-  // Header
-  const headerRow = document.getElementById('tableHeader');
-  headerRow.innerHTML = '';
-  const thQ = document.createElement('th');
-  thQ.textContent = '题目';
-  thQ.style.textAlign = 'left';
-  headerRow.appendChild(thQ);
-  scales.forEach(s => {
-    const th = document.createElement('th');
-    th.textContent = s;
-    headerRow.appendChild(th);
-  });
-
   // Body
-  const tbody = document.getElementById('tableBody');
-  tbody.innerHTML = '';
+  const list = document.getElementById('qTable');
+  list.innerHTML = '';
   document.getElementById('totalCount').textContent = questions.length;
 
   questions.forEach(q => {
-    const tr = document.createElement('tr');
-    tr.id = `row_${q.id}`;
+    const card = document.createElement('div');
+    card.id = `row_${q.id}`;
+    card.className = 'q-card';
 
-    const tdQ = document.createElement('td');
-    tdQ.textContent = `${q.id}. ${q.text}`;
-    tdQ.style.textAlign = 'left';
-    tr.appendChild(tdQ);
+    const title = document.createElement('div');
+    title.className = 'q-title';
+
+    const number = document.createElement('span');
+    number.className = 'q-number';
+    number.textContent = q.id;
+    title.appendChild(number);
+
+    const titleText = document.createElement('div');
+    titleText.className = 'q-text';
+    titleText.textContent = q.text;
+    title.appendChild(titleText);
+    card.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'option-grid';
 
     scales.forEach((scale, idx) => {
       const val = idx + 1;
       const optionLabel = q.options?.[idx] || scale;
-      const td  = document.createElement('td');
       const lbl = document.createElement('label');
+      lbl.className = 'option-choice';
       const inp = document.createElement('input');
       inp.type  = 'radio';
       inp.name  = `q_${q.id}`;
       inp.value = val;
       inp.addEventListener('change', () => onAnswer(q.id, val));
       lbl.appendChild(inp);
-      const text = document.createElement('span');
-      text.textContent = optionLabel;
-      text.style.fontSize = '12px';
-      text.style.lineHeight = '1.35';
-      text.style.marginLeft = '5px';
-      lbl.appendChild(text);
-      td.appendChild(lbl);
-      tr.appendChild(td);
+
+      const optionText = document.createElement('span');
+      optionText.className = 'option-text';
+
+      const scaleText = document.createElement('span');
+      scaleText.className = 'option-scale';
+      scaleText.textContent = scale;
+      optionText.appendChild(scaleText);
+
+      const labelText = document.createElement('span');
+      labelText.className = 'option-label';
+      labelText.textContent = optionLabel;
+      optionText.appendChild(labelText);
+
+      lbl.appendChild(optionText);
+      grid.appendChild(lbl);
     });
 
-    tbody.appendChild(tr);
+    card.appendChild(grid);
+    list.appendChild(card);
   });
 }
 
@@ -525,7 +649,14 @@ function onAnswer(qId, val) {
   answers[qId] = val;
   // Clear error highlight on this row
   const row = document.getElementById(`row_${qId}`);
-  if (row) row.classList.remove('unanswered');
+  if (row) {
+    row.classList.remove('unanswered');
+    row.classList.add('answered');
+    row.querySelectorAll('.option-choice').forEach(label => {
+      const input = label.querySelector('input');
+      label.classList.toggle('selected', Number(input?.value) === val);
+    });
+  }
   // Hide banner if all answered
   const qs = config.questions || [];
   if (qs.every(q => answers[q.id] !== undefined)) {
@@ -535,7 +666,12 @@ function onAnswer(qId, val) {
 }
 
 function updateProgress() {
-  document.getElementById('answeredCount').textContent = Object.keys(answers).length;
+  const answeredCount = Object.keys(answers).length;
+  const totalCount = (config?.questions || []).length;
+  const progressPercent = totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0;
+  document.getElementById('answeredCount').textContent = answeredCount;
+  const fill = document.getElementById('progressFill');
+  if (fill) fill.style.width = `${progressPercent}%`;
 }
 
 /* ═══════════════════════════════════════════════════════

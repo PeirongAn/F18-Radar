@@ -425,7 +425,7 @@ def create_external_collector_manager_from_env(logger: Any = None) -> Optional[E
     if not _env_enabled("EXTERNAL_COLLECTORS_ENABLED", default=False):
         return None
 
-    names = _env_list("EXTERNAL_COLLECTORS", "wecare")
+    names = _env_list("EXTERNAL_COLLECTORS", "wecare,prime")
     db = ExternalCollectorDatabase(_resolve_db_path(os.environ.get("EXTERNAL_COLLECTORS_DB_PATH")))
     adapters: List[WecareCollectorAdapter] = []
     for name in names:
