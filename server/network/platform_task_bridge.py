@@ -57,11 +57,11 @@ def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
             return cand
     try:
         n = int(float(s))
-        # External platform protocol: 1=L3, 2=L2, 3=L1.
+        # External platform protocol: 1=L1, 2=L2, 3=L3.
         protocol_map = {
-            1: "L3",
+            1: "L1",
             2: "L2",
-            3: "L1",
+            3: "L3",
         }
         cand = protocol_map.get(n)
         if cand:
@@ -87,13 +87,13 @@ def _normalize_difficulty_key(raw: Any, config: Dict[str, Any], task_category: O
         return s
     try:
         n = int(float(s))
-        # All external task categories use the same protocol: 1=low, 2=medium, 3=high.
+        # All external task categories use the same protocol: 1=high, 2=medium, 3=low.
         if n <= 1:
-            pick = "low"
+            pick = "high"
         elif n == 2:
             pick = "medium"
         else:  # n >= 3
-            pick = "high"
+            pick = "low"
         return pick
     except ValueError:
         pass
