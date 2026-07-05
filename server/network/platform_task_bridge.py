@@ -1895,6 +1895,11 @@ async def handle_platform_task_ws(
 ) -> List[Dict[str, Any]]:
     logger.info("RAW platform message: %s",
                 json.dumps(message_data, ensure_ascii=False))
+    if str(message_data.get("Action") or "task_start").strip() == "task_start":
+        logger.info(
+            "TASK_START WebSocket fields: %s",
+            json.dumps(message_data, ensure_ascii=False, sort_keys=True),
+        )
 
     category = _classify_task_category(message_data)
     if category in ("platform_control", "weapon_launch"):

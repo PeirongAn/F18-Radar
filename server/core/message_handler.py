@@ -302,6 +302,10 @@ class MessageHandler:
     
     async def _handle_task_start(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """处理任务开始消息"""
+        self.logger.info(
+            "TASK_START WebSocket fields: %s",
+            json.dumps(message, ensure_ascii=False, sort_keys=True),
+        )
         print("消息类型: task_start", message.get('user_id', ''))
         user_id = message.get('user_id', '')
         task_type = 'RADAR_TARGETING'
