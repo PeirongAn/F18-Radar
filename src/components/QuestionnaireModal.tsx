@@ -145,9 +145,9 @@ function translateAutonomyLevel(level: string | undefined, labels?: Record<strin
     case 'L1': return 'L1';
     case 'L2': return 'L2';
     case 'L3': return 'L3';
-    case '1': return 'L3';
+    case '1': return 'L1';
     case '2': return 'L2';
-    case '3': return 'L1';
+    case '3': return 'L3';
     default: return level;
   }
 }
@@ -368,8 +368,8 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
             background: '#f6f8fb',
             border: '1px solid rgba(148, 163, 184, 0.55)',
             borderRadius: '12px',
-            width: '1040px',
-            maxWidth: 'calc(100vw - 48px)',
+            width: 'min(1500px, calc(100vw - 24px))',
+            maxWidth: 'calc(100vw - 24px)',
             maxHeight: '92vh',
             overflowY: 'auto',
             boxShadow: '0 28px 70px rgba(15, 23, 42, 0.38)',
