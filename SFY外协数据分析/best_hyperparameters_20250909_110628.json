@@ -1,0 +1,11 @@
+{
+  "best_params": {
+    "C": 1000,
+    "gamma": 1,
+    "kernel": "rbf"
+  },
+  "best_cv_score": 0.9251543209876543,
+  "best_cv_std": 0.005835700741107707,
+  "total_combinations": 49,
+  "search_time": "N/A"
+}

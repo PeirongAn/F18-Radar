@@ -170,6 +170,23 @@ def test_create_external_collector_manager_from_env(monkeypatch):
     assert manager.adapters[0].base_url == "http://127.0.0.1:8787"
 
 
+def test_default_external_collectors_register_wecare_and_prime(monkeypatch):
+    monkeypatch.setenv("EXTERNAL_COLLECTORS_ENABLED", "true")
+    monkeypatch.delenv("EXTERNAL_COLLECTORS", raising=False)
+    monkeypatch.setenv("WECARE_COLLECTOR_ENABLED", "true")
+    monkeypatch.setenv("PRIME_COLLECTOR_ENABLED", "true")
+
+    manager = create_external_collector_manager_from_env()
+
+    assert manager is not None
+    assert [adapter.name for adapter in manager.adapters] == ["wecare", "prime"]
+    assert manager.adapters[0].base_url == "http://127.0.0.1:8787"
+    assert manager.adapters[0].provider == "wecare"
+    assert manager.adapters[1].base_url == "http://127.0.0.1:8789"
+    assert manager.adapters[1].provider == "prime"
+    assert manager.adapters[1].marker_type == 1
+
+
 def test_wecare_collector_enabled_false_skips_wecare(monkeypatch):
     monkeypatch.setenv("EXTERNAL_COLLECTORS_ENABLED", "true")
     monkeypatch.setenv("EXTERNAL_COLLECTORS", "wecare")

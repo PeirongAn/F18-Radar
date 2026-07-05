@@ -175,20 +175,19 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const previousUserIdRef = React.useRef<string | undefined>(userId);
   const previousSubYRef = React.useRef<number>(0);
   const completedRadarTaskKeysRef = React.useRef<Set<string>>(new Set());
+  const previousRadarTaskKeyRef = React.useRef<string | null>(null);
 
   const getCurrentRadarTaskKey = React.useCallback(() => {
-    if (radarStore.taskId !== null && radarStore.taskId !== undefined) {
-      return String(radarStore.taskId);
-    }
-
     const info = repetitionInfos['RADAR_TARGETING'];
     if (!info || typeof info === 'string') {
-      return null;
+      return radarStore.taskId !== null && radarStore.taskId !== undefined
+        ? String(radarStore.taskId)
+        : null;
     }
 
     const ri = info as any;
     return [
-      'pending',
+      radarStore.taskId !== null && radarStore.taskId !== undefined ? String(radarStore.taskId) : 'pending',
       userId ?? '',
       ri.current ?? '',
       ri.total ?? '',
@@ -215,6 +214,19 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const lastButton7TriggerTime = React.useRef(0);
   const button7DebounceDelay = 300; // 300ms防抖延迟
   
+  const resetJoystickControlState = React.useCallback((reason: string) => {
+    setCalibrationOffset({x: 0, y: 0});
+    setExpectedJoystickPos({x: 0, y: 0});
+    setLockedTdcPosition(null);
+    setLockedAntennaElevation(null);
+    previousButton1Ref.current = button1;
+    previousButton2Ref.current = button2;
+    previousButton7Ref.current = button7;
+    previousSubYRef.current = subY ?? 0;
+    lastButton7TriggerTime.current = 0;
+    console.log(`[RadarDisplay] Joystick control state reset: ${reason}`);
+  }, [button1, button2, button7, subY]);
+
   const resetIffState = React.useCallback((reason: string, notifyReset: boolean = true) => {
     const hadTdcConfirmLine = !!radarStore.lockedTargetId || radarStore.lockScreenX !== undefined || lockedTdcPosition !== null;
     setIffMode(false);
@@ -253,6 +265,23 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   }, [userId, resetIffState, button1, button2, button7]);
   
   // 计算显示区域中心
+  const activeRadarTaskKey = getCurrentRadarTaskKey();
+  React.useEffect(() => {
+    if (!activeRadarTaskKey || repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED') {
+      previousRadarTaskKeyRef.current = activeRadarTaskKey;
+      return;
+    }
+
+    const previousRadarTaskKey = previousRadarTaskKeyRef.current;
+    if (previousRadarTaskKey !== activeRadarTaskKey) {
+      if (previousRadarTaskKey) {
+        resetIffState(`radar task changed from ${previousRadarTaskKey} to ${activeRadarTaskKey}`, false);
+      }
+      resetJoystickControlState(`radar task changed to ${activeRadarTaskKey}`);
+      previousRadarTaskKeyRef.current = activeRadarTaskKey;
+    }
+  }, [activeRadarTaskKey, repetitionInfos, resetIffState, resetJoystickControlState]);
+
   const centerX = (framePositions.startX + framePositions.endX) / 2;
   const centerY = (framePositions.startY + framePositions.endY) / 2;
   

@@ -1,5 +1,5 @@
 {
-  "userId": "zhaomiyao19",
+  "userId": "ANPEIRONG0705",
   "includeAI": false,
   "taskType": "radar",
   "isPractice": false,
@@ -7,8 +7,8 @@
   "taskNumber": 3,
   "platformTask": {
     "raw": {
-      "TaskName": "雷达任务",
-      "ID": "zhaomiyao19",
+      "TaskName": "传感器任务",
+      "ID": "ANPEIRONG0705",
       "Gender": "1",
       "DefaultControlMode": "0",
       "AIAutonomyLeve": "3",
@@ -19,8 +19,8 @@
       "Action": "task_start"
     },
     "normalized": {
-      "task_name": "雷达任务",
-      "platform_task_id": "zhaomiyao19",
+      "task_name": "传感器任务",
+      "platform_task_id": "ANPEIRONG0705",
       "task_type": "RADAR_TARGETING",
       "task_category": "radar",
       "gender": "1",

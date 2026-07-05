@@ -34,8 +34,8 @@
   "trust_calibration": {
     "enabled": true,
     "state": {
-      "sensor": "over_trust",
-      "threat": "over_trust"
+      "sensor": "normal",
+      "threat": "normal"
     },
     "sensor": {
       "high_confidence": 0.85,

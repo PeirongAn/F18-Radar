@@ -174,7 +174,29 @@ def setup_bridge(monkeypatch):
     return fake_db
 
 
-def test_platform_numeric_fields_follow_external_protocol(monkeypatch):
+def test_web_task_numeric_difficulty_is_not_reversed(monkeypatch):
+    setup_bridge(monkeypatch)
+
+    _, radar = bridge._normalize_platform_task_fields({
+        "TaskName": "\u4f20\u611f\u5668\u4efb\u52a1",
+        "ID": "RadarUser",
+        "Difficulty": "3",
+        "Action": "task_start",
+    })
+    _, sa = bridge._normalize_platform_task_fields({
+        "TaskName": "\u5a01\u80c1\u6392\u5e8f\u4efb\u52a1",
+        "ID": "SaUser",
+        "Difficulty": "1",
+        "Action": "task_start",
+    })
+
+    assert radar["difficulty_key"] == "high"
+    assert radar["difficulty_display"] == "high"
+    assert sa["difficulty_key"] == "low"
+    assert sa["difficulty_display"] == "low"
+
+
+def test_external_lifecycle_numeric_difficulty_is_reversed(monkeypatch):
     setup_bridge(monkeypatch)
     _, normalized = bridge._normalize_platform_task_fields({
         "TaskName": "\u6b66\u5668\u53d1\u5c04\u4efb\u52a1",
@@ -191,8 +213,18 @@ def test_platform_numeric_fields_follow_external_protocol(monkeypatch):
 
     assert normalized["ai_autonomy_level"] == "L3"
     assert normalized["current_level"] == "L3"
-    assert normalized["difficulty_key"] == "high"
+    assert normalized["difficulty_key"] == "low"
+    assert normalized["difficulty_display"] == "3"
     assert normalized["difficulty_raw"] == "3"
+
+    _, platform = bridge._normalize_platform_task_fields({
+        "TaskName": "\u5e73\u53f0\u4efb\u52a1",
+        "ID": "DefaultID",
+        "Difficulty": "1",
+        "Action": "task_start",
+    })
+    assert platform["difficulty_key"] == "high"
+    assert platform["difficulty_display"] == "1"
 
 
 def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):
@@ -340,6 +372,47 @@ def test_simple_task_start_records_sub_start(monkeypatch):
     assert fake_db.events[-1]["sub_task_seq"] == 1
 
 
+def test_simple_task_start_without_overall_starts_external_collectors(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    external = FakeExternalCollectors()
+
+    replies = bridge._handle_external_task(
+        sub_start(),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    assert replies[0]["task_id"] == 42
+    assert replies[0]["sub_task_seq"] == 1
+    assert fake_db.runs[42]["task_type"] == "PLATFORM_CONTROL"
+    assert [event["event_type"] for event in fake_db.events] == ["sub_start"]
+    assert external.started[0][0] == "PLATFORM_CONTROL"
+    assert external.started[0][1] == "DefaultID"
+    assert external.started[0][2] == "42"
+    assert [marker["name"] for marker in external.markers] == ["sub_start"]
+
+
+def test_weapon_simple_task_start_without_overall_starts_external_collectors(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    external = FakeExternalCollectors()
+
+    replies = bridge._handle_external_task(
+        {"TaskName": "姝﹀櫒鍙戝皠浠诲姟", "ID": "DefaultID", "Action": "task_start"},
+        "weapon_launch",
+        external_collectors=external,
+    )
+
+    assert replies[0]["task_id"] == 42
+    assert replies[0]["task_type"] == "WEAPON_LAUNCH"
+    assert replies[0]["sub_task_seq"] == 1
+    assert fake_db.runs[42]["task_type"] == "WEAPON_LAUNCH"
+    assert [event["event_type"] for event in fake_db.events] == ["sub_start"]
+    assert external.started[0][0] == "WEAPON_LAUNCH"
+    assert external.started[0][1] == "DefaultID"
+    assert external.started[0][2] == "42"
+    assert [marker["name"] for marker in external.markers] == ["sub_start"]
+
+
 def test_sub_end_records_event_result_and_completes_by_task_number(monkeypatch):
     fake_db = setup_bridge(monkeypatch)
     bridge._handle_external_task(overall_start("1"), "platform_control")
@@ -350,7 +423,10 @@ def test_sub_end_records_event_result_and_completes_by_task_number(monkeypatch):
     assert replies[0]["task_status"] == "completed"
     assert fake_db.runs[42]["status"] == "completed"
     assert fake_db.runs[42]["completed_subtasks"] == 1
+    assert fake_db.runs[43]["status"] == "completed"
     assert fake_db.events[-1]["event_type"] == "sub_end"
+    assert fake_db.events[-1]["task_id"] == 43
+    assert fake_db.results[0]["task_id"] == 43
     assert fake_db.results[0]["sub_task_seq"] == 1
     assert fake_db.results[0]["current_task_score"] == 7
     assert fake_db.results[0]["ai_control_time"] == 41.5
@@ -377,6 +453,8 @@ def test_sub_end_maintains_task_count_without_sub_start(monkeypatch):
     assert fake_db.runs[42]["current_subtask_seq"] == 2
     assert fake_db.runs[42]["completed_subtasks"] == 2
     assert fake_db.runs[42]["status"] == "completed"
+    assert first[0]["task_id"] == 43
+    assert second[0]["task_id"] == 44
     assert [event["sub_task_seq"] for event in fake_db.events if event["event_type"] == "sub_end"] == [1, 2]
 
 
@@ -423,10 +501,9 @@ def test_new_external_overall_closes_other_active_category_for_same_user(monkeyp
         "auto_closed_by_new_overall",
         "overall_start",
     ]
-    assert gaze.stopped[0]["task_id"] == "42"
-    assert gaze.stopped[0]["end_trigger"] == "auto_closed_by_new_overall"
-    assert gaze.started[-1]["task_id"] == "43"
-    assert physio.stopped == 1
+    assert gaze.stopped == []
+    assert gaze.started == []
+    assert physio.stopped == 0
 
 
 def test_duplicate_full_overall_after_completed_task_is_compat_stop(monkeypatch):
@@ -442,8 +519,9 @@ def test_duplicate_full_overall_after_completed_task_is_compat_stop(monkeypatch)
     assert replies[0]["event_type"] == "overall_stop_compat"
     assert replies[0]["task_id"] == 42
     assert replies[0]["compat"] is True
-    assert list(fake_db.runs) == [42]
+    assert sorted(fake_db.runs) == [42, 43]
     assert fake_db.runs[42]["status"] == "completed"
+    assert fake_db.runs[43]["status"] == "completed"
     assert [event["event_type"] for event in fake_db.events] == [
         "overall_start",
         "sub_start",
@@ -451,7 +529,6 @@ def test_duplicate_full_overall_after_completed_task_is_compat_stop(monkeypatch)
         "overall_stop_compat",
     ]
     assert [marker["name"] for marker in gaze.markers] == [
-        "overall_start",
         "sub_start",
         "sub_end",
         "overall_stop_compat",
@@ -470,9 +547,9 @@ def test_different_full_overall_after_completed_task_starts_new_task(monkeypatch
     replies = bridge._handle_external_task(overall_start("2"), "platform_control")
 
     assert replies[0].get("event_type") != "overall_stop_compat"
-    assert replies[0]["task_id"] == 43
-    assert sorted(fake_db.runs) == [42, 43]
-    assert fake_db.runs[43]["status"] == "active"
+    assert replies[0]["task_id"] == 44
+    assert sorted(fake_db.runs) == [42, 43, 44]
+    assert fake_db.runs[44]["status"] == "active"
 
 
 def test_sub_start_and_sub_end_emit_gaze_and_physio_markers(monkeypatch):
@@ -503,33 +580,33 @@ def test_sub_start_and_sub_end_emit_gaze_and_physio_markers(monkeypatch):
         external_collectors=external,
     )
 
-    assert gaze.started[0]["task_id"] == "42"
+    assert gaze.started[0]["task_id"] == "43"
     assert gaze.started[0]["task_source"] == "platform_control"
     assert gaze.started[0]["task_name"] == "PLATFORM_CONTROL"
-    assert gaze.started[0]["start_trigger"] == "overall_start"
-    assert [marker["name"] for marker in gaze.markers] == ["overall_start", "sub_start", "sub_end"]
-    assert [marker["task_id"] for marker in gaze.markers] == ["42", "42", "42"]
-    assert [marker["payload"]["gaze_task_id"] for marker in gaze.markers] == ["42", "42", "42"]
-    assert [marker["payload"]["external_task_id"] for marker in gaze.markers] == [42, 42, 42]
+    assert gaze.started[0]["start_trigger"] == "sub_start"
+    assert [marker["name"] for marker in gaze.markers] == ["sub_start", "sub_end"]
+    assert [marker["task_id"] for marker in gaze.markers] == ["43", "43"]
+    assert [marker["payload"]["gaze_task_id"] for marker in gaze.markers] == ["43", "43"]
+    assert [marker["payload"]["external_task_id"] for marker in gaze.markers] == [43, 43]
+    assert gaze.markers[0]["payload"]["sub_task_seq"] == 1
     assert gaze.markers[1]["payload"]["sub_task_seq"] == 1
-    assert gaze.markers[2]["payload"]["sub_task_seq"] == 1
-    assert gaze.stopped[0]["task_id"] == "42"
+    assert gaze.stopped[0]["task_id"] == "43"
     assert gaze.stopped[0]["end_trigger"] == "sub_end"
 
     assert physio.subjects[0][0] == "DefaultID"
     assert physio.started[0][0] == "PLATFORM_CONTROL"
-    assert physio.started[0][2] == "42"
-    assert [marker["name"] for marker in physio.markers] == ["overall_start", "sub_start", "sub_end"]
+    assert physio.started[0][2] == "43"
+    assert [marker["name"] for marker in physio.markers] == ["sub_start", "sub_end"]
     assert physio.markers[-1]["payload"]["fire_success_count"] == 1
     assert physio.stopped == 1
     assert physio.cleared == 1
 
     assert external.started[0][0] == "PLATFORM_CONTROL"
     assert external.started[0][1] == "DefaultID"
-    assert external.started[0][2] == "42"
-    assert [marker["name"] for marker in external.markers] == ["overall_start", "sub_start", "sub_end"]
+    assert external.started[0][2] == "43"
+    assert [marker["name"] for marker in external.markers] == ["sub_start", "sub_end"]
     assert external.markers[-1]["payload"]["fire_success_count"] == 1
-    assert external.stopped == ["42"]
+    assert external.stopped == ["43"]
     assert external.cleared == 1
 
 
@@ -544,18 +621,17 @@ def test_external_gaze_and_physio_cover_overall_task_until_all_subtasks_complete
 
     assert first_end[0]["task_status"] == "active"
     assert len(gaze.started) == 1
-    assert gaze.stopped == []
-    assert physio.stopped == 0
+    assert gaze.stopped[0]["task_id"] == "43"
+    assert physio.stopped == 1
 
     bridge._handle_external_task(sub_start(), "platform_control", gaze_svc=gaze, physio_svc=physio)
     second_end = bridge._handle_external_task(sub_end(), "platform_control", gaze_svc=gaze, physio_svc=physio)
 
     assert second_end[0]["task_status"] == "completed"
-    assert len(gaze.started) == 1
-    assert gaze.stopped[0]["task_id"] == "42"
-    assert physio.stopped == 1
+    assert len(gaze.started) == 2
+    assert gaze.stopped[1]["task_id"] == "44"
+    assert physio.stopped == 2
     assert [marker["name"] for marker in gaze.markers] == [
-        "overall_start",
         "sub_start",
         "sub_end",
         "sub_start",
@@ -588,23 +664,22 @@ def test_external_task_creates_overall_gaze_db_task_and_subtask_markers(monkeypa
 
     assert tasks == [
         (
-            "42",
+            "43",
             "DefaultID",
             "platform_control",
             "PLATFORM_CONTROL",
-            "overall_start",
+            "sub_start",
             "sub_end",
             "completed",
         )
     ]
     assert [(row[0], row[1], row[2]) for row in markers] == [
-        ("42", "DefaultID", "overall_start"),
-        ("42", "DefaultID", "sub_start"),
-        ("42", "DefaultID", "sub_end"),
+        ("43", "DefaultID", "sub_start"),
+        ("43", "DefaultID", "sub_end"),
     ]
     payload = json.loads(markers[0][3])
     assert "gaze_task_id" not in payload
-    assert payload["external_task_id"] == 42
-    assert payload["sub_task_seq"] is None
+    assert payload["external_task_id"] == 43
+    assert payload["sub_task_seq"] == 1
     sub_payload = json.loads(markers[1][3])
     assert sub_payload["sub_task_seq"] == 1

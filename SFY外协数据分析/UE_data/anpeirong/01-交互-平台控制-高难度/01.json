@@ -1,0 +1,17 @@
+{
+    "CurrentRedcord": [
+        {
+            "CurrentTime": 33.758179806172848,
+            "taskid": 0,
+            "unitsid": 101,
+            "Distance": 1629.7360669636653,
+            "CurrentMode": "User"
+        }
+    ],
+    "Fire": [],
+    "AITIME": {
+        "AiRemindTime": 0
+    },
+    "AIcontrolTime": 0,
+    "PersonControlTime": 36.258606102317572
+}
