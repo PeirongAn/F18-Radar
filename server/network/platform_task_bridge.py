@@ -71,34 +71,7 @@ def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
     return default
 
 
-def _uses_reversed_difficulty_protocol(task_category: Optional[str]) -> bool:
-    return task_category in ("platform_control", "weapon_launch")
-
-
 def _normalize_difficulty_display_key(raw: Any, engine_key: str, task_category: Optional[str] = None) -> str:
-    if not _uses_reversed_difficulty_protocol(task_category):
-        return engine_key
-    if raw is None or str(raw).strip() == "":
-        return engine_key
-    s = str(raw).strip()
-    sl = s.lower()
-    try:
-        n = int(float(s))
-        if n <= 1:
-            return "1"
-        if n == 2:
-            return "2"
-        return "3"
-    except ValueError:
-        pass
-    if sl in ("high", "medium", "low"):
-        return sl
-    if "高" in s:
-        return "high"
-    if "中" in s:
-        return "medium"
-    if "低" in s:
-        return "low"
     return engine_key
 
 
@@ -114,22 +87,13 @@ def _normalize_difficulty_key(raw: Any, config: Dict[str, Any], task_category: O
         return s
     try:
         n = int(float(s))
-        if _uses_reversed_difficulty_protocol(task_category):
-            # Platform-control and weapon-launch protocol: 1=high, 2=medium, 3=low.
-            if n <= 1:
-                pick = "high"
-            elif n == 2:
-                pick = "medium"
-            else:  # n >= 3
-                pick = "low"
-        else:
-            # Sensor and threat-ranking protocol: 1=low, 2=medium, 3=high.
-            if n <= 1:
-                pick = "low"
-            elif n == 2:
-                pick = "medium"
-            else:  # n >= 3
-                pick = "high"
+        # All external task categories use the same protocol: 1=low, 2=medium, 3=high.
+        if n <= 1:
+            pick = "low"
+        elif n == 2:
+            pick = "medium"
+        else:  # n >= 3
+            pick = "high"
         return pick
     except ValueError:
         pass
@@ -257,17 +221,11 @@ def _normalize_platform_task_fields(
         ai_raw = message.get("AIAutonomyLeve")
     current_level = _normalize_current_level(ai_raw, cfg)
     web_task_kind = _infer_web_task_kind(message)
-    category_for_difficulty = task_category or _classify_task_category(message)
-    if category_for_difficulty == "unknown":
-        if web_task_kind == "sa":
-            category_for_difficulty = "sa"
-        elif web_task_kind == "radar":
-            category_for_difficulty = "radar"
-    difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg, category_for_difficulty)
+    difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg, task_category)
     difficulty_display = _normalize_difficulty_display_key(
         message.get("Difficulty"),
         difficulty_key,
-        category_for_difficulty,
+        task_category,
     )
     # DefaultControlMode: "0"=人工(manual), "1"=AI
     include_ai = _task_mode_to_include_ai(message.get("DefaultControlMode"))

@@ -174,7 +174,7 @@ def setup_bridge(monkeypatch):
     return fake_db
 
 
-def test_web_task_numeric_difficulty_is_not_reversed(monkeypatch):
+def test_web_task_numeric_difficulty_uses_shared_protocol(monkeypatch):
     setup_bridge(monkeypatch)
 
     _, radar = bridge._normalize_platform_task_fields({
@@ -196,7 +196,7 @@ def test_web_task_numeric_difficulty_is_not_reversed(monkeypatch):
     assert sa["difficulty_display"] == "low"
 
 
-def test_external_lifecycle_numeric_difficulty_is_reversed(monkeypatch):
+def test_external_lifecycle_numeric_difficulty_uses_shared_protocol(monkeypatch):
     setup_bridge(monkeypatch)
     _, normalized = bridge._normalize_platform_task_fields({
         "TaskName": "\u6b66\u5668\u53d1\u5c04\u4efb\u52a1",
@@ -213,8 +213,8 @@ def test_external_lifecycle_numeric_difficulty_is_reversed(monkeypatch):
 
     assert normalized["ai_autonomy_level"] == "L3"
     assert normalized["current_level"] == "L3"
-    assert normalized["difficulty_key"] == "low"
-    assert normalized["difficulty_display"] == "3"
+    assert normalized["difficulty_key"] == "high"
+    assert normalized["difficulty_display"] == "high"
     assert normalized["difficulty_raw"] == "3"
 
     _, platform = bridge._normalize_platform_task_fields({
@@ -223,8 +223,8 @@ def test_external_lifecycle_numeric_difficulty_is_reversed(monkeypatch):
         "Difficulty": "1",
         "Action": "task_start",
     })
-    assert platform["difficulty_key"] == "high"
-    assert platform["difficulty_display"] == "1"
+    assert platform["difficulty_key"] == "low"
+    assert platform["difficulty_display"] == "low"
 
 
 def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):

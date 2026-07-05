@@ -657,12 +657,10 @@ const Radar: React.FC<RadarProps> = (({
           if (!agentStore.isAIActive) return;
           aiTargetSelectionsRef.current.add(selectionKey);
 
-          // 第一步：移动TDC到目标位置
+          // AI only selects the target; keep manual/joystick TDC position unchanged.
           if (targetDisplayPosition) {
-            console.log(`[AI Engine] Moving TDC to target position: (${targetDisplayPosition.x}, ${targetDisplayPosition.y})`);
-            setTdcPosition(targetDisplayPosition);
+            console.log(`[AI Engine] AI target selected without moving TDC: ${finalTargetToSelect.id}`);
 
-            // 第二步：选择目标并设置锁定线
             console.log(`[AI Engine] AI is selecting target: ${finalTargetToSelect.id}`);
             if (onTargetSelect) {
               // 计算锁定线的X坐标（使用目标的x坐标）
