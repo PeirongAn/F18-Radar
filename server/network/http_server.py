@@ -263,6 +263,7 @@ class HTTPServer:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     message = msg.data
+                    self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
                     self.logger.debug(f"接收到WebSocket消息")
                     
 

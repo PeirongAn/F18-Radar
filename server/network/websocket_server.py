@@ -225,6 +225,7 @@ class WebSocketServer:
                 try:
                     # 等待消息，但设置超时以保持连接活跃
                     message = await asyncio.wait_for(websocket.recv(), timeout=60)
+                    self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
                     self.logger.debug(f"接收到消息: {message[:50]}..." if len(message) > 50 else message)
                     
                     # 解析消息
