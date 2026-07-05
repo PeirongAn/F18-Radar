@@ -27,12 +27,12 @@
       "threat_select_delay_ms": 100,
       "tdc_select_delay_ms": 100,
       "decision_probabilities": [
-        0.5
+        1.0
       ]
     }
   ],
   "trust_calibration": {
-    "enabled": true,
+    "enabled": false,
     "state": {
       "sensor": "normal",
       "threat": "normal"
