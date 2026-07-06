@@ -1395,10 +1395,10 @@ def _handle_external_task(
         list(_active_external_tasks.keys()),
     )
 
-    if action == "task_start":
+    if action in ("task_start", "sub_start"):
         raw_fields, normalized = _normalize_platform_task_fields(message_data, category)
         normalized = _attach_entry_semantics(normalized, category, "external_lifecycle")
-        if _is_overall_task_start(message_data):
+        if action == "task_start":
             if key in _active_external_tasks:
                 active = _active_external_tasks[key]
                 logger.warning(
