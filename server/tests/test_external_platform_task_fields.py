@@ -180,13 +180,13 @@ def test_web_task_numeric_difficulty_uses_shared_protocol(monkeypatch):
     _, radar = bridge._normalize_platform_task_fields({
         "TaskName": "\u4f20\u611f\u5668\u4efb\u52a1",
         "ID": "RadarUser",
-        "Difficulty": "3",
+        "Difficulty": "1",
         "Action": "task_start",
     })
     _, sa = bridge._normalize_platform_task_fields({
         "TaskName": "\u5a01\u80c1\u6392\u5e8f\u4efb\u52a1",
         "ID": "SaUser",
-        "Difficulty": "1",
+        "Difficulty": "3",
         "Action": "task_start",
     })
 
@@ -203,9 +203,9 @@ def test_external_lifecycle_numeric_difficulty_uses_shared_protocol(monkeypatch)
         "ID": "DefaultID",
         "Gender": "1",
         "DefaultControlMode": "1",
-        "AIAutonomyLeve": "1",
+        "AIAutonomyLeve": "3",
         "TaskMode": "0",
-        "Difficulty": "3",
+        "Difficulty": "1",
         "aiprecision": "1",
         "TaskNumber": "0",
         "Action": "task_start",
@@ -215,12 +215,12 @@ def test_external_lifecycle_numeric_difficulty_uses_shared_protocol(monkeypatch)
     assert normalized["current_level"] == "L3"
     assert normalized["difficulty_key"] == "high"
     assert normalized["difficulty_display"] == "high"
-    assert normalized["difficulty_raw"] == "3"
+    assert normalized["difficulty_raw"] == "1"
 
     _, platform = bridge._normalize_platform_task_fields({
         "TaskName": "\u5e73\u53f0\u4efb\u52a1",
         "ID": "DefaultID",
-        "Difficulty": "1",
+        "Difficulty": "3",
         "Action": "task_start",
     })
     assert platform["difficulty_key"] == "low"
@@ -264,6 +264,10 @@ def weapon_overall_start(task_number="1"):
 
 
 def sub_start():
+    return {"TaskName": "平台任务", "ID": "DefaultID", "Action": "sub_start"}
+
+
+def simple_task_start():
     return {"TaskName": "平台任务", "ID": "DefaultID", "Action": "task_start"}
 
 
@@ -283,6 +287,12 @@ def sub_end():
             "ConfigControlMode": "AI",
         },
     }
+
+
+def sub_ennd():
+    message = sub_end()
+    message["Action"] = "sub_ennd"
+    return message
 
 
 def radar_overlay(user_id="RadarUser"):
@@ -377,7 +387,7 @@ def test_simple_task_start_without_overall_starts_external_collectors(monkeypatc
     external = FakeExternalCollectors()
 
     replies = bridge._handle_external_task(
-        sub_start(),
+        simple_task_start(),
         "platform_control",
         external_collectors=external,
     )
@@ -397,7 +407,7 @@ def test_weapon_simple_task_start_without_overall_starts_external_collectors(mon
     external = FakeExternalCollectors()
 
     replies = bridge._handle_external_task(
-        {"TaskName": "姝﹀櫒鍙戝皠浠诲姟", "ID": "DefaultID", "Action": "task_start"},
+        {"TaskName": "姝﹀櫒鍙戝皠浠诲姟", "ID": "DefaultID", "Action": "sub_start"},
         "weapon_launch",
         external_collectors=external,
     )
@@ -456,6 +466,68 @@ def test_sub_end_maintains_task_count_without_sub_start(monkeypatch):
     assert first[0]["task_id"] == 43
     assert second[0]["task_id"] == 44
     assert [event["sub_task_seq"] for event in fake_db.events if event["event_type"] == "sub_end"] == [1, 2]
+
+
+def test_sub_ennd_alias_stops_active_external_collector(monkeypatch):
+    setup_bridge(monkeypatch)
+    external = FakeExternalCollectors()
+
+    bridge._handle_external_task(
+        overall_start("1"),
+        "platform_control",
+        external_collectors=external,
+    )
+    bridge._handle_external_task(
+        sub_start(),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    replies = bridge._handle_external_task(
+        sub_ennd(),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    diagnostics = replies[0]["diagnostics"]
+    assert replies[0]["status"] == "ok"
+    assert replies[0]["task_status"] == "completed"
+    assert diagnostics["raw_action"] == "sub_ennd"
+    assert diagnostics["action"] == "sub_end"
+    assert diagnostics["action_was_normalized"] is True
+    assert diagnostics["event_role"] == "subtask_end"
+    assert external.started[0][2] == "43"
+    assert [marker["name"] for marker in external.markers] == ["sub_start", "sub_end"]
+    assert external.stopped == ["43"]
+
+
+def test_sub_end_without_sub_start_skips_external_stop(monkeypatch):
+    setup_bridge(monkeypatch)
+    external = FakeExternalCollectors()
+
+    bridge._handle_external_task(
+        overall_start("1"),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    replies = bridge._handle_external_task(
+        sub_ennd(),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    diagnostics = replies[0]["diagnostics"]
+    assert replies[0]["status"] == "ok"
+    assert replies[0]["task_id"] == 43
+    assert replies[0]["task_status"] == "completed"
+    assert diagnostics["raw_action"] == "sub_ennd"
+    assert diagnostics["action"] == "sub_end"
+    assert diagnostics["action_was_normalized"] is True
+    assert diagnostics["event_role"] == "subtask_end_without_start"
+    assert external.started == []
+    assert external.markers == []
+    assert external.stopped == []
 
 
 def test_overall_task_start_resumes_unfinished_task(monkeypatch):

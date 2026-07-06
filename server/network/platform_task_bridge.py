@@ -601,6 +601,19 @@ def _json_dump(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+_EXTERNAL_ACTION_ALIASES = {
+    "sub_ennd": "sub_end",
+    "subend": "sub_end",
+    "sub_stop": "sub_end",
+    "substop": "sub_end",
+}
+
+
+def _normalize_external_action(raw_action: Any) -> str:
+    action = str(raw_action or "task_start").strip()
+    return _EXTERNAL_ACTION_ALIASES.get(action.lower(), action)
+
+
 def _external_collector_names(external_collectors: Any = None) -> List[str]:
     adapters = getattr(external_collectors, "adapters", None) if external_collectors is not None else None
     if not adapters:
@@ -624,7 +637,9 @@ def _external_task_diagnostics(
         "category": category,
         "task_type": task_type,
         "user_id": user_id,
+        "raw_action": str(message_data.get("Action") or ""),
         "action": action,
+        "action_was_normalized": str(message_data.get("Action") or "").strip() != action,
         "event_role": event_role or ("overall_start" if is_overall else "subtask_start" if action in ("task_start", "sub_start") else action),
         "is_overall_task_start": is_overall,
         "message_keys": keys,
@@ -1441,20 +1456,28 @@ def _handle_external_task(
         return [{"type": "platform_task_ack", "status": "error",
                  "message": "external task requires non-empty ID"}]
 
-    action = str(message_data.get("Action") or "task_start").strip()
+    raw_action = str(message_data.get("Action") or "task_start").strip()
+    action = _normalize_external_action(raw_action)
     ts = int(_time.time() * 1000)
     raw = _json_dump(message_data)
     key = (category, user_id)
     task_type = _task_type_for_external_category(category)
     logger.info(
-        "[REMOTE_TASK_COUNT] external event received category=%s user=%s action=%s "
+        "[REMOTE_TASK_COUNT] external event received category=%s user=%s action=%s raw_action=%s "
         "active_before=%s active_keys=%s",
         category,
         user_id,
         action,
+        raw_action,
         _active_external_tasks.get(key),
         list(_active_external_tasks.keys()),
     )
+    if raw_action != action:
+        logger.warning(
+            "[EXTERNAL_COLLECTOR_DIAG] normalized external Action raw=%s normalized=%s",
+            raw_action,
+            action,
+        )
     logger.warning(
         "[EXTERNAL_COLLECTOR_DIAG] received %s",
         _json_dump(_external_task_diagnostics(
@@ -1740,6 +1763,7 @@ def _handle_external_task(
         active["current_subtask_seq"] = seq
         overall_tid = active.get("overall_task_id")
         tid = active.get("current_subtask_task_id")
+        had_active_subtask = tid is not None
         if tid is None:
             tid = generate_task_id()
             active["task_id"] = tid
@@ -1802,18 +1826,25 @@ def _handle_external_task(
             )
         if status == "completed":
             active["task_id"] = tid
-        _stop_external_marker_context(
-            active,
-            category,
-            "sub_end",
-            message_data,
-            gaze_svc=gaze_svc,
-            physio_svc=physio_svc,
-            external_collectors=external_collectors,
-            sub_task_seq=seq,
-            timestamp_ms=ts,
-            extra=metrics if result else None,
-        )
+        if had_active_subtask:
+            _stop_external_marker_context(
+                active,
+                category,
+                "sub_end",
+                message_data,
+                gaze_svc=gaze_svc,
+                physio_svc=physio_svc,
+                external_collectors=external_collectors,
+                sub_task_seq=seq,
+                timestamp_ms=ts,
+                extra=metrics if result else None,
+            )
+        else:
+            logger.warning(
+                "[EXTERNAL_COLLECTOR_DIAG] skip collector stop for %s task_id=%s: no active subtask start was recorded",
+                action,
+                tid,
+            )
         if status == "completed":
             _active_external_tasks.pop(key, None)
         else:
@@ -1837,7 +1868,17 @@ def _handle_external_task(
                  "task_id": tid, "overall_task_id": overall_tid, "task_type": task_type,
                  "task_category": category, "entry_mode": "external_lifecycle",
                  "sub_task_seq": seq, "completed_subtasks": completed,
-                 "expected_subtasks": expected, "task_status": status}]
+                 "expected_subtasks": expected, "task_status": status,
+                 "diagnostics": _external_task_diagnostics(
+                     message_data,
+                     category,
+                     action,
+                     user_id,
+                     task_type,
+                     external_collectors=external_collectors,
+                     active=active,
+                     event_role="subtask_end" if had_active_subtask else "subtask_end_without_start",
+                 )}]
 
     tid = active.get("current_subtask_task_id") or active.get("overall_task_id") or active.get("task_id")
 
