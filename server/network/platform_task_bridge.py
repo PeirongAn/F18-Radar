@@ -707,6 +707,16 @@ def _config_json_raw(config_json: Any) -> Dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _config_json_obj(config_json: Any) -> Dict[str, Any]:
+    if not config_json:
+        return {}
+    try:
+        parsed = json.loads(config_json) if isinstance(config_json, str) else config_json
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _result_metrics(result: Dict[str, Any]) -> Dict[str, Any]:
     fire_list = result.get("Fire") or []
     switch_list = result.get("SwitchInfo") or []
@@ -729,21 +739,43 @@ def _active_from_task_run(
     normalized: Dict[str, Any],
 ) -> Dict[str, Any]:
     task_id = int(run["task_id"])
-    return {
+    config_obj = _config_json_obj(run.get("config_json"))
+    configured_overall_tid = config_obj.get("overall_task_id")
+    sub_task_seq = config_obj.get("sub_task_seq")
+    is_subtask_run = configured_overall_tid is not None
+    stored_raw = _config_json_raw(run.get("config_json"))
+    stored_normalized = _config_json_normalized(run.get("config_json"))
+    effective_raw = stored_raw or raw_fields
+    effective_normalized = stored_normalized or normalized
+    completed_subtasks = int(run.get("completed_subtasks") or 0)
+    current_subtask_seq = int(run.get("current_subtask_seq") or sub_task_seq or 0)
+    if is_subtask_run and sub_task_seq:
+        completed_subtasks = max(completed_subtasks, int(sub_task_seq) - 1)
+        current_subtask_seq = int(sub_task_seq)
+    expected_subtasks = (
+        _expected_subtasks_from_normalized(effective_normalized)
+        if is_subtask_run
+        else int(run.get("expected_subtasks") or _expected_subtasks_from_normalized(effective_normalized))
+    )
+    active = {
         "task_id": task_id,
-        "overall_task_id": task_id,
+        "overall_task_id": int(configured_overall_tid) if configured_overall_tid is not None else task_id,
         "task_type": run.get("task_type") or _task_type_for_external_category(category),
         "task_category": category,
-        "user_id": run.get("user_id") or str(normalized.get("platform_task_id") or ""),
-        "expected_subtasks": int(run.get("expected_subtasks") or _expected_subtasks_from_normalized(normalized)),
-        "completed_subtasks": int(run.get("completed_subtasks") or 0),
-        "current_subtask_seq": int(run.get("current_subtask_seq") or 0),
-        "task_name": normalized.get("task_name"),
-        "gender": normalized.get("gender"),
-        "raw": copy.deepcopy(raw_fields),
-        "normalized": copy.deepcopy(normalized),
+        "user_id": run.get("user_id") or str(effective_normalized.get("platform_task_id") or ""),
+        "expected_subtasks": expected_subtasks,
+        "completed_subtasks": completed_subtasks,
+        "current_subtask_seq": current_subtask_seq,
+        "task_name": effective_normalized.get("task_name"),
+        "gender": effective_normalized.get("gender"),
+        "raw": copy.deepcopy(effective_raw),
+        "normalized": copy.deepcopy(effective_normalized),
         "gaze_task_id": str(run["task_id"]),
     }
+    if is_subtask_run:
+        active["current_subtask_task_id"] = task_id
+        active["current_subtask_started_by"] = "restored"
+    return active
 
 
 def _load_active_external_task(
@@ -887,6 +919,74 @@ def _start_external_marker_context(
             user_id,
             active.get("task_id"),
         )
+
+
+def _start_external_subtask_context(
+    active: Dict[str, Any],
+    category: str,
+    task_type: str,
+    user_id: str,
+    raw_fields: Dict[str, Any],
+    normalized: Dict[str, Any],
+    message_data: Dict[str, Any],
+    timestamp_ms: int,
+    raw_message_json: str,
+    gaze_svc: Any = None,
+    physio_svc: Any = None,
+    external_collectors: Any = None,
+    inferred: bool = False,
+    inferred_from_action: Optional[str] = None,
+) -> Tuple[int, int]:
+    active["current_subtask_seq"] = int(active.get("current_subtask_seq") or 0) + 1
+    seq = active["current_subtask_seq"]
+    overall_tid = active.get("overall_task_id")
+    tid = generate_task_id()
+    active["task_id"] = tid
+    active["current_subtask_task_id"] = tid
+    active["current_subtask_started_by"] = "inferred" if inferred else "external"
+    db_manager.create_task_run(
+        task_id=tid,
+        task_type=task_type,
+        user_id=user_id,
+        expected_subtasks=1,
+        started_at_ms=timestamp_ms,
+        config_json=_json_dump({
+            **_task_run_config(category, active.get("raw") or raw_fields, active.get("normalized") or normalized),
+            "overall_task_id": overall_tid,
+            "sub_task_seq": seq,
+            "inferred_start": inferred,
+            "inferred_from_action": inferred_from_action,
+        }),
+        raw_message_json=raw_message_json,
+    )
+    if overall_tid is not None:
+        db_manager.update_task_run_progress(task_id=overall_tid, current_subtask_seq=seq, raw_message_json=raw_message_json)
+    event_payload = {"task_category": category, "sub_task_seq": seq}
+    if inferred:
+        event_payload["inferred"] = True
+        event_payload["inferred_from_action"] = inferred_from_action
+    db_manager.record_task_event(
+        task_id=tid,
+        task_type=task_type,
+        user_id=user_id,
+        event_type="sub_start",
+        sub_task_seq=seq,
+        timestamp_ms=timestamp_ms,
+        payload_json=_json_dump(event_payload),
+        raw_message_json=raw_message_json,
+    )
+    _start_external_marker_context(
+        active,
+        category,
+        message_data,
+        timestamp_ms=timestamp_ms,
+        gaze_svc=gaze_svc,
+        physio_svc=physio_svc,
+        external_collectors=external_collectors,
+        event_type="sub_start",
+        sub_task_seq=seq,
+    )
+    return tid, seq
 
 
 def _record_external_gaze_marker(
@@ -1551,7 +1651,7 @@ def _handle_external_task(
                 )
 
             expected = _expected_subtasks_from_normalized(normalized)
-            run = db_manager.find_active_task_run(user_id, task_type)
+            run = db_manager.find_active_task_run(user_id, task_type, overall_only=True)
             if run:
                 active = _active_from_task_run(run, category, raw_fields, normalized)
                 _active_external_tasks[key] = active
@@ -1658,47 +1758,43 @@ def _handle_external_task(
                 expected,
             )
 
-        active["current_subtask_seq"] = int(active.get("current_subtask_seq") or 0) + 1
-        seq = active["current_subtask_seq"]
-        overall_tid = active.get("overall_task_id")
-        tid = generate_task_id()
-        active["task_id"] = tid
-        active["current_subtask_task_id"] = tid
-        db_manager.create_task_run(
-            task_id=tid,
-            task_type=task_type,
-            user_id=user_id,
-            expected_subtasks=1,
-            started_at_ms=ts,
-            config_json=_json_dump({
-                **_task_run_config(category, active.get("raw") or raw_fields, active.get("normalized") or normalized),
-                "overall_task_id": overall_tid,
-                "sub_task_seq": seq,
-            }),
-            raw_message_json=raw,
-        )
-        if overall_tid is not None:
-            db_manager.update_task_run_progress(task_id=overall_tid, current_subtask_seq=seq, raw_message_json=raw)
-        db_manager.record_task_event(
-            task_id=tid,
-            task_type=task_type,
-            user_id=user_id,
-            event_type="sub_start",
-            sub_task_seq=seq,
-            timestamp_ms=ts,
-            payload_json=_json_dump({"task_category": category, "sub_task_seq": seq}),
-            raw_message_json=raw,
-        )
-        _start_external_marker_context(
+        if active.get("current_subtask_task_id"):
+            tid = active["current_subtask_task_id"]
+            seq = int(active.get("current_subtask_seq") or 0)
+            logger.warning(
+                "[EXTERNAL_COLLECTOR_DIAG] ignore duplicate sub_start for active task_id=%s sub_task_seq=%s started_by=%s",
+                tid,
+                seq,
+                active.get("current_subtask_started_by"),
+            )
+            return [{"type": "platform_task_ack", "status": "ok",
+                     "task_id": tid, "task_type": task_type,
+                     "task_category": category, "entry_mode": "external_lifecycle",
+                     "sub_task_seq": seq,
+                     "diagnostics": _external_task_diagnostics(
+                         message_data,
+                         category,
+                         action,
+                         user_id,
+                         task_type,
+                         external_collectors=external_collectors,
+                         active=active,
+                         event_role="subtask_start_already_active",
+                     )}]
+
+        tid, seq = _start_external_subtask_context(
             active,
             category,
+            task_type,
+            user_id,
+            raw_fields,
+            normalized,
             message_data,
-            timestamp_ms=ts,
+            ts,
+            raw,
             gaze_svc=gaze_svc,
             physio_svc=physio_svc,
             external_collectors=external_collectors,
-            event_type="sub_start",
-            sub_task_seq=seq,
         )
         logger.info(
             "[REMOTE_TASK_COUNT] external sub_start stored category=%s user=%s task_id=%s sub_task_seq=%s",
@@ -1765,53 +1861,29 @@ def _handle_external_task(
         tid = active.get("current_subtask_task_id")
         had_active_subtask = tid is not None
         inferred_subtask_start = False
+        next_subtask_task_id = None
         if tid is None:
             inferred_subtask_start = True
-            tid = generate_task_id()
-            active["task_id"] = tid
-            active["current_subtask_task_id"] = tid
-            db_manager.create_task_run(
-                task_id=tid,
-                task_type=task_type,
-                user_id=user_id,
-                expected_subtasks=1,
-                started_at_ms=ts,
-                config_json=_json_dump({
-                    **_task_run_config(category, active.get("raw") or raw_fields, active.get("normalized") or normalized),
-                    "overall_task_id": overall_tid,
-                    "sub_task_seq": seq,
-                }),
-                raw_message_json=raw,
-            )
-            inferred_start_message = copy.deepcopy(message_data)
+            active["current_subtask_seq"] = seq - 1
+            inferred_start_message = copy.deepcopy(active.get("raw") or raw_fields or message_data)
             inferred_start_message["Action"] = "sub_start"
             inferred_start_message["_inferred_from_action"] = raw_action
             inferred_start_raw = _json_dump(inferred_start_message)
-            db_manager.record_task_event(
-                task_id=tid,
-                task_type=task_type,
-                user_id=user_id,
-                event_type="sub_start",
-                sub_task_seq=seq,
-                timestamp_ms=ts,
-                payload_json=_json_dump({
-                    "task_category": category,
-                    "sub_task_seq": seq,
-                    "inferred": True,
-                    "inferred_from_action": raw_action,
-                }),
-                raw_message_json=inferred_start_raw,
-            )
-            _start_external_marker_context(
+            tid, seq = _start_external_subtask_context(
                 active,
                 category,
+                task_type,
+                user_id,
+                raw_fields,
+                normalized,
                 inferred_start_message,
-                timestamp_ms=ts,
+                ts,
+                inferred_start_raw,
                 gaze_svc=gaze_svc,
                 physio_svc=physio_svc,
                 external_collectors=external_collectors,
-                event_type="sub_start",
-                sub_task_seq=seq,
+                inferred=True,
+                inferred_from_action=raw_action,
             )
             logger.warning(
                 "[EXTERNAL_COLLECTOR_DIAG] inferred sub_start before %s task_id=%s sub_task_seq=%s",
@@ -1887,8 +1959,37 @@ def _handle_external_task(
             _active_external_tasks.pop(key, None)
         else:
             active.pop("current_subtask_task_id", None)
+            active.pop("current_subtask_started_by", None)
             active.pop("gaze_task_id", None)
             active["task_id"] = overall_tid
+            next_start_message = copy.deepcopy(active.get("raw") or raw_fields or message_data)
+            next_start_message["Action"] = "sub_start"
+            next_start_message["_inferred_from_action"] = "previous_sub_end"
+            next_start_message["_inferred_after_task_id"] = tid
+            next_start_raw = _json_dump(next_start_message)
+            next_subtask_task_id, next_seq = _start_external_subtask_context(
+                active,
+                category,
+                task_type,
+                user_id,
+                raw_fields,
+                normalized,
+                next_start_message,
+                ts,
+                next_start_raw,
+                gaze_svc=gaze_svc,
+                physio_svc=physio_svc,
+                external_collectors=external_collectors,
+                inferred=True,
+                inferred_from_action="previous_sub_end",
+            )
+            logger.warning(
+                "[EXTERNAL_COLLECTOR_DIAG] inferred next sub_start after %s task_id=%s sub_task_seq=%s previous_task_id=%s",
+                action,
+                next_subtask_task_id,
+                next_seq,
+                tid,
+            )
         logger.info(
             "[REMOTE_TASK_COUNT] external sub_end stored category=%s user=%s task_id=%s "
             "overall_task_id=%s sub_task_seq=%s completed=%s total=%s status=%s has_result=%s",
@@ -1907,6 +2008,7 @@ def _handle_external_task(
                  "task_category": category, "entry_mode": "external_lifecycle",
                  "sub_task_seq": seq, "completed_subtasks": completed,
                  "expected_subtasks": expected, "task_status": status,
+                 "next_subtask_task_id": next_subtask_task_id,
                  "diagnostics": _external_task_diagnostics(
                      message_data,
                      category,

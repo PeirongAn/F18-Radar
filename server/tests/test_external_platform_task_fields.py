@@ -19,14 +19,18 @@ class FakeDb:
         self.events = []
         self.results = []
 
-    def find_active_task_run(self, user_id, task_type):
+    def find_active_task_run(self, user_id, task_type, overall_only=False):
         active = [
             run for run in self.runs.values()
             if run["user_id"] == user_id and run["task_type"] == task_type and run["status"] != "completed"
         ]
-        if not active:
-            return None
-        return sorted(active, key=lambda run: run["started_at_ms"], reverse=True)[0].copy()
+        for run in sorted(active, key=lambda run: (run["started_at_ms"], run["task_id"]), reverse=True):
+            if not overall_only:
+                return run.copy()
+            config_obj = json.loads(run.get("config_json") or "{}")
+            if config_obj.get("overall_task_id") is None:
+                return run.copy()
+        return None
 
     def find_recent_completed_task_run(self, user_id, task_type, since_ms=None):
         completed = [
@@ -161,7 +165,7 @@ def make_config():
 
 def setup_bridge(monkeypatch):
     fake_db = FakeDb()
-    ids = iter([42, 43, 44])
+    ids = iter(range(42, 80))
     bridge._pending = None
     bridge._active_web_task_overlays.clear()
     bridge._active_external_tasks.clear()
@@ -502,6 +506,44 @@ def test_sub_ennd_alias_stops_active_external_collector(monkeypatch):
     assert external.stopped == ["43"]
 
 
+def test_sub_end_prestarts_next_external_collector(monkeypatch):
+    setup_bridge(monkeypatch)
+    external = FakeExternalCollectors()
+
+    bridge._handle_external_task(
+        overall_start("3"),
+        "platform_control",
+        external_collectors=external,
+    )
+    bridge._handle_external_task(
+        sub_start(),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    first_end = bridge._handle_external_task(
+        sub_end(),
+        "platform_control",
+        external_collectors=external,
+    )
+    duplicate_start = bridge._handle_external_task(
+        sub_start(),
+        "platform_control",
+        external_collectors=external,
+    )
+
+    assert first_end[0]["task_id"] == 43
+    assert first_end[0]["next_subtask_task_id"] == 44
+    assert first_end[0]["task_status"] == "active"
+    assert duplicate_start[0]["task_id"] == 44
+    assert duplicate_start[0]["diagnostics"]["event_role"] == "subtask_start_already_active"
+    assert [started[2] for started in external.started] == ["43", "44"]
+    assert external.started[1][3]["message"]["Action"] == "sub_start"
+    assert external.started[1][3]["message"]["_inferred_from_action"] == "previous_sub_end"
+    assert [marker["name"] for marker in external.markers] == ["sub_start", "sub_end", "sub_start"]
+    assert external.stopped == ["43"]
+
+
 def test_sub_end_without_sub_start_infers_external_start(monkeypatch):
     setup_bridge(monkeypatch)
     external = FakeExternalCollectors()
@@ -695,7 +737,8 @@ def test_external_gaze_and_physio_cover_overall_task_until_all_subtasks_complete
     first_end = bridge._handle_external_task(sub_end(), "platform_control", gaze_svc=gaze, physio_svc=physio)
 
     assert first_end[0]["task_status"] == "active"
-    assert len(gaze.started) == 1
+    assert first_end[0]["next_subtask_task_id"] == 44
+    assert len(gaze.started) == 2
     assert gaze.stopped[0]["task_id"] == "43"
     assert physio.stopped == 1
 

@@ -977,7 +977,7 @@ class DatabaseManager:
         if changed:
             conn.commit()
 
-    def find_active_task_run(self, user_id: str, task_type: str) -> Optional[Dict[str, Any]]:
+    def find_active_task_run(self, user_id: str, task_type: str, overall_only: bool = False) -> Optional[Dict[str, Any]]:
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -989,19 +989,26 @@ class DatabaseManager:
                     FROM task_runs
                     WHERE user_id = ? AND task_type = ? AND status != 'completed'
                     ORDER BY started_at_ms DESC, task_id DESC
-                    LIMIT 1
+                    LIMIT 50
                     """,
                     (user_id, task_type),
                 )
-                row = cursor.fetchone()
-                if not row:
-                    return None
                 keys = [
                     "task_id", "task_type", "user_id", "status", "expected_subtasks",
                     "completed_subtasks", "current_subtask_seq", "started_at_ms",
                     "completed_at_ms", "config_json", "last_raw_message_json",
                 ]
-                return dict(zip(keys, row))
+                for row in cursor.fetchall():
+                    run = dict(zip(keys, row))
+                    if not overall_only:
+                        return run
+                    try:
+                        config_obj = json.loads(run.get("config_json") or "{}")
+                    except (TypeError, ValueError):
+                        config_obj = {}
+                    if not isinstance(config_obj, dict) or config_obj.get("overall_task_id") is None:
+                        return run
+                return None
         except Exception as e:
             self.logger.warning("查找 active task_run 失败: %s", e)
             return None
