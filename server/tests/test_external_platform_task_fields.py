@@ -465,6 +465,7 @@ def test_sub_end_maintains_task_count_without_sub_start(monkeypatch):
     assert fake_db.runs[42]["status"] == "completed"
     assert first[0]["task_id"] == 43
     assert second[0]["task_id"] == 44
+    assert [event["sub_task_seq"] for event in fake_db.events if event["event_type"] == "sub_start"] == [1, 2]
     assert [event["sub_task_seq"] for event in fake_db.events if event["event_type"] == "sub_end"] == [1, 2]
 
 
@@ -501,7 +502,7 @@ def test_sub_ennd_alias_stops_active_external_collector(monkeypatch):
     assert external.stopped == ["43"]
 
 
-def test_sub_end_without_sub_start_skips_external_stop(monkeypatch):
+def test_sub_end_without_sub_start_infers_external_start(monkeypatch):
     setup_bridge(monkeypatch)
     external = FakeExternalCollectors()
 
@@ -524,10 +525,12 @@ def test_sub_end_without_sub_start_skips_external_stop(monkeypatch):
     assert diagnostics["raw_action"] == "sub_ennd"
     assert diagnostics["action"] == "sub_end"
     assert diagnostics["action_was_normalized"] is True
-    assert diagnostics["event_role"] == "subtask_end_without_start"
-    assert external.started == []
-    assert external.markers == []
-    assert external.stopped == []
+    assert diagnostics["event_role"] == "subtask_end_with_inferred_start"
+    assert external.started[0][2] == "43"
+    assert external.started[0][3]["message"]["Action"] == "sub_start"
+    assert external.started[0][3]["message"]["_inferred_from_action"] == "sub_ennd"
+    assert [marker["name"] for marker in external.markers] == ["sub_start", "sub_end"]
+    assert external.stopped == ["43"]
 
 
 def test_overall_task_start_resumes_unfinished_task(monkeypatch):

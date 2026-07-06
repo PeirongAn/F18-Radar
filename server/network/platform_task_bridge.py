@@ -1764,7 +1764,9 @@ def _handle_external_task(
         overall_tid = active.get("overall_task_id")
         tid = active.get("current_subtask_task_id")
         had_active_subtask = tid is not None
+        inferred_subtask_start = False
         if tid is None:
+            inferred_subtask_start = True
             tid = generate_task_id()
             active["task_id"] = tid
             active["current_subtask_task_id"] = tid
@@ -1780,6 +1782,42 @@ def _handle_external_task(
                     "sub_task_seq": seq,
                 }),
                 raw_message_json=raw,
+            )
+            inferred_start_message = copy.deepcopy(message_data)
+            inferred_start_message["Action"] = "sub_start"
+            inferred_start_message["_inferred_from_action"] = raw_action
+            inferred_start_raw = _json_dump(inferred_start_message)
+            db_manager.record_task_event(
+                task_id=tid,
+                task_type=task_type,
+                user_id=user_id,
+                event_type="sub_start",
+                sub_task_seq=seq,
+                timestamp_ms=ts,
+                payload_json=_json_dump({
+                    "task_category": category,
+                    "sub_task_seq": seq,
+                    "inferred": True,
+                    "inferred_from_action": raw_action,
+                }),
+                raw_message_json=inferred_start_raw,
+            )
+            _start_external_marker_context(
+                active,
+                category,
+                inferred_start_message,
+                timestamp_ms=ts,
+                gaze_svc=gaze_svc,
+                physio_svc=physio_svc,
+                external_collectors=external_collectors,
+                event_type="sub_start",
+                sub_task_seq=seq,
+            )
+            logger.warning(
+                "[EXTERNAL_COLLECTOR_DIAG] inferred sub_start before %s task_id=%s sub_task_seq=%s",
+                action,
+                tid,
+                seq,
             )
         result = message_data.get("result") if isinstance(message_data.get("result"), dict) else {}
         db_manager.record_task_event(
@@ -1826,7 +1864,7 @@ def _handle_external_task(
             )
         if status == "completed":
             active["task_id"] = tid
-        if had_active_subtask:
+        if had_active_subtask or inferred_subtask_start:
             _stop_external_marker_context(
                 active,
                 category,
@@ -1877,7 +1915,7 @@ def _handle_external_task(
                      task_type,
                      external_collectors=external_collectors,
                      active=active,
-                     event_role="subtask_end" if had_active_subtask else "subtask_end_without_start",
+                     event_role="subtask_end" if had_active_subtask else "subtask_end_with_inferred_start",
                  )}]
 
     tid = active.get("current_subtask_task_id") or active.get("overall_task_id") or active.get("task_id")
