@@ -601,6 +601,44 @@ def _json_dump(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _external_collector_names(external_collectors: Any = None) -> List[str]:
+    adapters = getattr(external_collectors, "adapters", None) if external_collectors is not None else None
+    if not adapters:
+        return []
+    return [str(getattr(adapter, "name", "") or getattr(adapter, "provider", "") or "?") for adapter in adapters]
+
+
+def _external_task_diagnostics(
+    message_data: Dict[str, Any],
+    category: str,
+    action: str,
+    user_id: str,
+    task_type: str,
+    external_collectors: Any = None,
+    active: Optional[Dict[str, Any]] = None,
+    event_role: str = "",
+) -> Dict[str, Any]:
+    keys = sorted(str(key) for key in message_data.keys())
+    is_overall = action == "task_start" and _is_overall_task_start(message_data)
+    return {
+        "category": category,
+        "task_type": task_type,
+        "user_id": user_id,
+        "action": action,
+        "event_role": event_role or ("overall_start" if is_overall else "subtask_start" if action in ("task_start", "sub_start") else action),
+        "is_overall_task_start": is_overall,
+        "message_keys": keys,
+        "overall_fields_present": sorted(key for key in _OVERALL_TASK_START_FIELDS if key in message_data),
+        "external_collectors_injected": external_collectors is not None,
+        "external_collectors_enabled": bool(getattr(external_collectors, "enabled", False)) if external_collectors is not None else False,
+        "external_collector_names": _external_collector_names(external_collectors),
+        "active_task_id": (active or {}).get("task_id"),
+        "active_overall_task_id": (active or {}).get("overall_task_id"),
+        "active_subtask_task_id": (active or {}).get("current_subtask_task_id"),
+        "active_subtask_seq": (active or {}).get("current_subtask_seq"),
+    }
+
+
 def _task_run_config(category: str, raw_fields: Dict[str, Any], normalized: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "task_category": category,
@@ -814,10 +852,26 @@ def _start_external_marker_context(
     if external_collectors is not None:
         try:
             external_run_id = str(active.get("gaze_task_id") or active.get("task_id"))
+            logger.warning(
+                "[EXTERNAL_COLLECTOR_DIAG] start_task event=%s task_type=%s user=%s run_id=%s collectors=%s",
+                event_type,
+                task_type,
+                user_id,
+                external_run_id,
+                _external_collector_names(external_collectors),
+            )
             external_collectors.start_task(task_type, user_id, external_run_id, payload)
             external_collectors.marker(event_type, payload)
         except Exception as e:
             logger.warning("external collector %s failed: %s", event_type, e, exc_info=True)
+    elif event_type in ("task_start", "sub_start"):
+        logger.warning(
+            "[EXTERNAL_COLLECTOR_DIAG] no external_collectors injected for event=%s task_type=%s user=%s task_id=%s",
+            event_type,
+            task_type,
+            user_id,
+            active.get("task_id"),
+        )
 
 
 def _record_external_gaze_marker(
@@ -935,7 +989,14 @@ def _stop_external_marker_context(
             logger.warning("physio external stop_task failed: %s", e, exc_info=True)
     if external_collectors is not None:
         try:
-            external_collectors.stop_task(str(active.get("gaze_task_id") or active.get("task_id") or ""))
+            stop_id = str(active.get("gaze_task_id") or active.get("task_id") or "")
+            logger.warning(
+                "[EXTERNAL_COLLECTOR_DIAG] stop_task event=%s task_id=%s collectors=%s",
+                event_type,
+                stop_id,
+                _external_collector_names(external_collectors),
+            )
+            external_collectors.stop_task(stop_id)
             external_collectors.clear_subject()
         except Exception as e:
             logger.warning("external collector stop_task failed: %s", e, exc_info=True)
@@ -1394,11 +1455,24 @@ def _handle_external_task(
         _active_external_tasks.get(key),
         list(_active_external_tasks.keys()),
     )
+    logger.warning(
+        "[EXTERNAL_COLLECTOR_DIAG] received %s",
+        _json_dump(_external_task_diagnostics(
+            message_data,
+            category,
+            action,
+            user_id,
+            task_type,
+            external_collectors=external_collectors,
+            active=_active_external_tasks.get(key),
+            event_role="received",
+        )),
+    )
 
     if action in ("task_start", "sub_start"):
         raw_fields, normalized = _normalize_platform_task_fields(message_data, category)
         normalized = _attach_entry_semantics(normalized, category, "external_lifecycle")
-        if action == "task_start":
+        if action == "task_start" and _is_overall_task_start(message_data):
             if key in _active_external_tasks:
                 active = _active_external_tasks[key]
                 logger.warning(
@@ -1412,7 +1486,17 @@ def _handle_external_task(
                 return [{"type": "platform_task_ack", "status": "ignored",
                          "task_id": active.get("task_id"), "task_type": task_type,
                          "task_category": category, "entry_mode": "external_lifecycle",
-                         "event_type": "overall_start"}]
+                         "event_type": "overall_start",
+                         "diagnostics": _external_task_diagnostics(
+                             message_data,
+                             category,
+                             action,
+                             user_id,
+                             task_type,
+                             external_collectors=external_collectors,
+                             active=active,
+                             event_role="overall_start_ignored",
+                         )}]
 
             compat_reply = _handle_overall_stop_compat_if_needed(
                 message_data,
@@ -1512,7 +1596,17 @@ def _handle_external_task(
                      "task_id": tid, "task_type": task_type,
                      "task_category": category, "entry_mode": "external_lifecycle",
                      "expected_subtasks": active.get("expected_subtasks"),
-                     "completed_subtasks": active.get("completed_subtasks")}]
+                     "completed_subtasks": active.get("completed_subtasks"),
+                     "diagnostics": _external_task_diagnostics(
+                         message_data,
+                         category,
+                         action,
+                         user_id,
+                         task_type,
+                         external_collectors=external_collectors,
+                         active=active,
+                         event_role="overall_start",
+                     )}]
 
         active = _load_active_external_task(category, user_id, raw_fields, normalized)
         if not active:
@@ -1593,7 +1687,17 @@ def _handle_external_task(
         return [{"type": "platform_task_ack", "status": "ok",
                  "task_id": tid, "task_type": task_type,
                  "task_category": category, "entry_mode": "external_lifecycle",
-                 "sub_task_seq": seq}]
+                 "sub_task_seq": seq,
+                 "diagnostics": _external_task_diagnostics(
+                     message_data,
+                     category,
+                     action,
+                     user_id,
+                     task_type,
+                     external_collectors=external_collectors,
+                     active=active,
+                     event_role="subtask_start",
+                 )}]
 
     try:
         raw_fields, normalized = _normalize_platform_task_fields(message_data, category)
@@ -1617,7 +1721,17 @@ def _handle_external_task(
             list(_active_external_tasks.keys()),
         )
         return [{"type": "platform_task_ack", "status": "error",
-                 "message": f"no active {category} task for user {user_id}"}]
+                 "message": f"no active {category} task for user {user_id}",
+                 "diagnostics": _external_task_diagnostics(
+                     message_data,
+                     category,
+                     action,
+                     user_id,
+                     task_type,
+                     external_collectors=external_collectors,
+                     active=None,
+                     event_role="missing_active",
+                 )}]
 
     if action == "sub_end":
         completed_before = int(active.get("completed_subtasks") or 0)
