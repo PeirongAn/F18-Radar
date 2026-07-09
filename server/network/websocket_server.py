@@ -473,7 +473,7 @@ class WebSocketServer:
         """启动WebSocket服务器"""
         self.logger.info(f"雷达服务器启动中... ws://{self.host}:{self.port}")
         
-        async with websockets.serve(self.handle_client, self.host, self.port):
+        async with websockets.serve(self.handle_client, self.host, self.port, subprotocols=["ws"]):
             self.logger.info(f"雷达服务器已启动于 ws://{self.host}:{self.port}")
             await asyncio.Future()  # 运行直到被取消
 

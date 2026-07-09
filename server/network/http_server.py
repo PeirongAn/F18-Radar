@@ -225,7 +225,7 @@ class HTTPServer:
     
     async def websocket_handler(self, request):
         """处理WebSocket连接"""
-        ws = WebSocketResponse()
+        ws = WebSocketResponse(protocols=("ws",))
         await ws.prepare(request)
         
         client_id = str(uuid.uuid4())
