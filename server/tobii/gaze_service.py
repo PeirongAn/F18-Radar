@@ -49,6 +49,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 OUT_OF_BOX_FALSE_THRESHOLD = _env_int("GAZE_OUT_OF_BOX_FALSE_THRESHOLD", 200)
+ATTENTION_FEEDBACK_COOLDOWN_MS = _env_int("GAZE_ATTENTION_FEEDBACK_COOLDOWN_MS", 3000)
 GAZE_SCREEN_WIDTH = _env_int("GAZE_SCREEN_WIDTH", 0)
 GAZE_SCREEN_HEIGHT = _env_int("GAZE_SCREEN_HEIGHT", 0)
 GAZE_PROGRESS_LOGS_ENABLED = os.environ.get("GAZE_PROGRESS_LOGS", "").lower() in {
@@ -98,7 +99,7 @@ class GazeService:
 
         # ── 注意力反馈状态 ────────────────────
         self._consecutive_out_of_box_false: int = 0
-        self._out_of_box_feedback_sent: bool = False
+        self._last_attention_feedback_time_ms: int = 0
         self._last_out_of_box_log_count: int = 0
 
         # ── WebSocket 广播 ────────────────────
@@ -678,7 +679,7 @@ class GazeService:
 
     def _reset_out_of_box_state(self):
         self._consecutive_out_of_box_false = 0
-        self._out_of_box_feedback_sent = False
+        self._last_attention_feedback_time_ms = 0
         self._last_out_of_box_log_count = 0
 
     def _resolve_screen_size(self, screen_size: tuple | list | None) -> tuple:
@@ -765,8 +766,7 @@ class GazeService:
                 return
 
             if not has_attention_region:
-                self._consecutive_out_of_box_false = 0
-                self._last_out_of_box_log_count = 0
+                self._reset_out_of_box_state()
                 return
 
             if not gaze_valid or current_in_region is False:
@@ -785,7 +785,12 @@ class GazeService:
                         f"count={current_count}/{OUT_OF_BOX_FALSE_THRESHOLD}, "
                         f"reason={miss_reason}, gaze={gaze_point}, bbox={task['bbox']}"
                     )
-                if self._consecutive_out_of_box_false >= OUT_OF_BOX_FALSE_THRESHOLD:
+                now_ms = int(time.time() * 1000)
+                cooldown_elapsed = (
+                    self._last_attention_feedback_time_ms <= 0
+                    or now_ms - self._last_attention_feedback_time_ms >= ATTENTION_FEEDBACK_COOLDOWN_MS
+                )
+                if self._consecutive_out_of_box_false >= OUT_OF_BOX_FALSE_THRESHOLD and cooldown_elapsed:
                     should_push_feedback = True
                     feedback_task_id = self._current_task.get("task_id")
                     feedback_count = self._consecutive_out_of_box_false
@@ -794,8 +799,7 @@ class GazeService:
                         f"task_id={feedback_task_id}, count={feedback_count}, "
                         f"reason={'invalid_gaze' if not gaze_valid else 'outside_target'}, gaze={gaze_point}"
                     )
-                    self._consecutive_out_of_box_false = 0
-                    self._last_out_of_box_log_count = 0
+                    self._last_attention_feedback_time_ms = now_ms
             else:
                 if self._progress_logs_enabled and self._consecutive_out_of_box_false > 0:
                     self._log_info(
@@ -803,8 +807,7 @@ class GazeService:
                         f"task_id={self._current_task.get('task_id')}, "
                         f"cleared_count={self._consecutive_out_of_box_false}, gaze={gaze_point}"
                     )
-                self._consecutive_out_of_box_false = 0
-                self._last_out_of_box_log_count = 0
+                self._reset_out_of_box_state()
 
         if should_push_feedback:
             self._push_attention_feedback(feedback_task_id, feedback_count)

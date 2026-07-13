@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from tobii import gaze_service as gaze_service_module
 from tobii.gaze_service import GazeService
 
 
@@ -89,7 +90,8 @@ def test_marker_with_active_task_writes_db_only():
         assert json.loads(rows[0][4]) == {"target": "panel-a"}
         assert marker["payload"] == {"target": "panel-a"}
 
-        task_dir = next(Path(tmp).glob("users/S002/**/active-task"))
+        task_dir = Path(tmp) / "raw" / "S002" / "active-task"
+        assert task_dir.exists()
         assert not (task_dir / "markers.jsonl").exists()
 
 
@@ -325,6 +327,157 @@ def test_empty_attention_region_does_not_trigger_feedback():
             conn.close()
 
         assert count == 0
+
+
+def test_continuous_invalid_gaze_triggers_single_feedback_until_recovered():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[],
+                screen_size=(100, 100),
+                task_id="single-feedback-task",
+                user_id="S011",
+                system_time=1_700_000_000_000_000,
+                regions=[
+                    {
+                        "id": "antenna_prompt",
+                        "shape": "rect",
+                        "left": 0.4,
+                        "top": 0.3,
+                        "right": 0.5,
+                        "bottom": 0.4,
+                    }
+                ],
+                coordinate_space="display_area_normalized",
+            )
+            for _ in range(450):
+                svc._gaze_data_callback({
+                    "left_gaze_point_validity": 0,
+                    "right_gaze_point_validity": 0,
+                    "left_gaze_point_on_display_area": (0.42, 0.31),
+                    "right_gaze_point_on_display_area": (0.42, 0.31),
+                })
+        finally:
+            svc.shutdown()
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM gaze_feedback_events WHERE task_id = ?",
+                ("single-feedback-task",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count == 1
+
+
+def test_feedback_can_trigger_again_after_gaze_returns_to_target():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[],
+                screen_size=(100, 100),
+                task_id="recovered-feedback-task",
+                user_id="S012",
+                system_time=1_700_000_000_000_000,
+                regions=[
+                    {
+                        "id": "antenna_prompt",
+                        "shape": "rect",
+                        "left": 0.4,
+                        "top": 0.3,
+                        "right": 0.5,
+                        "bottom": 0.4,
+                    }
+                ],
+                coordinate_space="display_area_normalized",
+            )
+            invalid_frame = {
+                "left_gaze_point_validity": 0,
+                "right_gaze_point_validity": 0,
+                "left_gaze_point_on_display_area": (0.42, 0.31),
+                "right_gaze_point_on_display_area": (0.42, 0.31),
+            }
+            hit_frame = {
+                "left_gaze_point_validity": 1,
+                "right_gaze_point_validity": 1,
+                "left_gaze_point_on_display_area": (0.42, 0.31),
+                "right_gaze_point_on_display_area": (0.42, 0.31),
+            }
+            for _ in range(250):
+                svc._gaze_data_callback(invalid_frame)
+            svc._gaze_data_callback(hit_frame)
+            for _ in range(250):
+                svc._gaze_data_callback(invalid_frame)
+        finally:
+            svc.shutdown()
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM gaze_feedback_events WHERE task_id = ?",
+                ("recovered-feedback-task",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count == 2
+
+
+def test_continuous_invalid_gaze_can_trigger_again_after_cooldown(monkeypatch):
+    fake_now = [1_000.0]
+    monkeypatch.setattr(gaze_service_module.time, "time", lambda: fake_now[0])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[],
+                screen_size=(100, 100),
+                task_id="cooldown-feedback-task",
+                user_id="S013",
+                system_time=1_700_000_000_000_000,
+                regions=[
+                    {
+                        "id": "antenna_prompt",
+                        "shape": "rect",
+                        "left": 0.4,
+                        "top": 0.3,
+                        "right": 0.5,
+                        "bottom": 0.4,
+                    }
+                ],
+                coordinate_space="display_area_normalized",
+            )
+            invalid_frame = {
+                "left_gaze_point_validity": 0,
+                "right_gaze_point_validity": 0,
+                "left_gaze_point_on_display_area": (0.42, 0.31),
+                "right_gaze_point_on_display_area": (0.42, 0.31),
+            }
+            for _ in range(250):
+                svc._gaze_data_callback(invalid_frame)
+            fake_now[0] += 2.0
+            for _ in range(250):
+                svc._gaze_data_callback(invalid_frame)
+            fake_now[0] += 1.1
+            svc._gaze_data_callback(invalid_frame)
+        finally:
+            svc.shutdown()
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM gaze_feedback_events WHERE task_id = ?",
+                ("cooldown-feedback-task",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count == 2
 
 
 def test_targets_store_normalized_region_without_raw_bbox_json():
