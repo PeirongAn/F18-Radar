@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import logging
 import os
 import sys
@@ -8,6 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 logging.raiseExceptions = False
 
 from core.message_handler import MessageHandler
+
+message_handler_module = importlib.import_module("core.message_handler")
 
 
 class FakeTaskManager:
@@ -133,6 +136,8 @@ def test_task_group_completion_returns_its_group_id():
         task_manager,
     )
 
+    assert len(result) == 1
+    assert isinstance(result[0].pop("timestamp"), int)
     assert result == [{
         "type": "all_tasks_completed",
         "task_type": "RADAR_TARGETING",
@@ -142,6 +147,50 @@ def test_task_group_completion_returns_its_group_id():
         "is_ai_active": True,
         "is_practice": False,
     }]
+
+
+def test_new_platform_task_forces_a_fresh_task_group(monkeypatch):
+    handler = MessageHandler()
+    task_manager = FakeTaskManager()
+    task_manager.current_scenario = {
+        "repetition_info": {
+            "current": 1,
+            "total": 2,
+            "task_group_id": 901,
+        },
+        "task_group_id": 901,
+        "is_ai_active": True,
+    }
+    task_manager.is_practice = False
+    task_manager._save_to_db = lambda: None
+    ensured_groups = []
+
+    monkeypatch.setattr(message_handler_module, "generate_task_id", lambda: 902)
+    monkeypatch.setattr(
+        message_handler_module.db_manager,
+        "ensure_task_group",
+        lambda **kwargs: ensured_groups.append(kwargs),
+    )
+
+    group_id, task_seq = handler._ensure_current_task_group(
+        task_manager=task_manager,
+        task_type="RADAR_TARGETING",
+        user_id="ANPEIRONG01",
+        current_scenario=task_manager.current_scenario,
+        event_owner="AI",
+        trust_state="",
+        message={"type": "task_start"},
+        started_at_ms=1234,
+        progress_key="RADAR_TARGETING::1-L1-low",
+        platform_meta={"normalized": {"platform_task_id": "ANPEIRONG01"}},
+        force_new_group=True,
+    )
+
+    assert group_id == 902
+    assert task_seq == 1
+    assert task_manager.current_scenario["task_group_id"] == 902
+    assert task_manager.current_scenario["repetition_info"]["task_group_id"] == 902
+    assert ensured_groups[0]["group_id"] == 902
 
 
 def test_sa_task_group_completion_returns_its_group_id():

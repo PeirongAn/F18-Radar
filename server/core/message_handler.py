@@ -133,6 +133,7 @@ class MessageHandler:
         started_at_ms: int,
         progress_key: str,
         platform_meta: Optional[Dict[str, Any]] = None,
+        force_new_group: bool = False,
     ) -> Tuple[Optional[int], Optional[int]]:
         if not current_scenario:
             return None, None
@@ -142,6 +143,13 @@ class MessageHandler:
             task_seq = int(task_seq)
         except (TypeError, ValueError):
             task_seq = None
+        # A newly consumed platform task represents a new task group even when
+        # its difficulty/autonomy combination restores a previously persisted
+        # scenario.  Never carry that scenario's old group id into the new run.
+        if force_new_group:
+            current_scenario.pop("task_group_id", None)
+            repetition_info.pop("task_group_id", None)
+
         task_group_id = current_scenario.get("task_group_id") or repetition_info.get("task_group_id")
         if not task_group_id:
             task_group_id = generate_task_id()
@@ -576,6 +584,7 @@ class MessageHandler:
             task_started_at_ms,
             progress_key,
             platform_meta=platform_meta,
+            force_new_group=overlay_source == "pending" and bool(platform_meta),
         )
         task_id = existing_task_id or generate_task_id()
         self._set_current_task(task_type, task_id, task_started_at_ms)
@@ -961,6 +970,14 @@ class MessageHandler:
                         completed_at_ms=completed_at_ms if group_completed else None,
                         raw_message_json=json.dumps(message or {}, ensure_ascii=False),
                     )
+                    task_group = db_manager.get_task_group(int(task_group_id))
+                    if task_group:
+                        expected_count = int(task_group.get("expected_task_count") or 0)
+                        completed_count_from_db = int(task_group.get("completed_task_count") or 0)
+                        group_completed = (
+                            task_group.get("status") == "completed"
+                            or expected_count > 0 and completed_count_from_db >= expected_count
+                        )
                 db_manager.record_task_event(
                     task_id=int(task_id),
                     task_type=task_type or "",
@@ -1001,6 +1018,7 @@ class MessageHandler:
                 "repetition_info": repetition_info,
                 "is_ai_active": bool(repetition_info.get("is_ai_active")),
                 "is_practice": bool(repetition_info.get("is_practice")),
+                "timestamp": int(time.time() * 1000),
             }]
         return []
     
@@ -1149,6 +1167,7 @@ class MessageHandler:
             task_started_at_ms,
             progress_key,
             platform_meta=platform_meta,
+            force_new_group=overlay_source == "pending" and bool(platform_meta),
         )
         task_id = existing_task_id or generate_task_id()
         self._set_current_task(task_type, task_id, task_started_at_ms)

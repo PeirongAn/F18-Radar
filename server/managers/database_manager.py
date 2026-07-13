@@ -1387,6 +1387,17 @@ class DatabaseManager:
             cursor.execute(f"UPDATE task_groups SET {', '.join(fields)} WHERE group_id = ?", tuple(params))
             conn.commit()
 
+    def get_task_group(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """Return the persisted task-group lifecycle row used for completion decisions."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM task_groups WHERE group_id = ?", (group_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            columns = [description[0] for description in cursor.description]
+            return dict(zip(columns, row))
+
     def create_task_run(self, task_id: int, task_type: str, user_id: str,
                         expected_subtasks: int, started_at_ms: int,
                         config_json: str, raw_message_json: str,

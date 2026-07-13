@@ -211,6 +211,12 @@ class GlobalWebSocketManager {
         ].join(':');
       } else if (rawData.type === 'settings_validation') {
         messageId += '_' + (rawData.timestamp ?? messageSequence);
+      } else if (rawData.type === 'all_tasks_completed') {
+        messageId += '_' + [
+          rawData.task_type ?? 'unknown',
+          rawData.task_group_id ?? rawData.repetition_info?.task_group_id ?? rawData.task_id ?? 'unknown',
+          rawData.timestamp ?? messageSequence,
+        ].join(':');
       } else if (rawData.type === 'externalTargets' && rawData.externalTargets) {
         console.log('externalTargets agentStore.isAIActive', agentStore.isAIActive);
         if (agentStore.isAIActive) {
@@ -1261,13 +1267,11 @@ const useRadarData = (
       const completedTaskType = message.task_type as TaskType;
       if (completedTaskType) {
         const completedGroupId = message.task_group_id ?? message.repetition_info?.task_group_id;
-        if (completedGroupId !== undefined && completedGroupId !== null) {
-          setLastTaskGroupCompletion({
-            ...message,
-            task_group_id: completedGroupId,
-            received_at: Date.now(),
-          });
-        }
+        setLastTaskGroupCompletion({
+          ...message,
+          task_group_id: completedGroupId,
+          received_at: Date.now(),
+        });
         setRepetitionInfos(prev => ({
           ...prev,
           [completedTaskType]: 'ALL_COMPLETED',
