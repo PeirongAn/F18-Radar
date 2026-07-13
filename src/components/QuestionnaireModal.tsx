@@ -23,6 +23,7 @@ export interface RepetitionInfo {
   scenario_total?: number;
   previous_task_completed?: boolean;
   task_id?: number;
+  task_group_id?: number;
 }
 
 interface AllRepetitionInfos {
@@ -64,7 +65,7 @@ export interface QuestionnaireSubmitData {
 }
 
 export interface QuestionnaireModalHandle {
-  show: (taskType?: TaskType) => void;
+  show: (taskType?: TaskType, completionInfo?: RepetitionInfo) => void;
   hide: () => void;
 }
 
@@ -199,6 +200,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitted, setSubmitted] = useState(false);
     const [validationError, setValidationError] = useState(false);
+    const [completionInfo, setCompletionInfo] = useState<RepetitionInfo | null>(null);
 
     // Track which task_ids already triggered popup (server-driven via show_questionnaire)
     const triggeredRef = useRef<Set<string>>(new Set());
@@ -236,14 +238,16 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     }, [repetitionInfos]);
 
     const getInfoForTask = useCallback((taskType: TaskType): RepetitionInfo | null => {
+      if (taskType === currentTaskType && completionInfo) return completionInfo;
       const info = repetitionInfos[taskType];
       if (info && info !== 'ALL_COMPLETED') return info;
       return lastInfoRef.current[taskType] ?? null;
-    }, [repetitionInfos]);
+    }, [repetitionInfos, currentTaskType, completionInfo]);
 
     /* ── Internal open helper ── */
-    const openFor = useCallback((taskType: TaskType) => {
+    const openFor = useCallback((taskType: TaskType, info?: RepetitionInfo) => {
       setCurrentTaskType(taskType);
+      setCompletionInfo(info ?? null);
       setAnswers({});
       setSubmitted(false);
       setValidationError(false);
@@ -268,8 +272,8 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     /* ── Expose imperative handle ── */
     useImperativeHandle(ref, () => ({
-      show: (taskType?: TaskType) => {
-        openFor(taskType ?? (activeDisplay === 'sa' ? 'SA_THREAT_RESPONSE' : 'RADAR_TARGETING'));
+      show: (taskType?: TaskType, info?: RepetitionInfo) => {
+        openFor(taskType ?? (activeDisplay === 'sa' ? 'SA_THREAT_RESPONSE' : 'RADAR_TARGETING'), info);
       },
       hide: () => setIsVisible(false),
     }));

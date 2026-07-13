@@ -506,6 +506,7 @@ const MainApp: React.FC = observer(() => {
     initializeSystem,
     sendResetSA,
     repetitionInfos,
+    lastTaskGroupCompletion,
     platformAutoStart,
     lastMessage,
     joystickEnabled,
@@ -583,7 +584,14 @@ const MainApp: React.FC = observer(() => {
     const key = getCompletionKey(taskType, source);
     if (shownQuestionnairesRef.current.has(key)) return;
     shownQuestionnairesRef.current.add(key);
-    questionnaireRef.current?.show(taskType);
+    const completionInfo = source?.repetition_info
+      ? {
+          ...source.repetition_info,
+          task_id: source.task_id ?? source.repetition_info.task_id,
+          task_group_id: source.task_group_id ?? source.repetition_info.task_group_id,
+        }
+      : undefined;
+    questionnaireRef.current?.show(taskType, completionInfo);
   }, [canShowQuestionnaire, getCompletionKey]);
 
   const showCompletionNoticeForTask = useCallback((taskType: TaskType, source?: any) => {
@@ -610,7 +618,6 @@ const MainApp: React.FC = observer(() => {
     shownCompletionNoticeRef.current.delete(key);
 
     setCompletionNoticeTask(current => current === taskType ? null : current);
-    questionnaireRef.current?.hide();
   }, [lastMessage]);
 
   const getTaskIdForType = useCallback((taskType: TaskType) => {
@@ -689,6 +696,14 @@ const MainApp: React.FC = observer(() => {
       showCompletionNoticeForTask('SA_THREAT_RESPONSE', source);
     }
   }, [repetitionInfos.RADAR_TARGETING, repetitionInfos.SA_THREAT_RESPONSE, lastMessage, showQuestionnaireForTask, showCompletionNoticeForTask]);
+
+  useEffect(() => {
+    if (!lastTaskGroupCompletion) return;
+    const taskType = lastTaskGroupCompletion.task_type as TaskType | undefined;
+    if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
+    showQuestionnaireForTask(taskType, lastTaskGroupCompletion);
+    showCompletionNoticeForTask(taskType, lastTaskGroupCompletion);
+  }, [lastTaskGroupCompletion, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   useEffect(() => {
     if (completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {

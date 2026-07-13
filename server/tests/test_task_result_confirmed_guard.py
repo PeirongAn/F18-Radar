@@ -222,3 +222,25 @@ def test_antenna_confirmation_without_a_pending_target_is_ignored():
     assert is_valid is False
     assert response["status"] == "ignored"
     assert "pending target" in response["message"]
+
+
+def test_ignored_antenna_confirmation_is_not_sent_to_client():
+    handler = MessageHandler()
+    handler.current_session.update({
+        "task_id": 101,
+        "task_ids": {"RADAR_TARGETING": 101},
+        "target_elevation": None,
+        "stage": "init",
+    })
+
+    result = asyncio.run(handler._handle_antenna_adjusted(
+        {
+            "task_id": 100,
+            "elevation": 2,
+            "targetElevation": 2,
+        },
+        {},
+        "AI",
+    ))
+
+    assert result == []

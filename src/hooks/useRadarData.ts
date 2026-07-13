@@ -440,6 +440,8 @@ export const globalWS = GlobalWebSocketManager.getInstance();
 export interface RepetitionInfo {
   current: number;
   total: number;
+  task_id?: number;
+  task_group_id?: number;
   scenario_index?: number;
   scenario_total?: number;
   is_practice?: boolean;
@@ -521,6 +523,9 @@ const useRadarData = (
     PLATFORM_CONTROL: null,
     WEAPON_FIRING: null,
   });
+  // Preserve group completion independently from repetitionInfos. The next
+  // init_settings can otherwise overwrite ALL_COMPLETED in the same render.
+  const [lastTaskGroupCompletion, setLastTaskGroupCompletion] = useState<any>(null);
   
   // 初始设置参数状态
   const [initSettings, setInitSettings] = useState<any>(null);
@@ -1244,6 +1249,14 @@ const useRadarData = (
       console.log('[useRadarData] Received all_tasks_completed:', message);
       const completedTaskType = message.task_type as TaskType;
       if (completedTaskType) {
+        const completedGroupId = message.task_group_id ?? message.repetition_info?.task_group_id;
+        if (completedGroupId !== undefined && completedGroupId !== null) {
+          setLastTaskGroupCompletion({
+            ...message,
+            task_group_id: completedGroupId,
+            received_at: Date.now(),
+          });
+        }
         setRepetitionInfos(prev => ({
           ...prev,
           [completedTaskType]: 'ALL_COMPLETED',
@@ -1440,6 +1453,7 @@ const useRadarData = (
     sendResetSA,
     confirmAntennaAdjustmentHandled,
     repetitionInfos,
+    lastTaskGroupCompletion,
     saThreats,
     lastMessage: globalWS.getLastMessage(),
     // 增强协议相关

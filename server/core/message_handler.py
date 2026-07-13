@@ -720,6 +720,8 @@ class MessageHandler:
         print("消息类型: antenna_adjusted")
         
         validation_response, is_valid = self._handle_antenna_adjustment(message)
+        if validation_response.get("status") == "ignored":
+            return []
         if is_valid:
             task_id = self._get_current_task_id('RADAR_TARGETING')
             if not session_state.get('is_practice', False) and task_id:
