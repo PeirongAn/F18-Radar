@@ -436,6 +436,13 @@ class GlobalWebSocketManager {
 // 获取全局WebSocket实例
 export const globalWS = GlobalWebSocketManager.getInstance();
 
+export const getDefaultRadarWsUrl = (): string => {
+  if (typeof window === 'undefined') return 'ws://localhost:8080/ws';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const hostname = window.location.hostname || 'localhost';
+  return `${protocol}//${hostname}:8080/ws`;
+};
+
 // 定义任务进度的接口
 export interface RepetitionInfo {
   current: number;
@@ -469,7 +476,7 @@ interface UseRadarDataOptions {
 
 // 修改后的useRadarData hook使用全局WebSocket管理器
 const useRadarData = (
-  wsUrl: string = 'ws://localhost:8080/ws',
+  wsUrl: string = getDefaultRadarWsUrl(),
   options: UseRadarDataOptions = {}
 ) => {
   const { enableAntennaRound = false } = options;

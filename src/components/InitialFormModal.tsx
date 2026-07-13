@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { globalWS } from '../hooks/useRadarData';
+import { getDefaultRadarWsUrl, globalWS } from '../hooks/useRadarData';
 
 
 interface InitialFormModalProps {
@@ -71,7 +71,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
           });
         } else {
           // 如果WebSocket未连接，先连接WebSocket
-          globalWS.connect('ws://localhost:8765');
+          globalWS.connect(getDefaultRadarWsUrl());
           // 稍后连接摇杆
           setTimeout(() => {
             globalWS.sendMessage({
