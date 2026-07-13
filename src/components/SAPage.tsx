@@ -347,9 +347,20 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     return total > 0 && current >= total && scenarioIndex >= scenarioTotal;
   }, [saRepetitionInfo]);
   const completedSATaskKeysRef = useRef<Set<string>>(new Set());
+  const getCurrentSATaskId = useCallback(() => {
+    if (saRepetitionInfo && typeof saRepetitionInfo !== 'string') {
+      const taskId = (saRepetitionInfo as any).task_id;
+      if (taskId !== undefined && taskId !== null) {
+        return taskId;
+      }
+    }
+    return radarStore.taskId;
+  }, [saRepetitionInfo, radarStore.taskId]);
+
   const getCurrentSATaskKey = useCallback(() => {
-    if (radarStore.taskId !== null && radarStore.taskId !== undefined) {
-      return String(radarStore.taskId);
+    const taskId = getCurrentSATaskId();
+    if (taskId !== null && taskId !== undefined) {
+      return String(taskId);
     }
     if (!saRepetitionInfo || typeof saRepetitionInfo === 'string') {
       return null;
@@ -365,7 +376,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       ri.is_ai_active ? 'ai' : 'manual',
       ri.is_practice ? 'practice' : 'formal',
     ].join(':');
-  }, [saRepetitionInfo, userId]);
+  }, [saRepetitionInfo, userId, getCurrentSATaskId]);
 
   const isAIActive = useMemo(() => {
     const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
@@ -687,10 +698,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         if (taskKey) {
           completedSATaskKeysRef.current.add(taskKey);
         }
+        const currentTaskId = getCurrentSATaskId();
         sendMessage?.({
           type: 'task_result_confirmed',
           task_type: 'SA_THREAT_RESPONSE',
-          task_id: radarStore.taskId,
+          task_id: currentTaskId,
           timestamp: Date.now(),
           user_id: userId,
           event_owner: 'manual',

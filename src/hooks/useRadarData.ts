@@ -1190,6 +1190,10 @@ const useRadarData = (
       console.log('[useRadarData] 消息字段:', Object.keys(message));
       
       // 检查是否是增强协议消息（包含threats数组和radar_config）
+      if (message.task_id !== undefined && message.task_id !== null) {
+        radarStore.setTaskId(message.task_id);
+      }
+
       if (message.threats && message.radar_config) {
         console.log('[useRadarData] 处理增强sa_task_updated消息:', message.threats.length, '个威胁');
         console.log('[useRadarData] 增强威胁详情:', message.threats);

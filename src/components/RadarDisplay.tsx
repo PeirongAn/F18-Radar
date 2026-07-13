@@ -177,17 +177,29 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   const completedRadarTaskKeysRef = React.useRef<Set<string>>(new Set());
   const previousRadarTaskKeyRef = React.useRef<string | null>(null);
 
+  const getCurrentRadarTaskId = React.useCallback(() => {
+    const info = repetitionInfos['RADAR_TARGETING'];
+    if (info && typeof info !== 'string') {
+      const taskId = (info as any).task_id;
+      if (taskId !== undefined && taskId !== null) {
+        return taskId;
+      }
+    }
+    return radarStore.taskId;
+  }, [repetitionInfos, radarStore.taskId]);
+
   const getCurrentRadarTaskKey = React.useCallback(() => {
     const info = repetitionInfos['RADAR_TARGETING'];
+    const taskId = getCurrentRadarTaskId();
     if (!info || typeof info === 'string') {
-      return radarStore.taskId !== null && radarStore.taskId !== undefined
-        ? String(radarStore.taskId)
+      return taskId !== null && taskId !== undefined
+        ? String(taskId)
         : null;
     }
 
     const ri = info as any;
     return [
-      radarStore.taskId !== null && radarStore.taskId !== undefined ? String(radarStore.taskId) : 'pending',
+      taskId !== null && taskId !== undefined ? String(taskId) : 'pending',
       userId ?? '',
       ri.current ?? '',
       ri.total ?? '',
@@ -196,7 +208,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       ri.is_ai_active ? 'ai' : 'manual',
       ri.is_practice ? 'practice' : 'formal',
     ].join(':');
-  }, [repetitionInfos, userId, radarStore.taskId]);
+  }, [repetitionInfos, userId, getCurrentRadarTaskId]);
 
   const isCurrentRadarTaskAlreadyHandled = React.useCallback(() => {
     if (repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED') {
@@ -670,7 +682,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     sendMessage?.({
       type: 'task_result_confirmed',
       task_type: 'RADAR_TARGETING',
-      task_id: radarStore.taskId,
+      task_id: getCurrentRadarTaskId(),
       timestamp: Date.now(),
     });
 
@@ -690,7 +702,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
+  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
 
   // 处理确认弹窗的确认操作
   const handleConfirmYes = useCallback(() => {

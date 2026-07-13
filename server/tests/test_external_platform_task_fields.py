@@ -16,6 +16,7 @@ from tobii.gaze_service import GazeService
 class FakeDb:
     def __init__(self):
         self.runs = {}
+        self.groups = {}
         self.events = []
         self.results = []
 
@@ -53,11 +54,32 @@ class FakeDb:
             "current_subtask_seq": 0,
         }
 
+    def create_task_group(self, **kwargs):
+        self.groups[kwargs["group_id"]] = {
+            **kwargs,
+            "status": "active",
+            "completed_task_count": 0,
+            "current_task_seq": 0,
+        }
+
+    def ensure_task_group(self, **kwargs):
+        group_id = kwargs["group_id"]
+        if group_id not in self.groups:
+            self.create_task_group(**kwargs)
+            return
+        self.groups[group_id].update({key: value for key, value in kwargs.items() if value is not None})
+
     def update_task_run_progress(self, task_id, **kwargs):
         run = self.runs[task_id]
         for key, value in kwargs.items():
             if value is not None:
                 run[key] = value
+
+    def update_task_group_progress(self, group_id, **kwargs):
+        group = self.groups.setdefault(group_id, {"group_id": group_id})
+        for key, value in kwargs.items():
+            if value is not None:
+                group[key] = value
 
     def record_task_event(self, **kwargs):
         self.events.append(kwargs)
@@ -335,6 +357,8 @@ def test_overall_task_start_creates_task_run_and_event(monkeypatch):
     assert replies[0]["status"] == "ok"
     assert replies[0]["task_id"] == 42
     assert replies[0]["task_type"] == "PLATFORM_CONTROL"
+    assert fake_db.groups[42]["expected_task_count"] == 3
+    assert fake_db.groups[42]["task_type"] == "PLATFORM_CONTROL"
     assert fake_db.runs[42]["expected_subtasks"] == 3
     assert fake_db.runs[42]["completed_subtasks"] == 0
     assert fake_db.events[0]["event_type"] == "overall_start"
@@ -417,11 +441,11 @@ def test_weapon_simple_task_start_without_overall_starts_external_collectors(mon
     )
 
     assert replies[0]["task_id"] == 42
-    assert replies[0]["task_type"] == "WEAPON_LAUNCH"
+    assert replies[0]["task_type"] == "WEAPON_FIRING"
     assert replies[0]["sub_task_seq"] == 1
-    assert fake_db.runs[42]["task_type"] == "WEAPON_LAUNCH"
+    assert fake_db.runs[42]["task_type"] == "WEAPON_FIRING"
     assert [event["event_type"] for event in fake_db.events] == ["sub_start"]
-    assert external.started[0][0] == "WEAPON_LAUNCH"
+    assert external.started[0][0] == "WEAPON_FIRING"
     assert external.started[0][1] == "DefaultID"
     assert external.started[0][2] == "42"
     assert [marker["name"] for marker in external.markers] == ["sub_start"]

@@ -878,14 +878,20 @@ def generate_task_id() -> int:
         with db_manager.get_connection() as conn:
             cursor = conn.cursor()
             max_id = 0
-            for table_name in ("task_settings", "user_operations", "task_runs"):
+            id_sources = (
+                ("task_settings", "task_id"),
+                ("user_operations", "task_id"),
+                ("task_runs", "task_id"),
+                ("task_groups", "group_id"),
+            )
+            for table_name, column_name in id_sources:
                 cursor.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
                     (table_name,),
                 )
                 if not cursor.fetchone():
                     continue
-                cursor.execute(f"SELECT MAX(task_id) FROM {table_name}")
+                cursor.execute(f"SELECT MAX({column_name}) FROM {table_name}")
                 result = cursor.fetchone()
                 if result and result[0] is not None:
                     max_id = max(max_id, int(result[0]))

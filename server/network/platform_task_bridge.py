@@ -24,7 +24,7 @@ _TASK_TYPE_BY_CATEGORY = {
     "radar": "RADAR_TARGETING",
     "sa": "SA_THREAT_RESPONSE",
     "platform_control": "PLATFORM_CONTROL",
-    "weapon_launch": "WEAPON_LAUNCH",
+    "weapon_launch": "WEAPON_FIRING",
 }
 
 _WEB_KIND_BY_TASK_TYPE = {
@@ -946,6 +946,8 @@ def _start_external_subtask_context(
     active["current_subtask_started_by"] = "inferred" if inferred else "external"
     db_manager.create_task_run(
         task_id=tid,
+        group_id=overall_tid,
+        task_seq=seq,
         task_type=task_type,
         user_id=user_id,
         expected_subtasks=1,
@@ -961,6 +963,7 @@ def _start_external_subtask_context(
     )
     if overall_tid is not None:
         db_manager.update_task_run_progress(task_id=overall_tid, current_subtask_seq=seq, raw_message_json=raw_message_json)
+        db_manager.update_task_group_progress(group_id=overall_tid, current_task_seq=seq, raw_message_json=raw_message_json)
     event_payload = {"task_category": category, "sub_task_seq": seq}
     if inferred:
         event_payload["inferred"] = True
@@ -1686,8 +1689,23 @@ def _handle_external_task(
                     "normalized": copy.deepcopy(normalized),
                 }
                 _active_external_tasks[key] = active
+                db_manager.create_task_group(
+                    group_id=tid,
+                    task_type=task_type,
+                    user_id=user_id,
+                    expected_task_count=expected,
+                    started_at_ms=ts,
+                    config_json=_json_dump(_task_run_config(category, raw_fields, normalized)),
+                    raw_message_json=raw,
+                    difficulty=normalized.get("difficulty_key") or normalized.get("difficulty_display"),
+                    autonomy_level=normalized.get("current_level") or normalized.get("ai_autonomy_level"),
+                    is_ai_active=normalized.get("include_ai"),
+                    is_practice=normalized.get("is_practice"),
+                    progress_key=category,
+                )
                 db_manager.create_task_run(
                     task_id=tid,
+                    group_id=tid,
                     task_type=task_type,
                     user_id=user_id,
                     expected_subtasks=expected,
@@ -1934,6 +1952,14 @@ def _handle_external_task(
                 completed_at_ms=ts if status == "completed" else None,
                 raw_message_json=raw,
             )
+            db_manager.update_task_group_progress(
+                group_id=overall_tid,
+                completed_task_count=completed,
+                current_task_seq=seq,
+                status=status,
+                completed_at_ms=ts if status == "completed" else None,
+                raw_message_json=raw,
+            )
         if status == "completed":
             active["task_id"] = tid
         if had_active_subtask or inferred_subtask_start:
@@ -2038,6 +2064,13 @@ def _handle_external_task(
                 completed_at_ms=ts,
                 raw_message_json=raw,
             )
+        if overall_tid is not None:
+            db_manager.update_task_group_progress(
+                group_id=overall_tid,
+                status="completed",
+                completed_at_ms=ts,
+                raw_message_json=raw,
+            )
         db_manager.record_task_event(
             task_id=tid,
             task_type=task_type,
@@ -2117,6 +2150,8 @@ def handle_platform_task_result_ws(
         active["current_subtask_task_id"] = tid
         db_manager.create_task_run(
             task_id=tid,
+            group_id=overall_tid,
+            task_seq=seq,
             task_type=task_type,
             user_id=user_id,
             expected_subtasks=1,
@@ -2156,6 +2191,14 @@ def handle_platform_task_result_ws(
             task_id=overall_tid,
             completed_subtasks=completed,
             current_subtask_seq=seq,
+            status="completed",
+            completed_at_ms=ts,
+            raw_message_json=raw,
+        )
+        db_manager.update_task_group_progress(
+            group_id=overall_tid,
+            completed_task_count=completed,
+            current_task_seq=seq,
             status="completed",
             completed_at_ms=ts,
             raw_message_json=raw,

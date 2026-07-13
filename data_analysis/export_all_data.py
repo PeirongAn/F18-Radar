@@ -24,6 +24,7 @@ RUNTIME_TASK_MAP = {
     "RADAR_TARGETING": "sensor",
     "SA_THREAT_RESPONSE": "threat",
     "PLATFORM_CONTROL": "platform",
+    "WEAPON_FIRING": "weapon",
     "WEAPON_LAUNCH": "weapon",
 }
 
@@ -31,8 +32,8 @@ QUESTIONNAIRE_TO_RUNTIME_TASK = {
     "RADAR_TARGETING": "RADAR_TARGETING",
     "SA_THREAT_RESPONSE": "SA_THREAT_RESPONSE",
     "PLATFORM_CONTROL": "PLATFORM_CONTROL",
-    "WEAPON_FIRING": "WEAPON_LAUNCH",
-    "WEAPON_LAUNCH": "WEAPON_LAUNCH",
+    "WEAPON_FIRING": "WEAPON_FIRING",
+    "WEAPON_LAUNCH": "WEAPON_FIRING",
 }
 
 
@@ -117,6 +118,12 @@ def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
         (table_name,),
     ).fetchone()
     return row is not None
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    if not table_exists(conn, table_name):
+        return set()
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})")}
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
@@ -360,6 +367,19 @@ def normalized_from_config(raw_config: Any) -> dict[str, Any]:
     return normalized if isinstance(normalized, dict) else {}
 
 
+def overall_task_id_from_config(raw_config: Any) -> int | None:
+    config = parse_json(raw_config)
+    if not isinstance(config, dict):
+        return None
+    value = config.get("overall_task_id")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def first_item(items: Any) -> dict[str, Any]:
     if isinstance(items, list) and items and isinstance(items[0], dict):
         return items[0]
@@ -378,7 +398,7 @@ def export_platform_and_weapon(src: sqlite3.Connection, dst: sqlite3.Connection)
                sr.ai_control_time, sr.person_control_time, sr.ai_remind_time
         FROM task_runs tr
         JOIN task_subtask_results sr ON sr.task_id = tr.task_id
-        WHERE tr.task_type IN ('PLATFORM_CONTROL', 'WEAPON_LAUNCH')
+        WHERE tr.task_type IN ('PLATFORM_CONTROL', 'WEAPON_FIRING', 'WEAPON_LAUNCH')
         ORDER BY tr.task_id, sr.sub_task_seq
         """
     ).fetchall()
@@ -424,7 +444,7 @@ def export_platform_and_weapon(src: sqlite3.Connection, dst: sqlite3.Connection)
             )
             counts["platform_statistics"] += 1
 
-        if row["task_type"] == "WEAPON_LAUNCH":
+        if row["task_type"] in ("WEAPON_FIRING", "WEAPON_LAUNCH"):
             dst.execute(
                 """
                 INSERT INTO weapon_statistics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -486,6 +506,8 @@ def build_questionnaire_match_index(src: sqlite3.Connection) -> dict[tuple[str, 
             """
         ):
             runtime_task = row["task_type"]
+            if runtime_task in ("PLATFORM_CONTROL", "WEAPON_FIRING", "WEAPON_LAUNCH") and overall_task_id_from_config(row["config_json"]) is None:
+                continue
             normalized = normalized_from_config(row["config_json"])
             key = (row["user_id"], runtime_task, int(row["sub_task_seq"] or 0))
             candidate = {
@@ -503,6 +525,64 @@ def build_questionnaire_match_index(src: sqlite3.Connection) -> dict[tuple[str, 
             }
             if key not in index or candidate["is_ai_active"]:
                 index[key] = candidate
+            if runtime_task == "WEAPON_LAUNCH":
+                legacy_key = (row["user_id"], "WEAPON_FIRING", int(row["sub_task_seq"] or 0))
+                legacy_candidate = {**candidate, "runtime_task_type": "WEAPON_FIRING"}
+                if legacy_key not in index or legacy_candidate["is_ai_active"]:
+                    index[legacy_key] = legacy_candidate
+
+    return index
+
+
+def build_questionnaire_task_id_index(src: sqlite3.Connection) -> dict[int, dict[str, Any]]:
+    index: dict[int, dict[str, Any]] = {}
+
+    if table_exists(src, "task_settings"):
+        for row in src.execute(
+            """
+            SELECT task_id, user_id, task_type, is_ai_active,
+                   ai_level_name, difficulty_name, audio_enabled
+            FROM task_settings
+            ORDER BY task_id
+            """
+        ):
+            runtime_task = row["task_type"]
+            index[int(row["task_id"])] = {
+                "task_id": row["task_id"],
+                "runtime_task_type": runtime_task,
+                "task_name": RUNTIME_TASK_MAP.get(runtime_task),
+                "difficulty_level": row["difficulty_name"],
+                "ai_level": ai_level_for_row(row["is_ai_active"], row["ai_level_name"]),
+                "audio_enabled": audio_text(row["audio_enabled"]),
+                "is_ai_active": truthy(row["is_ai_active"]),
+                "source_table": "task_settings",
+            }
+
+    if table_exists(src, "task_runs"):
+        for row in src.execute(
+            """
+            SELECT task_id, user_id, task_type, config_json
+            FROM task_runs
+            ORDER BY task_id
+            """
+        ):
+            runtime_task = QUESTIONNAIRE_TO_RUNTIME_TASK.get(row["task_type"], row["task_type"])
+            if runtime_task in ("PLATFORM_CONTROL", "WEAPON_FIRING") and overall_task_id_from_config(row["config_json"]) is None:
+                continue
+            normalized = normalized_from_config(row["config_json"])
+            index[int(row["task_id"])] = {
+                "task_id": row["task_id"],
+                "runtime_task_type": runtime_task,
+                "task_name": RUNTIME_TASK_MAP.get(runtime_task),
+                "difficulty_level": normalized.get("difficulty_key"),
+                "ai_level": ai_level_for_row(
+                    normalized.get("include_ai"),
+                    normalized.get("current_level") or normalized.get("ai_autonomy_level"),
+                ),
+                "audio_enabled": audio_text(normalized.get("audio_enabled")),
+                "is_ai_active": truthy(normalized.get("include_ai")),
+                "source_table": "task_runs",
+            }
 
     return index
 
@@ -522,6 +602,8 @@ def export_questionnaires(src: sqlite3.Connection, dst: sqlite3.Connection) -> t
         return 0, []
 
     match_index = build_questionnaire_match_index(src)
+    task_id_index = build_questionnaire_task_id_index(src)
+    questionnaire_columns = table_columns(src, "questionnaire_responses")
     report_rows: list[dict[str, Any]] = []
     inserted = 0
 
@@ -530,7 +612,10 @@ def export_questionnaires(src: sqlite3.Connection, dst: sqlite3.Connection) -> t
         runtime_task = QUESTIONNAIRE_TO_RUNTIME_TASK.get(questionnaire_task, questionnaire_task)
         repetition = int(row["repetition_current"] or 0)
         key = (row["user_id"], runtime_task, repetition)
-        match = match_index.get(key)
+        row_task_id = row["task_id"] if "task_id" in questionnaire_columns else None
+        match = task_id_index.get(int(row_task_id)) if row_task_id else None
+        if not match:
+            match = match_index.get(key)
         report = {
             "questionnaire_id": row["id"],
             "user_id": row["user_id"],
@@ -595,9 +680,10 @@ def write_report(
             "unmatched": len(unmatched),
             "rules": [
                 "questionnaire_responses.is_practice is ignored",
+                "questionnaire_responses.task_id matches task_runs/task_settings first when present",
                 "radar/SA match user_id + task_type + repetition_current to task_settings",
                 "platform/weapon match user_id + task_type + repetition_current to task_runs + task_subtask_results",
-                "WEAPON_FIRING maps to WEAPON_LAUNCH",
+                "legacy WEAPON_LAUNCH rows normalize to WEAPON_FIRING",
             ],
             "rows": questionnaire_rows,
         },

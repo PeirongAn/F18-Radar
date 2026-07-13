@@ -32,7 +32,7 @@
     }
   ],
   "trust_calibration": {
-    "enabled": true,
+    "enabled": false,
     "state": {
       "sensor": "normal",
       "threat": "normal"

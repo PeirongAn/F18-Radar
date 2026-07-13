@@ -36,6 +36,7 @@ class EnhancedThreatsMessage(BaseMessage):
     radar_config: Dict[str, Any]   # RadarConfig的字典表示
     highest_priority_threat_id: Optional[str]
     generation_timestamp: int
+    task_id: Optional[int]
     task_type: str
     repetition_info: Dict[str, Any]
     is_ai_active: bool
@@ -72,7 +73,8 @@ class MessageProtocol:
         ai_level: Optional[str],
         ai_configs: Dict[str, Any],
         audio_enabled: bool,
-        trust_calibration: Optional[Dict[str, Any]] = None
+        trust_calibration: Optional[Dict[str, Any]] = None,
+        task_id: Optional[int] = None,
     ) -> EnhancedThreatsMessage:
         """
         创建增强威胁消息
@@ -95,6 +97,7 @@ class MessageProtocol:
             'radar_config': threat_result.radar_config.to_dict(),
             'highest_priority_threat_id': threat_result.highest_priority_threat_id,
             'generation_timestamp': threat_result.generation_timestamp,
+            'task_id': task_id,
             'task_type': task_type,
             'repetition_info': repetition_info,
             'is_ai_active': is_ai_active,
@@ -137,7 +140,7 @@ class MessageProtocol:
             enhanced_data['missile_type'] = missile_threat.missile_type
             enhanced_data['missile_position'] = missile_threat.position.to_dict()
             enhanced_data['missile_score'] = missile_threat.score
-            updated_threats_dict = [threat.to_dict() for threat in updated_threats]
+            updated_threats_dict = [threat.to_dict() for threat in (updated_threats or [])]
         elif event_type == 'upgrade' and updated_threats:
             updated_threats_dict = [threat.to_dict() for threat in updated_threats]
             # 如果有具体升级的威胁信息，使用它来计算升级统计

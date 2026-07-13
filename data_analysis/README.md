@@ -28,7 +28,7 @@ data_analysis/output/quality_report.json
   `user_id + task_type + repetition_current`.
 - Platform and weapon questionnaire rows match `task_runs` plus
   `task_subtask_results` by `user_id + task_type + repetition_current`.
-- `WEAPON_FIRING` questionnaire rows map to `WEAPON_LAUNCH` task rows.
+- Legacy `WEAPON_LAUNCH` task rows normalize to `WEAPON_FIRING`.
 - `questionnaire_responses.is_practice` is ignored because the external page can
   send it incorrectly.
 - Task metadata in the output comes from real task records, not questionnaire

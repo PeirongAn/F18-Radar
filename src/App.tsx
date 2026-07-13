@@ -482,6 +482,12 @@ const MainApp: React.FC = observer(() => {
     PLATFORM_CONTROL: null,
     WEAPON_FIRING: null,
   });
+  const lastConcreteRepetitionInfosRef = useRef<Record<TaskType, any | null>>({
+    RADAR_TARGETING: null,
+    SA_THREAT_RESPONSE: null,
+    PLATFORM_CONTROL: null,
+    WEAPON_FIRING: null,
+  });
   const shownQuestionnairesRef = useRef<Set<string>>(new Set());
   const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
@@ -534,6 +540,7 @@ const MainApp: React.FC = observer(() => {
     (['RADAR_TARGETING', 'SA_THREAT_RESPONSE', 'PLATFORM_CONTROL', 'WEAPON_FIRING'] as TaskType[]).forEach(taskType => {
       const info = repetitionInfos[taskType];
       if (!info || typeof info === 'string') return;
+      lastConcreteRepetitionInfosRef.current[taskType] = info;
       questionnaireEligibilityRef.current[taskType] = {
         isAIActive: !!(info as any).is_ai_active,
         isPractice: !!(info as any).is_practice,
@@ -552,38 +559,65 @@ const MainApp: React.FC = observer(() => {
     return enableQuestionnairePopup && isAIActive === true && isPractice === false;
   }, [enableQuestionnairePopup]);
 
+  const getCompletionKey = useCallback((taskType: TaskType, source?: any) => {
+    const info = repetitionInfos[taskType];
+    const concreteInfo = info && typeof info !== 'string'
+      ? info
+      : lastConcreteRepetitionInfosRef.current[taskType];
+    const identity =
+      source?.task_id ??
+      source?.taskId ??
+      concreteInfo?.task_id ??
+      taskId ??
+      `${concreteInfo?.current ?? 'unknown'}-${concreteInfo?.total ?? 'unknown'}-${concreteInfo?.difficulty ?? ''}-${concreteInfo?.autonomy_level ?? ''}`;
+    return `${taskType}::${identity}`;
+  }, [repetitionInfos, taskId]);
+
   const showQuestionnaireForTask = useCallback((taskType: TaskType, source?: any) => {
     if (!canShowQuestionnaire(taskType, source)) return;
-    const key = `${taskType}::AI_FORMAL_COMPLETED`;
+    const key = getCompletionKey(taskType, source);
     if (shownQuestionnairesRef.current.has(key)) return;
     shownQuestionnairesRef.current.add(key);
     questionnaireRef.current?.show(taskType);
-  }, [canShowQuestionnaire]);
+  }, [canShowQuestionnaire, getCompletionKey]);
 
   const showCompletionNoticeForTask = useCallback((taskType: TaskType, source?: any) => {
     if (canShowQuestionnaire(taskType, source)) return;
-    const key = `${taskType}::NO_QUESTIONNAIRE_COMPLETED`;
+    const key = getCompletionKey(taskType, source);
     if (shownCompletionNoticeRef.current.has(key)) return;
     shownCompletionNoticeRef.current.add(key);
     completionExitSentRef.current = false;
     setCompletionNoticeTask(taskType);
-  }, [canShowQuestionnaire]);
+  }, [canShowQuestionnaire, getCompletionKey]);
+
+  const getTaskIdForType = useCallback((taskType: TaskType) => {
+    const info = repetitionInfos[taskType];
+    if (info && typeof info !== 'string' && (info as any).task_id !== undefined && (info as any).task_id !== null) {
+      return (info as any).task_id;
+    }
+    const lastInfo = lastConcreteRepetitionInfosRef.current[taskType];
+    if (lastInfo?.task_id !== undefined && lastInfo?.task_id !== null) {
+      return lastInfo.task_id;
+    }
+    return taskId;
+  }, [repetitionInfos, taskId]);
 
   const handleCompletionNoticeConfirm = useCallback(() => {
     const taskType = completionNoticeTask;
     if (taskType && !completionExitSentRef.current) {
       completionExitSentRef.current = true;
+      const currentTaskId = getTaskIdForType(taskType);
       sendMessage?.({
         type: 'task_exit_request',
         reason: 'task_completed',
         task_type: taskType,
-        task_id: taskId,
+        task_id: currentTaskId,
         user_id: userId,
         timestamp: Date.now(),
       });
     }
     setCompletionNoticeTask(null);
-  }, [completionNoticeTask, sendMessage, taskId, userId]);
+  }, [completionNoticeTask, sendMessage, getTaskIdForType, userId]);
 
   /* ── 监听后台指令切换显示模式 ─────────────────────
      后台可发送以下消息驱动切换：
@@ -718,6 +752,12 @@ const MainApp: React.FC = observer(() => {
       shownQuestionnairesRef.current.clear();
       shownCompletionNoticeRef.current.clear();
       questionnaireEligibilityRef.current = {
+        RADAR_TARGETING: null,
+        SA_THREAT_RESPONSE: null,
+        PLATFORM_CONTROL: null,
+        WEAPON_FIRING: null,
+      };
+      lastConcreteRepetitionInfosRef.current = {
         RADAR_TARGETING: null,
         SA_THREAT_RESPONSE: null,
         PLATFORM_CONTROL: null,

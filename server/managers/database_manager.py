@@ -4,13 +4,19 @@ import queue
 import threading
 import atexit
 import os
+import time
 from contextlib import contextmanager
 from typing import Dict, Any, List, Optional, Set, Tuple
 from .logger_manager import get_logger
 
 class DatabaseManager:
     """数据库管理器，负责数据库连接、初始化和异步写入"""
-    
+    _TASK_RUN_COLUMNS = [
+        "task_id", "group_id", "task_seq", "task_type", "user_id", "status", "expected_subtasks",
+        "completed_subtasks", "current_subtask_seq", "started_at_ms",
+        "completed_at_ms", "config_json", "last_raw_message_json",
+    ]
+
     def __init__(self, db_path: str = ''):
         if db_path == '':
             # 根据当前文件位置确定数据库路径
@@ -55,6 +61,55 @@ class DatabaseManager:
             return 'low'
         return value
     
+    @staticmethod
+    def _normalize_runtime_task_type(task_type: Any) -> str:
+        task_type_str = str(task_type or '').strip()
+        if task_type_str == 'WEAPON_LAUNCH':
+            return 'WEAPON_FIRING'
+        return task_type_str
+
+    @staticmethod
+    def _safe_int(value: Any) -> Optional[int]:
+        if value is None or value == '':
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_bool(value: Any) -> Optional[bool]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        value_str = str(value).strip().lower()
+        if value_str in {'1', 'true', 'yes', 'y', 'ai'}:
+            return True
+        if value_str in {'0', 'false', 'no', 'n', 'manual', ''}:
+            return False
+        return None
+
+    @staticmethod
+    def _parse_json_object(raw: Any) -> Dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @classmethod
+    def _task_run_from_row(cls, row: Any) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        return dict(zip(cls._TASK_RUN_COLUMNS, row))
+
     def _start_db_worker(self) -> None:
         """启动数据库工作线程"""
         self.db_thread = threading.Thread(target=self._db_worker, daemon=True)
@@ -585,6 +640,7 @@ class DatabaseManager:
                 
                 # 检查并创建 user_progress 表
                 self._create_user_progress_table(cursor, conn)
+                self._create_task_groups_table(cursor, conn)
                 self._create_task_runs_table(cursor, conn)
                 self._create_task_events_table(cursor, conn)
                 self._create_task_subtask_results_table(cursor, conn)
@@ -839,12 +895,73 @@ class DatabaseManager:
             conn.commit()
             self.logger.info("manual_repetition_counter 列添加成功")
 
+    def _create_task_groups_table(self, cursor, conn) -> None:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_groups'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE task_groups (
+                    group_id INTEGER PRIMARY KEY,
+                    task_type TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    expected_task_count INTEGER,
+                    completed_task_count INTEGER DEFAULT 0,
+                    current_task_seq INTEGER DEFAULT 0,
+                    started_at_ms INTEGER NOT NULL,
+                    completed_at_ms INTEGER,
+                    difficulty TEXT,
+                    autonomy_level TEXT,
+                    is_ai_active BOOLEAN,
+                    is_practice BOOLEAN,
+                    progress_key TEXT,
+                    config_json TEXT,
+                    raw_message_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX idx_task_groups_active ON task_groups(user_id, task_type, status, started_at_ms)")
+            conn.commit()
+        else:
+            self._update_task_groups_table(cursor, conn)
+
+    def _update_task_groups_table(self, cursor, conn) -> None:
+        cursor.execute("PRAGMA table_info(task_groups)")
+        columns = {row[1] for row in cursor.fetchall()}
+        additions = {
+            "task_type": "TEXT",
+            "user_id": "TEXT",
+            "status": "TEXT DEFAULT 'active'",
+            "expected_task_count": "INTEGER",
+            "completed_task_count": "INTEGER DEFAULT 0",
+            "current_task_seq": "INTEGER DEFAULT 0",
+            "started_at_ms": "INTEGER",
+            "completed_at_ms": "INTEGER",
+            "difficulty": "TEXT",
+            "autonomy_level": "TEXT",
+            "is_ai_active": "BOOLEAN",
+            "is_practice": "BOOLEAN",
+            "progress_key": "TEXT",
+            "config_json": "TEXT",
+            "raw_message_json": "TEXT",
+            "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        }
+        changed = False
+        for name, column_type in additions.items():
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE task_groups ADD COLUMN {name} {column_type}")
+                changed = True
+        if changed:
+            conn.commit()
+
     def _create_task_runs_table(self, cursor, conn) -> None:
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_runs'")
         if not cursor.fetchone():
             cursor.execute("""
                 CREATE TABLE task_runs (
                     task_id INTEGER PRIMARY KEY,
+                    group_id INTEGER,
+                    task_seq INTEGER,
                     task_type TEXT NOT NULL,
                     user_id TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -868,6 +985,8 @@ class DatabaseManager:
         cursor.execute("PRAGMA table_info(task_runs)")
         columns = {row[1] for row in cursor.fetchall()}
         additions = {
+            "group_id": "INTEGER",
+            "task_seq": "INTEGER",
             "task_type": "TEXT",
             "user_id": "TEXT",
             "status": "TEXT DEFAULT 'active'",
@@ -983,7 +1102,7 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT task_id, task_type, user_id, status, expected_subtasks,
+                    SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
                            completed_subtasks, current_subtask_seq, started_at_ms,
                            completed_at_ms, config_json, last_raw_message_json
                     FROM task_runs
@@ -993,13 +1112,8 @@ class DatabaseManager:
                     """,
                     (user_id, task_type),
                 )
-                keys = [
-                    "task_id", "task_type", "user_id", "status", "expected_subtasks",
-                    "completed_subtasks", "current_subtask_seq", "started_at_ms",
-                    "completed_at_ms", "config_json", "last_raw_message_json",
-                ]
                 for row in cursor.fetchall():
-                    run = dict(zip(keys, row))
+                    run = dict(zip(self._TASK_RUN_COLUMNS, row))
                     if not overall_only:
                         return run
                     try:
@@ -1029,7 +1143,7 @@ class DatabaseManager:
                     params.append(since_ms)
                 cursor.execute(
                     f"""
-                    SELECT task_id, task_type, user_id, status, expected_subtasks,
+                    SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
                            completed_subtasks, current_subtask_seq, started_at_ms,
                            completed_at_ms, config_json, last_raw_message_json
                     FROM task_runs
@@ -1044,34 +1158,305 @@ class DatabaseManager:
                 row = cursor.fetchone()
                 if not row:
                     return None
-                keys = [
-                    "task_id", "task_type", "user_id", "status", "expected_subtasks",
-                    "completed_subtasks", "current_subtask_seq", "started_at_ms",
-                    "completed_at_ms", "config_json", "last_raw_message_json",
-                ]
-                return dict(zip(keys, row))
+                return dict(zip(self._TASK_RUN_COLUMNS, row))
         except Exception as e:
             self.logger.warning("查找 recent completed task_run 失败: %s", e)
             return None
 
+    def _load_task_run_by_id(self, cursor, task_id: int) -> Optional[Dict[str, Any]]:
+        cursor.execute(
+            """
+            SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
+                   completed_subtasks, current_subtask_seq, started_at_ms,
+                   completed_at_ms, config_json, last_raw_message_json
+            FROM task_runs
+            WHERE task_id = ?
+            LIMIT 1
+            """,
+            (task_id,),
+        )
+        return self._task_run_from_row(cursor.fetchone())
+
+    def _questionnaire_context_from_task_run(self, run: Dict[str, Any]) -> Dict[str, Any]:
+        config = self._parse_json_object(run.get("config_json"))
+        normalized = config.get("normalized") if isinstance(config, dict) else {}
+        if not isinstance(normalized, dict):
+            normalized = {}
+        repetition_info = config.get("repetition_info") if isinstance(config, dict) else {}
+        if not isinstance(repetition_info, dict):
+            repetition_info = {}
+
+        difficulty = (
+            normalized.get("difficulty_key")
+            or normalized.get("difficulty")
+            or normalized.get("difficulty_display")
+            or config.get("difficulty_name")
+            or config.get("difficulty")
+        )
+        autonomy_level = (
+            normalized.get("current_level")
+            or normalized.get("ai_autonomy_level")
+            or config.get("ai_level_name")
+            or config.get("autonomy_level")
+        )
+        include_ai = normalized.get("include_ai")
+        if include_ai is None:
+            include_ai = config.get("is_ai_active")
+        is_practice = normalized.get("is_practice")
+        if is_practice is None:
+            is_practice = config.get("is_practice")
+        if is_practice is None:
+            is_practice = repetition_info.get("isPractice") or repetition_info.get("is_practice")
+
+        return {
+            "task_id": run.get("task_id"),
+            "task_group_id": self._safe_int(run.get("group_id")) or self._safe_int(config.get("overall_task_id")) or run.get("task_id"),
+            "task_type": self._normalize_runtime_task_type(run.get("task_type")),
+            "difficulty": self.normalize_difficulty_value(difficulty),
+            "autonomy_level": None if autonomy_level is None else str(autonomy_level),
+            "is_ai_active": self._safe_bool(include_ai),
+            "is_practice": self._safe_bool(is_practice),
+            "repetition_total": run.get("expected_subtasks") or normalized.get("repetition_total_override"),
+        }
+
+    def resolve_questionnaire_task_context(
+        self,
+        user_id: str,
+        task_type: str,
+        submitted_task_id: Any = None,
+    ) -> Dict[str, Any]:
+        """Resolve an HTML questionnaire to the canonical task_run context."""
+        normalized_task_type = self._normalize_runtime_task_type(task_type)
+        submitted_id = self._safe_int(submitted_task_id)
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                if submitted_id is not None:
+                    run = self._load_task_run_by_id(cursor, submitted_id)
+                    if run:
+                        return self._questionnaire_context_from_task_run(run)
+                    return {"task_id": submitted_id, "task_type": normalized_task_type}
+
+                if not user_id or not normalized_task_type:
+                    return {"task_type": normalized_task_type}
+
+                task_types = [normalized_task_type]
+                if normalized_task_type == "WEAPON_FIRING":
+                    task_types.append("WEAPON_LAUNCH")
+                placeholders = ",".join("?" for _ in task_types)
+                cursor.execute(
+                    f"""
+                    SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
+                           completed_subtasks, current_subtask_seq, started_at_ms,
+                           completed_at_ms, config_json, last_raw_message_json
+                    FROM task_runs
+                    WHERE user_id = ?
+                      AND task_type IN ({placeholders})
+                      AND status = 'completed'
+                    ORDER BY COALESCE(completed_at_ms, updated_at, started_at_ms) DESC, task_id DESC
+                    LIMIT 50
+                    """,
+                    tuple([user_id] + task_types),
+                )
+                fallback_overall_run = None
+                for row in cursor.fetchall():
+                    run = self._task_run_from_row(row)
+                    if not run:
+                        continue
+                    config = self._parse_json_object(run.get("config_json"))
+                    overall_id = self._safe_int(config.get("overall_task_id"))
+                    if overall_id is not None:
+                        return self._questionnaire_context_from_task_run(run)
+                    if fallback_overall_run is None:
+                        fallback_overall_run = run
+
+                if fallback_overall_run:
+                    return self._questionnaire_context_from_task_run(fallback_overall_run)
+        except Exception as e:
+            self.logger.warning("解析问卷 task_run 上下文失败: %s", e)
+
+        return {"task_type": normalized_task_type}
+
+    def create_task_group(self, group_id: int, task_type: str, user_id: str,
+                          expected_task_count: int, started_at_ms: int,
+                          config_json: str, raw_message_json: str,
+                          difficulty: str = None, autonomy_level: str = None,
+                          is_ai_active: bool = None, is_practice: bool = None,
+                          progress_key: str = None) -> None:
+        self.ensure_task_group(
+            group_id=group_id,
+            task_type=task_type,
+            user_id=user_id,
+            expected_task_count=expected_task_count,
+            started_at_ms=started_at_ms,
+            config_json=config_json,
+            raw_message_json=raw_message_json,
+            difficulty=difficulty,
+            autonomy_level=autonomy_level,
+            is_ai_active=is_ai_active,
+            is_practice=is_practice,
+            progress_key=progress_key,
+            reactivate=True,
+        )
+
+    def ensure_task_group(self, group_id: int, task_type: str, user_id: str,
+                          expected_task_count: int = 1, started_at_ms: int = None,
+                          config_json: str = None, raw_message_json: str = None,
+                          difficulty: str = None, autonomy_level: str = None,
+                          is_ai_active: bool = None, is_practice: bool = None,
+                          progress_key: str = None, reactivate: bool = False) -> None:
+        started_at_ms = started_at_ms or int(time.time() * 1000)
+        config_json = config_json or "{}"
+        raw_message_json = raw_message_json or "{}"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status FROM task_groups WHERE group_id = ?", (group_id,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.execute(
+                    """
+                    INSERT INTO task_groups (
+                        group_id, task_type, user_id, status, expected_task_count,
+                        completed_task_count, current_task_seq, started_at_ms,
+                        difficulty, autonomy_level, is_ai_active, is_practice,
+                        progress_key, config_json, raw_message_json, updated_at
+                    ) VALUES (?, ?, ?, 'active', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        group_id, task_type, user_id, expected_task_count, started_at_ms,
+                        difficulty, autonomy_level, is_ai_active, is_practice,
+                        progress_key, config_json, raw_message_json,
+                    ),
+                )
+            else:
+                fields = [
+                    "task_type = ?",
+                    "user_id = ?",
+                    "expected_task_count = COALESCE(expected_task_count, ?)",
+                    "config_json = COALESCE(config_json, ?)",
+                    "raw_message_json = ?",
+                    "updated_at = CURRENT_TIMESTAMP",
+                ]
+                params = [task_type, user_id, expected_task_count, config_json, raw_message_json]
+                optional_fields = {
+                    "difficulty": difficulty,
+                    "autonomy_level": autonomy_level,
+                    "is_ai_active": is_ai_active,
+                    "is_practice": is_practice,
+                    "progress_key": progress_key,
+                }
+                for field_name, value in optional_fields.items():
+                    if value is not None:
+                        fields.append(f"{field_name} = ?")
+                        params.append(value)
+                if reactivate:
+                    fields.extend([
+                        "status = 'active'",
+                        "started_at_ms = ?",
+                        "completed_at_ms = NULL",
+                    ])
+                    params.append(started_at_ms)
+                params.append(group_id)
+                cursor.execute(f"UPDATE task_groups SET {', '.join(fields)} WHERE group_id = ?", tuple(params))
+            conn.commit()
+
+    def update_task_group_progress(self, group_id: int, current_task_seq: int = None,
+                                   completed_task_count: int = None, status: str = None,
+                                   completed_at_ms: int = None,
+                                   raw_message_json: str = None) -> None:
+        fields = ["updated_at = CURRENT_TIMESTAMP"]
+        params = []
+        if current_task_seq is not None:
+            fields.append("current_task_seq = ?")
+            params.append(current_task_seq)
+        if completed_task_count is not None:
+            fields.append("completed_task_count = ?")
+            params.append(completed_task_count)
+        if status is not None:
+            fields.append("status = ?")
+            params.append(status)
+        if completed_at_ms is not None:
+            fields.append("completed_at_ms = ?")
+            params.append(completed_at_ms)
+        if raw_message_json is not None:
+            fields.append("raw_message_json = ?")
+            params.append(raw_message_json)
+        params.append(group_id)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE task_groups SET {', '.join(fields)} WHERE group_id = ?", tuple(params))
+            conn.commit()
+
     def create_task_run(self, task_id: int, task_type: str, user_id: str,
                         expected_subtasks: int, started_at_ms: int,
-                        config_json: str, raw_message_json: str) -> None:
+                        config_json: str, raw_message_json: str,
+                        group_id: int = None, task_seq: int = None) -> None:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 INSERT INTO task_runs (
-                    task_id, task_type, user_id, status, expected_subtasks,
+                    task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
                     completed_subtasks, current_subtask_seq, started_at_ms,
                     config_json, last_raw_message_json, updated_at
-                ) VALUES (?, ?, ?, 'active', ?, 0, 0, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, 0, 0, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
-                (task_id, task_type, user_id, expected_subtasks, started_at_ms, config_json, raw_message_json),
+                (task_id, group_id, task_seq, task_type, user_id, expected_subtasks, started_at_ms, config_json, raw_message_json),
             )
             conn.commit()
         self.logger.info("记录 task_run: task_id=%s task_type=%s user=%s total=%s",
                          task_id, task_type, user_id, expected_subtasks)
+
+    def ensure_task_run(self, task_id: int, task_type: str, user_id: str,
+                        expected_subtasks: int = 1, started_at_ms: int = None,
+                        config_json: str = None, raw_message_json: str = None,
+                        group_id: int = None, task_seq: int = None,
+                        reactivate: bool = False) -> None:
+        """Ensure task_runs is the canonical lifecycle row for every task."""
+        started_at_ms = started_at_ms or int(time.time() * 1000)
+        config_json = config_json or "{}"
+        raw_message_json = raw_message_json or "{}"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status FROM task_runs WHERE task_id = ?", (task_id,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.execute(
+                    """
+                    INSERT INTO task_runs (
+                        task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
+                        completed_subtasks, current_subtask_seq, started_at_ms,
+                        config_json, last_raw_message_json, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'active', ?, 0, 0, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (task_id, group_id, task_seq, task_type, user_id, expected_subtasks, started_at_ms, config_json, raw_message_json),
+                )
+            else:
+                fields = [
+                    "task_type = ?",
+                    "user_id = ?",
+                    "expected_subtasks = COALESCE(expected_subtasks, ?)",
+                    "config_json = COALESCE(config_json, ?)",
+                    "last_raw_message_json = ?",
+                    "updated_at = CURRENT_TIMESTAMP",
+                ]
+                params = [task_type, user_id, expected_subtasks, config_json, raw_message_json]
+                if group_id is not None:
+                    fields.append("group_id = ?")
+                    params.append(group_id)
+                if task_seq is not None:
+                    fields.append("task_seq = ?")
+                    params.append(task_seq)
+                if reactivate:
+                    fields.extend([
+                        "status = 'active'",
+                        "started_at_ms = ?",
+                        "completed_at_ms = NULL",
+                    ])
+                    params.append(started_at_ms)
+                params.append(task_id)
+                cursor.execute(f"UPDATE task_runs SET {', '.join(fields)} WHERE task_id = ?", tuple(params))
+            conn.commit()
 
     def update_task_run_progress(self, task_id: int, current_subtask_seq: int = None,
                                  completed_subtasks: int = None, status: str = None,
@@ -1266,6 +1651,8 @@ class DatabaseManager:
                 CREATE TABLE questionnaire_responses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id TEXT,
+                    task_id INTEGER,
+                    task_group_id INTEGER,
                     task_type TEXT NOT NULL,
                     repetition_current INTEGER,
                     repetition_total INTEGER,
@@ -1284,41 +1671,75 @@ class DatabaseManager:
         else:
             cursor.execute("PRAGMA table_info(questionnaire_responses)")
             columns = {row[1] for row in cursor.fetchall()}
-            if 'autonomy_level' not in columns:
-                cursor.execute("ALTER TABLE questionnaire_responses ADD COLUMN autonomy_level TEXT")
+            additions = {
+                'task_id': 'INTEGER',
+                'task_group_id': 'INTEGER',
+                'autonomy_level': 'TEXT',
+            }
+            changed = False
+            for name, column_type in additions.items():
+                if name not in columns:
+                    cursor.execute(f"ALTER TABLE questionnaire_responses ADD COLUMN {name} {column_type}")
+                    changed = True
+            if changed:
                 conn.commit()
                 self.logger.info("questionnaire_responses 表已添加 autonomy_level 列")
 
     def record_questionnaire(self, data: Dict[str, Any]) -> None:
         """记录问卷提交数据"""
         task_info = data.get('taskInfo') or {}
+        user_id = data.get('userId') or data.get('user_id') or ''
+        task_type = self._normalize_runtime_task_type(data.get('taskType') or data.get('task_type') or '')
+        source = data.get('source', 'unknown')
+        submitted_task_id = data.get('taskId', data.get('task_id'))
+        context = self.resolve_questionnaire_task_context(user_id, task_type, submitted_task_id)
+        resolved_task_id = self._safe_int(context.get('task_id')) or self._safe_int(submitted_task_id)
+        resolved_task_group_id = self._safe_int(context.get('task_group_id')) or resolved_task_id
+
+        autonomy_level = task_info.get('autonomyLevel') or task_info.get('autonomy_level')
+        difficulty = self.normalize_difficulty_value(task_info.get('difficulty'))
+        is_practice = self._safe_bool(task_info.get('isPractice', task_info.get('is_practice')))
+        is_ai_active = self._safe_bool(task_info.get('is_ai_active'))
+        if is_ai_active is None:
+            is_ai_active = bool(autonomy_level)
+
+        if source == 'html_page':
+            difficulty = context.get('difficulty') or difficulty
+            autonomy_level = context.get('autonomy_level') or autonomy_level
+            if context.get('is_practice') is not None:
+                is_practice = context.get('is_practice')
+            if context.get('is_ai_active') is not None:
+                is_ai_active = context.get('is_ai_active')
+
+        repetition_total = data.get('repetitionTotal', data.get('repetition_total', 0))
+        if source == 'html_page' and context.get('repetition_total') and not repetition_total:
+            repetition_total = context.get('repetition_total')
+
         sql = """
             INSERT INTO questionnaire_responses (
-                user_id, task_type, repetition_current, repetition_total,
+                user_id, task_id, task_group_id, task_type, repetition_current, repetition_total,
                 difficulty, autonomy_level, is_ai_active, is_practice,
                 answers_json, source, client_timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        autonomy_level = task_info.get('autonomyLevel') or task_info.get('autonomy_level')
-        legacy_is_ai_active = task_info.get('is_ai_active')
-        if legacy_is_ai_active is None:
-            legacy_is_ai_active = bool(autonomy_level)
         params = (
-            data.get('userId', ''),
-            data.get('taskType', ''),
-            data.get('repetitionCurrent', 0),
-            data.get('repetitionTotal', 0),
-            self.normalize_difficulty_value(task_info.get('difficulty')),
+            user_id,
+            resolved_task_id,
+            resolved_task_group_id,
+            task_type,
+            data.get('repetitionCurrent', data.get('repetition_current', 0)),
+            repetition_total,
+            difficulty,
             autonomy_level,
-            1 if legacy_is_ai_active else 0,
-            1 if task_info.get('isPractice') else 0,
+            1 if is_ai_active else 0,
+            1 if is_practice else 0,
             json.dumps(data.get('answers', {})),
-            data.get('source', 'unknown'),
+            source,
             data.get('timestamp'),
         )
         self.execute_async(sql, params)
         self.logger.info("记录问卷: user=%s task=%s rep=%s",
-                         data.get('userId'), data.get('taskType'),
+                         user_id, task_type,
                          data.get('repetitionCurrent'))
 
     def record_external_task_result(self, task_id: int, task_category: str,

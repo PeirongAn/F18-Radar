@@ -24,7 +24,9 @@ class MessageHandler:
     def __init__(self):
         self.current_session = {
             'task_id': None,
+            'task_ids': {},
             'task_started_at_ms': None,
+            'task_started_at_ms_by_type': {},
             'stage': 'init',
             'target_elevation': None,
             'operations': []
@@ -36,6 +38,141 @@ class MessageHandler:
         self._physio_svc = None
         self._external_collectors = None
         self.logger = get_logger("message_handler")
+
+    def _set_current_task(self, task_type: str, task_id, started_at_ms: int) -> None:
+        self.current_session['task_id'] = task_id
+        self.current_session.setdefault('task_ids', {})[task_type] = task_id
+        self.current_session['task_started_at_ms'] = started_at_ms
+        self.current_session.setdefault('task_started_at_ms_by_type', {})[task_type] = started_at_ms
+
+    def _get_current_task_id(self, task_type: str = ''):
+        if task_type:
+            task_ids = self.current_session.get('task_ids') or {}
+            if task_type in task_ids:
+                return task_ids.get(task_type)
+        return self.current_session.get('task_id')
+
+    def _get_task_started_at_ms(self, task_type: str = ''):
+        if task_type:
+            started_by_type = self.current_session.get('task_started_at_ms_by_type') or {}
+            if task_type in started_by_type:
+                return started_by_type.get(task_type)
+        return self.current_session.get('task_started_at_ms')
+
+    def _task_run_config(
+        self,
+        current_scenario: Optional[Dict[str, Any]],
+        event_owner: str,
+        trust_state: str = "",
+        platform_meta: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        scenario = current_scenario or {}
+        return json.dumps({
+            "event_owner": event_owner,
+            "trust_state": trust_state,
+            "repetition_info": scenario.get("repetition_info"),
+            "difficulty_name": scenario.get("difficulty_name"),
+            "difficulty_config": scenario.get("difficulty_config"),
+            "is_ai_active": scenario.get("is_ai_active"),
+            "ai_level_name": scenario.get("ai_level_name"),
+            "audio_enabled": scenario.get("audio_enabled"),
+            "platform_task": platform_meta,
+        }, ensure_ascii=False)
+
+    def _ensure_unified_task_run(
+        self,
+        task_id,
+        task_type: str,
+        user_id: str,
+        current_scenario: Optional[Dict[str, Any]],
+        event_owner: str,
+        trust_state: str,
+        message: Dict[str, Any],
+        started_at_ms: int,
+        platform_meta: Optional[Dict[str, Any]] = None,
+        group_id: Optional[int] = None,
+        task_seq: Optional[int] = None,
+        reactivate: bool = False,
+    ) -> None:
+        if not task_id:
+            return
+        try:
+            db_manager.ensure_task_run(
+                task_id=int(task_id),
+                task_type=task_type,
+                user_id=user_id or "",
+                expected_subtasks=1,
+                started_at_ms=started_at_ms,
+                config_json=self._task_run_config(current_scenario, event_owner, trust_state, platform_meta),
+                raw_message_json=json.dumps(message or {}, ensure_ascii=False),
+                group_id=group_id,
+                task_seq=task_seq,
+                reactivate=reactivate,
+            )
+            db_manager.record_task_event(
+                task_id=int(task_id),
+                task_type=task_type,
+                user_id=user_id or "",
+                event_type="task_start",
+                timestamp_ms=started_at_ms,
+                payload_json=self._task_run_config(current_scenario, event_owner, trust_state, platform_meta),
+                raw_message_json=json.dumps(message or {}, ensure_ascii=False),
+            )
+        except Exception as e:
+            self.logger.warning("ensure unified task_run failed: task_id=%s task_type=%s error=%s", task_id, task_type, e, exc_info=True)
+
+    def _ensure_current_task_group(
+        self,
+        task_manager: TaskScenarioManager,
+        task_type: str,
+        user_id: str,
+        current_scenario: Dict[str, Any],
+        event_owner: str,
+        trust_state: str,
+        message: Dict[str, Any],
+        started_at_ms: int,
+        progress_key: str,
+        platform_meta: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Optional[int], Optional[int]]:
+        if not current_scenario:
+            return None, None
+        repetition_info = current_scenario.get("repetition_info") or {}
+        task_seq = repetition_info.get("current")
+        try:
+            task_seq = int(task_seq)
+        except (TypeError, ValueError):
+            task_seq = None
+        task_group_id = current_scenario.get("task_group_id") or repetition_info.get("task_group_id")
+        if not task_group_id:
+            task_group_id = generate_task_id()
+            current_scenario["task_group_id"] = task_group_id
+            repetition_info["task_group_id"] = task_group_id
+            current_scenario["repetition_info"] = repetition_info
+            try:
+                if getattr(task_manager, "is_practice", False):
+                    task_manager._save_to_memory()
+                else:
+                    task_manager._save_to_db()
+            except Exception as e:
+                self.logger.warning("persist task_group_id failed: task_type=%s group_id=%s error=%s", task_type, task_group_id, e, exc_info=True)
+        try:
+            db_manager.ensure_task_group(
+                group_id=int(task_group_id),
+                task_type=task_type,
+                user_id=user_id or "",
+                expected_task_count=int(repetition_info.get("total") or 1),
+                started_at_ms=started_at_ms,
+                config_json=self._task_run_config(current_scenario, event_owner, trust_state, platform_meta),
+                raw_message_json=json.dumps(message or {}, ensure_ascii=False),
+                difficulty=current_scenario.get("external_difficulty_display") or current_scenario.get("difficulty_name"),
+                autonomy_level=current_scenario.get("autonomy_level") or current_scenario.get("ai_level_name"),
+                is_ai_active=current_scenario.get("is_ai_active"),
+                is_practice=getattr(task_manager, "is_practice", False),
+                progress_key=progress_key,
+            )
+        except Exception as e:
+            self.logger.warning("ensure task_group failed: task_type=%s group_id=%s error=%s", task_type, task_group_id, e, exc_info=True)
+        return int(task_group_id), task_seq
 
     def _get_task_trust_state(self, task_type: str) -> str:
         """Return the configured trust state for the task type stored in task_settings."""
@@ -152,10 +289,11 @@ class MessageHandler:
         if not self._physio_should_record(session_state) and not self._external_collectors_should_record(session_state):
             return
         try:
+            payload_task_type = (extra or {}).get("task_type") or message.get("task_type") or ""
             payload = {
                 "source": "F18-Radar",
-                "f18_task_id": self.current_session.get("task_id"),
-                "task_type": message.get("task_type"),
+                "f18_task_id": self._get_current_task_id(payload_task_type),
+                "task_type": payload_task_type or message.get("task_type"),
                 "user_id": message.get("user_id") or self.current_session.get("user_id", ""),
                 "event_owner": message.get("event_owner", ""),
                 "timestamp": message.get("timestamp"),
@@ -426,9 +564,35 @@ class MessageHandler:
         )
         if is_retrying_incomplete_task:
             db_manager.clear_task_operations(existing_task_id)
+        task_started_at_ms = int(time.time() * 1000)
+        task_group_id, task_seq = self._ensure_current_task_group(
+            task_manager,
+            task_type,
+            user_id,
+            current_scenario,
+            event_owner,
+            trust_state,
+            message,
+            task_started_at_ms,
+            progress_key,
+            platform_meta=platform_meta,
+        )
         task_id = existing_task_id or generate_task_id()
-        self.current_session['task_id'] = task_id
-        self.current_session['task_started_at_ms'] = int(time.time() * 1000)
+        self._set_current_task(task_type, task_id, task_started_at_ms)
+        self._ensure_unified_task_run(
+            task_id,
+            task_type,
+            user_id,
+            current_scenario,
+            event_owner,
+            trust_state,
+            message,
+            task_started_at_ms,
+            platform_meta=platform_meta,
+            group_id=task_group_id,
+            task_seq=task_seq,
+            reactivate=is_retrying_incomplete_task,
+        )
         
         # 记录操作
         should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
@@ -518,7 +682,7 @@ class MessageHandler:
             # 参数正确，进入天线调整阶段
             print("雷达参数验证成功，发送天线调整指令。")
             
-            task_id = self.current_session.get('task_id')
+            task_id = self._get_current_task_id('RADAR_TARGETING')
             if not session_state.get('is_practice', False) and task_id:
                 operation = {
                     'task_id': task_id,
@@ -557,7 +721,7 @@ class MessageHandler:
         
         validation_response, is_valid = self._handle_antenna_adjustment(message)
         if is_valid:
-            task_id = self.current_session.get('task_id')
+            task_id = self._get_current_task_id('RADAR_TARGETING')
             if not session_state.get('is_practice', False) and task_id:
                 operation = {
                     'task_id': task_id,
@@ -593,7 +757,7 @@ class MessageHandler:
         targets = target_manager.get_targets()
         is_enemy = any(target['id'] == target_id and target['type'] == 'army' for target in targets)
         
-        task_id = self.current_session.get('task_id')
+        task_id = self._get_current_task_id('RADAR_TARGETING')
         if not session_state.get('is_practice', False) and task_id:
             operation = {
                 'task_id': task_id,
@@ -632,7 +796,7 @@ class MessageHandler:
         """处理威胁点击消息"""
         print("消息类型: threat_clicked")
 
-        task_id = self.current_session.get('task_id')
+        task_id = self._get_current_task_id('SA_THREAT_RESPONSE')
         if not session_state.get('is_practice', False) and task_id:
             operation = {
                 'task_id': task_id,
@@ -672,7 +836,7 @@ class MessageHandler:
             'type': 'task_exit_requested',
             'reason': message.get('reason', 'task_completed'),
             'task_type': message.get('task_type'),
-            'task_id': message.get('task_id') or self.current_session.get('task_id'),
+            'task_id': message.get('task_id') or self._get_current_task_id(message.get('task_type') or ""),
             'user_id': message.get('user_id') or self.current_session.get('user_id', ''),
             'timestamp': timestamp,
         }]
@@ -680,7 +844,7 @@ class MessageHandler:
     async def _handle_task_result_confirmed(self, message: Dict[str, Any], session_state: Dict[str, Any]) -> List[Dict[str, Any]]:
         """处理任务结果确认：传感器任务按 IFF，威胁排序按查看结果，才视为任务结束。"""
         task_type = message.get('task_type')
-        current_task_id = self.current_session.get('task_id')
+        current_task_id = self._get_current_task_id(task_type or "")
         message_task_id = message.get('task_id')
         if message_task_id is not None and current_task_id is not None and str(message_task_id) != str(current_task_id):
             self.logger.warning(
@@ -695,7 +859,7 @@ class MessageHandler:
             return []
 
         if message_task_id is None:
-            started_at = self.current_session.get('task_started_at_ms')
+            started_at = self._get_task_started_at_ms(task_type or "")
             if started_at:
                 try:
                     age_ms = int(time.time() * 1000) - int(started_at)
@@ -723,7 +887,9 @@ class MessageHandler:
         repetition_info = {}
         event_owner = ""
         user_id = message.get('user_id') or self.current_session.get('user_id', '')
+        current_scenario = None
         if task_manager and task_manager.current_scenario:
+            current_scenario = task_manager.current_scenario
             repetition_info = task_manager.current_scenario.get('repetition_info') or {}
             event_owner = 'AI' if task_manager.current_scenario.get('is_ai_active') else 'manual'
         else:
@@ -743,7 +909,16 @@ class MessageHandler:
         if task_manager:
             task_manager.mark_task_completed()
 
-        task_id = self.current_session.get('task_id')
+        group_completed = False
+        try:
+            group_completed = (
+                int(repetition_info.get("current") or 0) >=
+                int(repetition_info.get("total") or 0) > 0
+            )
+        except (TypeError, ValueError):
+            group_completed = False
+
+        task_id = current_task_id
         if not session_state.get('is_practice', False) and task_id:
             operation = {
                 'task_id': task_id,
@@ -758,6 +933,53 @@ class MessageHandler:
                 'event_owner': message.get('event_owner', 'manual')
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
+            try:
+                completed_at_ms = int(message.get('timestamp') or time.time() * 1000)
+                db_manager.update_task_run_progress(
+                    task_id=int(task_id),
+                    completed_subtasks=1,
+                    status="completed",
+                    completed_at_ms=completed_at_ms,
+                    raw_message_json=json.dumps(message or {}, ensure_ascii=False),
+                )
+                task_group_id = None
+                if current_scenario:
+                    task_group_id = current_scenario.get("task_group_id")
+                if task_group_id is None:
+                    task_group_id = repetition_info.get("task_group_id")
+                if task_group_id is not None:
+                    try:
+                        completed_count = int(repetition_info.get("current") or 0)
+                    except (TypeError, ValueError):
+                        completed_count = None
+                    db_manager.update_task_group_progress(
+                        group_id=int(task_group_id),
+                        completed_task_count=completed_count,
+                        current_task_seq=completed_count,
+                        status="completed" if group_completed else "active",
+                        completed_at_ms=completed_at_ms if group_completed else None,
+                        raw_message_json=json.dumps(message or {}, ensure_ascii=False),
+                    )
+                db_manager.record_task_event(
+                    task_id=int(task_id),
+                    task_type=task_type or "",
+                    user_id=user_id,
+                    event_type="task_result_confirmed",
+                    timestamp_ms=completed_at_ms,
+                    payload_json=json.dumps({
+                        "event_owner": event_owner,
+                        "repetition_info": repetition_info,
+                    }, ensure_ascii=False),
+                    raw_message_json=json.dumps(message or {}, ensure_ascii=False),
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "complete unified task_run failed: task_id=%s task_type=%s error=%s",
+                    task_id,
+                    task_type,
+                    e,
+                    exc_info=True,
+                )
 
         self._physio_stop_task(
             task_type or "",
@@ -769,6 +991,15 @@ class MessageHandler:
             session_state,
         )
         self._gaze_stop(current_task_id)
+        if group_completed and task_type in ("RADAR_TARGETING", "SA_THREAT_RESPONSE"):
+            return [{
+                "type": "all_tasks_completed",
+                "task_type": task_type,
+                "task_id": current_task_id,
+                "repetition_info": repetition_info,
+                "is_ai_active": bool(repetition_info.get("is_ai_active")),
+                "is_practice": bool(repetition_info.get("is_practice")),
+            }]
         return []
     
     async def _handle_record_operation(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -904,10 +1135,36 @@ class MessageHandler:
         )
         if is_retrying_incomplete_task:
             db_manager.clear_task_operations(existing_task_id)
+        task_started_at_ms = int(time.time() * 1000)
+        task_group_id, task_seq = self._ensure_current_task_group(
+            task_manager,
+            task_type,
+            user_id,
+            current_scenario,
+            event_owner,
+            trust_state,
+            message,
+            task_started_at_ms,
+            progress_key,
+            platform_meta=platform_meta,
+        )
         task_id = existing_task_id or generate_task_id()
-        self.current_session['task_id'] = task_id
-        self.current_session['task_started_at_ms'] = int(time.time() * 1000)
+        self._set_current_task(task_type, task_id, task_started_at_ms)
         self.current_session[f'{task_type}_scenario'] = current_scenario
+        self._ensure_unified_task_run(
+            task_id,
+            task_type,
+            user_id,
+            current_scenario,
+            event_owner,
+            trust_state,
+            message,
+            task_started_at_ms,
+            platform_meta=platform_meta,
+            group_id=task_group_id,
+            task_seq=task_seq,
+            reactivate=is_retrying_incomplete_task,
+        )
 
         # 启动眼动追踪
         self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
@@ -917,7 +1174,7 @@ class MessageHandler:
         should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
         if not session_state.get('is_practice', False) and should_record_task_start:
             operation = {
-                'task_id': self.current_session.get('task_id'),
+                'task_id': task_id,
                 'operationType': message.get('type'),
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True,
@@ -959,6 +1216,7 @@ class MessageHandler:
             # 创建增强威胁消息
             enhanced_response = message_protocol.create_enhanced_threats_message(
                 threat_result=threat_result,
+                task_id=task_id,
                 task_type=task_type,
                 repetition_info=current_scenario['repetition_info'],
                 is_ai_active=current_scenario['is_ai_active'],
@@ -970,7 +1228,7 @@ class MessageHandler:
             
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用
-                session_state['current_task_id'] = self.current_session.get('task_id')
+                session_state['current_task_id'] = self._get_current_task_id(task_type)
                 # 使用增强协议发送紧急事件
                 asyncio.create_task(
                     threat_manager.auto_send_enhanced_sa_emergency(
@@ -1016,6 +1274,7 @@ class MessageHandler:
             
             response = {
                 'type': 'sa_task_updated',
+                'task_id': task_id,
                 'saThreats': threats,
                 'repetition_info': current_scenario['repetition_info'],
                 'task_type': task_type,
@@ -1028,7 +1287,7 @@ class MessageHandler:
 
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用
-                session_state['current_task_id'] = self.current_session.get('task_id')
+                session_state['current_task_id'] = self._get_current_task_id(task_type)
                 asyncio.create_task(
                     threat_manager.auto_send_sa_emergency(
                         websocket,
@@ -1073,7 +1332,7 @@ class MessageHandler:
         # 记录操纵杆相关操作到数据库
         if not session_state.get('is_practice', False):
             operation = {
-                'task_id': self.current_session.get('task_id'),
+                'task_id': self._get_current_task_id(message.get('task_type') or 'RADAR_TARGETING'),
                 'operationType': message_type,
                 'timestamp': message.get('timestamp', int(time.time() * 1000)),
                 'isActive': True,
