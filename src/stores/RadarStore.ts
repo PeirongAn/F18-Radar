@@ -173,6 +173,7 @@ export class RadarStore {
       if (sendMessageCallback && source !== 'server') {
         const message = {
           type: 'antenna_adjusted', // 使用新的消息类型
+          task_id: this.taskId,
           elevation: newElevation,
           targetElevation: this.targetAntennaElevation,
           timestamp: Date.now(),

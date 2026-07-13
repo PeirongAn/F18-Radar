@@ -917,6 +917,10 @@ class MessageHandler:
             )
         except (TypeError, ValueError):
             group_completed = False
+        task_group_id = (
+            (current_scenario or {}).get("task_group_id")
+            or repetition_info.get("task_group_id")
+        )
 
         task_id = current_task_id
         if not session_state.get('is_practice', False) and task_id:
@@ -942,11 +946,6 @@ class MessageHandler:
                     completed_at_ms=completed_at_ms,
                     raw_message_json=json.dumps(message or {}, ensure_ascii=False),
                 )
-                task_group_id = None
-                if current_scenario:
-                    task_group_id = current_scenario.get("task_group_id")
-                if task_group_id is None:
-                    task_group_id = repetition_info.get("task_group_id")
                 if task_group_id is not None:
                     try:
                         completed_count = int(repetition_info.get("current") or 0)
@@ -996,6 +995,7 @@ class MessageHandler:
                 "type": "all_tasks_completed",
                 "task_type": task_type,
                 "task_id": current_task_id,
+                "task_group_id": task_group_id,
                 "repetition_info": repetition_info,
                 "is_ai_active": bool(repetition_info.get("is_ai_active")),
                 "is_practice": bool(repetition_info.get("is_practice")),
@@ -1415,10 +1415,12 @@ class MessageHandler:
     
     def _generate_antenna_adjustment(self) -> Dict[str, Any]:
         """生成随机天线高度指令"""
+        task_id = self._get_current_task_id('RADAR_TARGETING')
         existing_target = self.current_session.get('target_elevation')
         if self.current_session.get('stage') == 'antenna_adjustment' and existing_target is not None:
             return {
                 "type": "adjust_antenna",
+                "task_id": task_id,
                 "targetElevation": existing_target,
                 "message": f"请将天线高度{'上移' if existing_target > 0 else '下移'} {abs(existing_target)}格"
             }
@@ -1433,6 +1435,7 @@ class MessageHandler:
         
         return {
             "type": "adjust_antenna",
+            "task_id": task_id,
             "targetElevation": target_elevation,
             "message": f"请将天线高度{'上移' if direction > 0 else '下移'} {abs(target_elevation)}格"
         }
@@ -1441,15 +1444,35 @@ class MessageHandler:
         """处理天线高度调整确认"""
         try:
             client_elevation = message.get('elevation')
+            message_task_id = message.get('task_id')
+            current_task_id = self._get_current_task_id('RADAR_TARGETING')
+            if (
+                message_task_id is not None
+                and current_task_id is not None
+                and str(message_task_id) != str(current_task_id)
+            ):
+                self.logger.info(
+                    "ignore stale antenna_adjusted message_task_id=%s current_task_id=%s",
+                    message_task_id,
+                    current_task_id,
+                )
+                return {
+                    "type": "settings_validation",
+                    "status": "ignored",
+                    "message": "Ignored stale antenna adjustment confirmation.",
+                }, False
             
             # 检查是否在预期范围内（允许±0.1°的误差）
             target_elevation = self.current_session.get('target_elevation')
-            
             if target_elevation is None:
+                self.logger.info(
+                    "ignore antenna_adjusted without a pending target task_id=%s",
+                    message_task_id or current_task_id,
+                )
                 return {
                     "type": "settings_validation",
-                    "status": "error",
-                    "message": "未找到目标天线高度设置，请重新初始化系统"
+                    "status": "ignored",
+                    "message": "Ignored antenna adjustment confirmation without a pending target.",
                 }, False
 
             client_target_elevation = message.get('targetElevation')

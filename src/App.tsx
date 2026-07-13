@@ -564,7 +564,12 @@ const MainApp: React.FC = observer(() => {
     const concreteInfo = info && typeof info !== 'string'
       ? info
       : lastConcreteRepetitionInfosRef.current[taskType];
+    // A questionnaire belongs to a completed task group, not to one of the
+    // individual task runs inside that group.  task_id may be reused on retry.
     const identity =
+      source?.task_group_id ??
+      source?.repetition_info?.task_group_id ??
+      concreteInfo?.task_group_id ??
       source?.task_id ??
       source?.taskId ??
       concreteInfo?.task_id ??
@@ -589,6 +594,24 @@ const MainApp: React.FC = observer(() => {
     completionExitSentRef.current = false;
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire, getCompletionKey]);
+
+  // A reset/retry can deliberately reuse the same server task_id.  Clear only
+  // that new group/run's completion marker when its initialization arrives.
+  useEffect(() => {
+    if (lastMessage?.type !== 'init_settings') return;
+
+    const taskType = lastMessage.task_type as TaskType | undefined;
+    if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
+
+    const identity = lastMessage.repetition_info?.task_group_id ?? lastMessage.task_id;
+    if (identity === undefined || identity === null) return;
+    const key = `${taskType}::${identity}`;
+    shownQuestionnairesRef.current.delete(key);
+    shownCompletionNoticeRef.current.delete(key);
+
+    setCompletionNoticeTask(current => current === taskType ? null : current);
+    questionnaireRef.current?.hide();
+  }, [lastMessage]);
 
   const getTaskIdForType = useCallback((taskType: TaskType) => {
     const info = repetitionInfos[taskType];

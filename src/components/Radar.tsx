@@ -742,6 +742,7 @@ const Radar: React.FC<RadarProps> = (({
       radarStore.setCurrentAntennaElevation(effectiveTargetAntennaElevation, 'ai');
       sendMessage({
         type: 'antenna_adjusted',
+        task_id: taskId,
         elevation: effectiveTargetAntennaElevation,
         targetElevation: effectiveTargetAntennaElevation,
         timestamp: Date.now(),
