@@ -640,25 +640,42 @@ def generate_antenna_adjustment():
     
     return {
         "type": "adjust_antenna",
+        "task_id": current_session.get('task_id'),
         "targetElevation": target_elevation,
         "message": f"请将天线高度{'上移' if direction > 0 else '下移'} {abs(target_elevation)}格"
     }
 
 # 处理天线高度调整确认
 def handle_antenna_adjustment(message):
+    global current_session
     # 获取客户端设置的高度
     try:
         client_elevation = message.get('elevation')
-        
-        # 检查是否在预期范围内（允许±2°的误差）
-        global current_session
-        target_elevation = current_session.get('target_elevation')
-        
-        if target_elevation is None:
+        client_target_elevation = message.get('targetElevation')
+        message_task_id = message.get('task_id')
+        current_task_id = current_session.get('task_id')
+        if (
+            message_task_id is not None
+            and current_task_id is not None
+            and str(message_task_id) != str(current_task_id)
+        ):
             return {
                 "type": "settings_validation",
-                "status": "error",
-                "message": "未找到目标天线高度设置，请重新初始化系统"
+                "status": "ignored",
+                "message": "Ignored stale antenna adjustment confirmation.",
+            }, False
+        
+        # 检查是否在预期范围内（允许±2°的误差）
+        target_elevation = current_session.get('target_elevation')
+        if target_elevation is None and client_target_elevation is not None:
+            target_elevation = client_target_elevation
+            current_session['target_elevation'] = target_elevation
+            current_session['stage'] = 'antenna_adjustment'
+        elif target_elevation is None:
+            return {
+                "type": "settings_validation",
+                "status": "ignored",
+                "message": "Ignored antenna adjustment confirmation without a pending target.",
             }, False
         
         if abs(client_elevation - target_elevation) <= 0.1:
@@ -911,6 +928,8 @@ async def handle_client_message(message_str, session_state, websocket=None):
             print("消息类型: antenna_adjusted")
             
             validation_response, is_valid = handle_antenna_adjustment(message)
+            if validation_response.get('status') == 'ignored':
+                return []
             if is_valid:
                 # 只有在非练习模式下才记录数据库
                 if not session_state.get('is_practice', False):
@@ -1333,4 +1352,4 @@ async def main():
         await asyncio.Future()  # 运行直到被取消
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

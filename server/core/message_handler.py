@@ -1446,6 +1446,7 @@ class MessageHandler:
         """处理天线高度调整确认"""
         try:
             client_elevation = message.get('elevation')
+            client_target_elevation = message.get('targetElevation')
             message_task_id = message.get('task_id')
             current_task_id = self._get_current_task_id('RADAR_TARGETING')
             if (
@@ -1467,17 +1468,26 @@ class MessageHandler:
             # 检查是否在预期范围内（允许±0.1°的误差）
             target_elevation = self.current_session.get('target_elevation')
             if target_elevation is None:
-                self.logger.info(
-                    "ignore antenna_adjusted without a pending target task_id=%s",
-                    message_task_id or current_task_id,
-                )
-                return {
-                    "type": "settings_validation",
-                    "status": "ignored",
-                    "message": "Ignored antenna adjustment confirmation without a pending target.",
-                }, False
+                if client_target_elevation is not None:
+                    target_elevation = client_target_elevation
+                    self.current_session['target_elevation'] = target_elevation
+                    self.current_session['stage'] = 'antenna_adjustment'
+                    self.logger.warning(
+                        "recovered missing antenna target from current task confirmation task_id=%s target=%s",
+                        current_task_id,
+                        target_elevation,
+                    )
+                else:
+                    self.logger.info(
+                        "ignore antenna_adjusted without a pending target task_id=%s",
+                        message_task_id or current_task_id,
+                    )
+                    return {
+                        "type": "settings_validation",
+                        "status": "ignored",
+                        "message": "Ignored antenna adjustment confirmation without a pending target.",
+                    }, False
 
-            client_target_elevation = message.get('targetElevation')
             if client_target_elevation is not None and abs(client_target_elevation - target_elevation) > 0.1:
                 return {
                     "type": "settings_validation",

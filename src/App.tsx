@@ -490,6 +490,7 @@ const MainApp: React.FC = observer(() => {
   });
   const shownQuestionnairesRef = useRef<Set<string>>(new Set());
   const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
+  const activeQuestionnaireRunRef = useRef<Partial<Record<TaskType, string>>>({});
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
   const [isQuestionnaireVisible, setIsQuestionnaireVisible] = useState(false);
 
@@ -541,6 +542,21 @@ const MainApp: React.FC = observer(() => {
     (['RADAR_TARGETING', 'SA_THREAT_RESPONSE', 'PLATFORM_CONTROL', 'WEAPON_FIRING'] as TaskType[]).forEach(taskType => {
       const info = repetitionInfos[taskType];
       if (!info || typeof info === 'string') return;
+      const runIdentity = String(
+        (info as any).task_group_id ??
+        (info as any).task_id ??
+        `${(info as any).difficulty ?? ''}:${(info as any).autonomy_level ?? ''}:${(info as any).scenario_index ?? ''}`
+      );
+      if (activeQuestionnaireRunRef.current[taskType] !== runIdentity) {
+        const keyPrefix = `${taskType}::`;
+        for (const key of shownQuestionnairesRef.current) {
+          if (key.startsWith(keyPrefix)) shownQuestionnairesRef.current.delete(key);
+        }
+        for (const key of shownCompletionNoticeRef.current) {
+          if (key.startsWith(keyPrefix)) shownCompletionNoticeRef.current.delete(key);
+        }
+        activeQuestionnaireRunRef.current[taskType] = runIdentity;
+      }
       lastConcreteRepetitionInfosRef.current[taskType] = info;
       questionnaireEligibilityRef.current[taskType] = {
         isAIActive: !!(info as any).is_ai_active,
@@ -603,22 +619,23 @@ const MainApp: React.FC = observer(() => {
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire, getCompletionKey]);
 
-  // A reset/retry can deliberately reuse the same server task_id.  Clear only
-  // that new group/run's completion marker when its initialization arrives.
+  // A reset/retry can deliberately reuse server identifiers. Clear the task
+  // type's prior completion markers whenever a durable initSettings arrives.
   useEffect(() => {
-    if (lastMessage?.type !== 'init_settings') return;
-
-    const taskType = lastMessage.task_type as TaskType | undefined;
+    if (!initSettings) return;
+    const taskType = initSettings.__task_type as TaskType | undefined;
     if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
 
-    const identity = lastMessage.repetition_info?.task_group_id ?? lastMessage.task_id;
-    if (identity === undefined || identity === null) return;
-    const key = `${taskType}::${identity}`;
-    shownQuestionnairesRef.current.delete(key);
-    shownCompletionNoticeRef.current.delete(key);
+    const keyPrefix = `${taskType}::`;
+    for (const key of shownQuestionnairesRef.current) {
+      if (key.startsWith(keyPrefix)) shownQuestionnairesRef.current.delete(key);
+    }
+    for (const key of shownCompletionNoticeRef.current) {
+      if (key.startsWith(keyPrefix)) shownCompletionNoticeRef.current.delete(key);
+    }
 
     setCompletionNoticeTask(current => current === taskType ? null : current);
-  }, [lastMessage]);
+  }, [initSettings]);
 
   const getTaskIdForType = useCallback((taskType: TaskType) => {
     const info = repetitionInfos[taskType];

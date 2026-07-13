@@ -1167,6 +1167,10 @@ const useRadarData = (
 
     } else if (message.type === 'settings_validation') {
       if ((window as any).__settingsTimeoutRef) clearTimeout((window as any).__settingsTimeoutRef.current);
+      if (message.status === 'ignored') {
+        console.log('[useRadarData] Ignored stale settings validation:', message.message);
+        return;
+      }
       const ts = Date.now();
       recordOperation({ operationType: 'settings_validation_received', timestamp: ts, isActive: false, parameters: { status: message.status, message: message.message, settings: message.settings }});
     } else if (message.type === 'adjust_antenna') {

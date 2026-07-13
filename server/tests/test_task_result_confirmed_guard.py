@@ -204,7 +204,7 @@ def test_stale_antenna_confirmation_is_ignored_after_task_reset():
     assert "stale" in response["message"]
 
 
-def test_antenna_confirmation_without_a_pending_target_is_ignored():
+def test_antenna_confirmation_recovers_missing_target_for_current_task():
     handler = MessageHandler()
     handler.current_session.update({
         "task_id": 101,
@@ -219,9 +219,9 @@ def test_antenna_confirmation_without_a_pending_target_is_ignored():
         "targetElevation": 2,
     })
 
-    assert is_valid is False
-    assert response["status"] == "ignored"
-    assert "pending target" in response["message"]
+    assert is_valid is True
+    assert response["status"] == "success"
+    assert handler.current_session["target_elevation"] == 2
 
 
 def test_ignored_antenna_confirmation_is_not_sent_to_client():

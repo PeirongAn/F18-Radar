@@ -226,7 +226,10 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
 
       if (validationOp) {
         const { status, message, settings } = validationOp.parameters;
-        if (status === 'success') {
+        if (status === 'ignored') {
+          validationOp._displayed = true;
+          return;
+        } else if (status === 'success') {
           onAddMessageProp('success', `参数验证成功: ${message}`);
           if (settings) {
             onAddMessageProp('info', `当前参数设置: 范围 ${settings.range} 海里, 扫描角度 ${settings.scanAngle}°`);
