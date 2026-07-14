@@ -641,6 +641,14 @@ const MainApp: React.FC = observer(() => {
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire, getCompletionKey]);
 
+  const showEntryCompletedNotice = useCallback((taskType: TaskType, source: any) => {
+    const key = `${taskType}::entry-completed::${source?.timestamp ?? source?.received_at ?? Date.now()}`;
+    if (shownCompletionNoticeRef.current.has(key)) return;
+    shownCompletionNoticeRef.current.add(key);
+    completionExitSentRef.current = false;
+    setCompletionNoticeTask(taskType);
+  }, []);
+
   const getTaskGroupId = useCallback((taskType: TaskType, source?: any): string | null => {
     const groupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
     if (groupId !== undefined && groupId !== null) return String(groupId);
@@ -766,8 +774,12 @@ const MainApp: React.FC = observer(() => {
     lastHandledTaskGroupCompletionRef.current = lastTaskGroupCompletion;
     const taskType = lastTaskGroupCompletion.task_type as TaskType | undefined;
     if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
+    if (lastTaskGroupCompletion.entry_completed === true) {
+      showEntryCompletedNotice(taskType, lastTaskGroupCompletion);
+      return;
+    }
     handleTaskGroupCompletion(taskType, lastTaskGroupCompletion);
-  }, [lastTaskGroupCompletion, handleTaskGroupCompletion]);
+  }, [lastTaskGroupCompletion, handleTaskGroupCompletion, showEntryCompletedNotice]);
 
   useEffect(() => {
     if (completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {
@@ -1004,8 +1016,16 @@ const MainApp: React.FC = observer(() => {
     : '/radar_target_identification.html';
 
   const handleCloseCurrentWindow = useCallback(() => {
-    window.close();
-  }, []);
+    const taskType: TaskType = activeDisplay === 'sa' ? 'SA_THREAT_RESPONSE' : 'RADAR_TARGETING';
+    sendMessage?.({
+      type: 'task_exit_request',
+      reason: 'user_exit',
+      task_type: taskType,
+      task_id: getTaskIdForType(taskType),
+      user_id: userId,
+      timestamp: Date.now(),
+    });
+  }, [activeDisplay, getTaskIdForType, sendMessage, userId]);
 
   /* ════════════════════════════════════════════════════
      Render
@@ -1374,7 +1394,7 @@ const MainApp: React.FC = observer(() => {
               letterSpacing: '0.12em',
               color: '#00cc55',
             }}>
-              本次任务结束
+              当前设置组已完成
             </p>
             <button
               onClick={handleCompletionNoticeConfirm}

@@ -512,6 +512,7 @@ class MessageHandler:
             return [{
                 "type": "all_tasks_completed",
                 "task_type": task_type,
+                "entry_completed": True,
                 "message": "所有传感器任务已完成。",
                 "is_ai_active": bool(is_ai_active_request),
                 "is_practice": bool(is_practice),
@@ -520,6 +521,7 @@ class MessageHandler:
             return [{
                 "type": "all_tasks_completed",
                 "task_type": task_type,
+                "entry_completed": True,
                 "message": f"当前模式的{task_type}任务已完成。",
                 "is_ai_active": bool(is_ai_active_request),
                 "is_practice": bool(is_practice),
@@ -1099,6 +1101,7 @@ class MessageHandler:
             return [{
                 "type": "all_tasks_completed",
                 "task_type": task_type,
+                "entry_completed": True,
                 "message": "所有威胁排序任务已完成。",
                 "is_ai_active": bool(is_ai_active_request),
                 "is_practice": bool(is_practice),
@@ -1107,6 +1110,7 @@ class MessageHandler:
             return [{
                 "type": "all_tasks_completed",
                 "task_type": task_type,
+                "entry_completed": True,
                 "message": f"当前模式的{task_type}任务已完成。",
                 "is_ai_active": bool(is_ai_active_request),
                 "is_practice": bool(is_practice),

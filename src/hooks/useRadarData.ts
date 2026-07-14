@@ -1285,11 +1285,17 @@ const useRadarData = (
       const completedTaskType = message.task_type as TaskType;
       if (completedTaskType) {
         const completedGroupId = message.task_group_id ?? message.repetition_info?.task_group_id;
-        // A start request can report that an old persisted scenario is
-        // exhausted before the new external task group is initialized.  It
-        // is not a completion of a concrete task group and must never drive
-        // a questionnaire or an end-of-task dialog.
         if (completedGroupId === undefined || completedGroupId === null) {
+          // Only the backend-marked task-entry case should show the completed
+          // notice.  Other group-less messages remain stale/invalid events.
+          if (message.entry_completed === true) {
+            setLastTaskGroupCompletion({
+              ...message,
+              entry_completed: true,
+              received_at: Date.now(),
+            });
+            return;
+          }
           console.warn('[useRadarData] Ignored group-less all_tasks_completed:', message);
           return;
         }
