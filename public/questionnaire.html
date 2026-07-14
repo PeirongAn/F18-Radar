@@ -507,14 +507,12 @@ function renderContext() {
 
   // Difficulty
   const diffLabels = config?.difficultyLabels || {};
-  const taskDiffLabels = config?.difficultyLabelsByTaskType?.[taskType] || {};
-  const diffLabel  = taskDiffLabels[difficulty] || diffLabels[difficulty] || difficulty || '-';
+  const diffLabel  = diffLabels[difficulty] || difficulty || '-';
   setSelectValue('selDifficulty', diffLabel);
 
   // Autonomy
   const aiLabels = config?.autonomyLabels || {};
-  const taskAiLabels = config?.autonomyLabelsByTaskType?.[taskType] || {};
-  const autoLabel = taskAiLabels[autonomyLevel] || aiLabels[autonomyLevel] || autonomyLevel || '-';
+  const autoLabel = aiLabels[autonomyLevel] || autonomyLevel || '-';
   setSelectValue('selAutonomy', autoLabel);
 
   // Title
@@ -540,8 +538,6 @@ function createEmptyConfig() {
     taskTypeLabels: {},
     difficultyLabels: {},
     autonomyLabels: {},
-    difficultyLabelsByTaskType: {},
-    autonomyLabelsByTaskType: {},
     scales: [],
     questions: [],
   };
@@ -554,8 +550,6 @@ function normalizeConfig(raw) {
   merged.taskTypeLabels = merged.taskTypeLabels || {};
   merged.difficultyLabels = merged.difficultyLabels || {};
   merged.autonomyLabels = merged.autonomyLabels || {};
-  merged.difficultyLabelsByTaskType = merged.difficultyLabelsByTaskType || {};
-  merged.autonomyLabelsByTaskType = merged.autonomyLabelsByTaskType || {};
   merged.scales = Array.isArray(merged.scales) ? merged.scales : [];
   merged.questions = Array.isArray(merged.questions) ? merged.questions : [];
   return merged;

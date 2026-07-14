@@ -145,7 +145,7 @@ def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):
             "isPractice": True,
         },
         "answers": {"1": 5},
-        "source": "html_page",
+        "source": "react_modal",
         "timestamp": 30,
     })
 

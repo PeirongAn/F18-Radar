@@ -48,9 +48,9 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 |---|---|---|---|
 | Action | string | 是 | 固定 `"task_start"` |
 | DefaultControlMode | string | 否 | "0"=人工, "1"=AI |
-| AIAutonomyLeve | string | 否 | AI 自主等级：RADAR/SA 为 `1`=L1、`2`=L2、`3`=L3；平台控制/武器发射为 `1`=高（L3）、`2`=中（L2）、`3`=低（L1） |
+| AIAutonomyLeve | string | 否 | AI 自主等级：所有任务统一为 `1`=高（内部 L3）、`2`=中（内部 L2）、`3`=低（内部 L1） |
 | TaskMode | string | 否 | "0"=练习, "1"=正式 |
-| Difficulty | string | 否 | 难度等级：RADAR/SA 为 `1`=高、`2`=中、`3`=低；平台控制/武器发射为 `1`=低、`2`=中、`3`=高 |
+| Difficulty | string | 否 | 难度等级：所有任务统一为 `1`=低、`2`=中、`3`=高 |
 | TaskNumber | string | 否 | 任务编号/轮数 |
 | aiprecision | string | 否 | AI 精度 |
 
@@ -462,7 +462,7 @@ http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型
 | userId | string | 是 | 被试 ID，应与 task_start 中的 `ID` 一致 | 如 `12345` |
 | taskType | string | 是 | 任务类型常量 | `PLATFORM_CONTROL` / `WEAPON_FIRING` |
 | difficulty | string | 否 | 任务难度 | `low` / `medium` / `high` |
-| autonomyLevel | string | 否 | AI 自主等级，对应平台字段 `AIAutonomyLevel` / `AIAutonomyLeve`。平台控制/武器发射的数值协议为 `1`=高（L3）、`2`=中（L2）、`3`=低（L1） | `L1` / `L2` / `L3` 或 `1` / `2` / `3` |
+| autonomyLevel | string | 否 | AI 自主等级，对应平台字段 `AIAutonomyLevel` / `AIAutonomyLeve`。所有任务的数值协议为 `1`=高（L3）、`2`=中（L2）、`3`=低（L1） | `L1` / `L2` / `L3` 或 `1` / `2` / `3` |
 | isPractice | string | 否 | 是否练习模式 | `true` / `false` |
 | experimentNo | string | 否 | 当前实验序号 | 如 `3` |
 | total | string | 否 | 总实验数 | 如 `10` |

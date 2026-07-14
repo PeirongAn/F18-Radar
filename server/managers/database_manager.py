@@ -1714,7 +1714,9 @@ class DatabaseManager:
         if is_ai_active is None:
             is_ai_active = bool(autonomy_level)
 
-        if source == 'html_page':
+        # The completed task run is authoritative for every questionnaire surface.
+        # UI fields are display copies and may be stale or manually supplied.
+        if context.get('task_id') is not None:
             difficulty = context.get('difficulty') or difficulty
             autonomy_level = context.get('autonomy_level') or autonomy_level
             if context.get('is_practice') is not None:
@@ -1723,7 +1725,7 @@ class DatabaseManager:
                 is_ai_active = context.get('is_ai_active')
 
         repetition_total = data.get('repetitionTotal', data.get('repetition_total', 0))
-        if source == 'html_page' and context.get('repetition_total') and not repetition_total:
+        if context.get('task_id') is not None and context.get('repetition_total') and not repetition_total:
             repetition_total = context.get('repetition_total')
 
         sql = """

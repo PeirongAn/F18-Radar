@@ -46,8 +46,6 @@ interface QuestionnaireConfig {
   questions: QuestionItem[];
   difficultyLabels?: Record<string, string>;
   autonomyLabels?: Record<string, string>;
-  difficultyLabelsByTaskType?: Partial<Record<TaskType, Record<string, string>>>;
-  autonomyLabelsByTaskType?: Partial<Record<TaskType, Record<string, string>>>;
   taskTypeLabels?: Partial<Record<TaskType, string>>;
 }
 
@@ -127,46 +125,36 @@ const DEFAULT_CONFIG: QuestionnaireConfig = {
   ],
 };
 
-function usesInverseNumericProtocol(taskType: TaskType): boolean {
-  return taskType === 'PLATFORM_CONTROL' || taskType === 'WEAPON_FIRING';
-}
-
 function translateDifficulty(
   d: string | undefined,
-  taskType: TaskType,
   labels?: Record<string, string>,
-  taskLabels?: Record<string, string>,
 ): string {
   if (!d) return '-';
-  if (taskLabels?.[d]) return taskLabels[d];
   if (labels?.[d]) return labels[d];
   switch (d) {
     case 'low': return '低';
     case 'medium': return '中';
     case 'high': return '高';
-    case '1': return usesInverseNumericProtocol(taskType) ? '低' : '高';
+    case '1': return '低';
     case '2': return '中';
-    case '3': return usesInverseNumericProtocol(taskType) ? '高' : '低';
+    case '3': return '高';
     default: return d;
   }
 }
 
 function translateAutonomyLevel(
   level: string | undefined,
-  taskType: TaskType,
   labels?: Record<string, string>,
-  taskLabels?: Record<string, string>,
 ): string {
   if (!level) return '-';
-  if (taskLabels?.[level]) return taskLabels[level];
   if (labels?.[level]) return labels[level];
   switch (level) {
     case 'L1': return 'L1';
     case 'L2': return 'L2';
     case 'L3': return 'L3';
-    case '1': return usesInverseNumericProtocol(taskType) ? 'L3' : 'L1';
+    case '1': return 'L3';
     case '2': return 'L2';
-    case '3': return usesInverseNumericProtocol(taskType) ? 'L1' : 'L3';
+    case '3': return 'L1';
     default: return level;
   }
 }
@@ -360,15 +348,11 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     const difficultyLabel = translateDifficulty(
       info?.difficulty,
-      currentTaskType,
       config.difficultyLabels,
-      config.difficultyLabelsByTaskType?.[currentTaskType],
     );
     const autonomyLabel = translateAutonomyLevel(
       info?.autonomy_level,
-      currentTaskType,
       config.autonomyLabels,
-      config.autonomyLabelsByTaskType?.[currentTaskType],
     );
 
     const modalTitle =

@@ -200,7 +200,7 @@ def setup_bridge(monkeypatch):
     return fake_db
 
 
-def test_radar_and_sa_use_web_task_numeric_protocol(monkeypatch):
+def test_all_task_categories_use_shared_numeric_protocol(monkeypatch):
     setup_bridge(monkeypatch)
 
     _, radar = bridge._normalize_platform_task_fields({
@@ -218,63 +218,37 @@ def test_radar_and_sa_use_web_task_numeric_protocol(monkeypatch):
         "Action": "task_start",
     })
 
-    assert radar["current_level"] == "L1"
-    assert radar["difficulty_key"] == "high"
-    assert radar["difficulty_display"] == "high"
-    assert sa["current_level"] == "L3"
-    assert sa["difficulty_key"] == "low"
-    assert sa["difficulty_display"] == "low"
-
-
-def test_platform_and_weapon_use_inverse_numeric_protocol(monkeypatch):
-    setup_bridge(monkeypatch)
-    _, normalized = bridge._normalize_platform_task_fields({
-        "TaskName": "\u6b66\u5668\u53d1\u5c04\u4efb\u52a1",
-        "ID": "DefaultID",
-        "Gender": "1",
-        "DefaultControlMode": "1",
-        "AIAutonomyLeve": "3",
-        "TaskMode": "0",
-        "Difficulty": "1",
-        "aiprecision": "1",
-        "TaskNumber": "0",
-        "Action": "task_start",
-    })
-
-    assert normalized["ai_autonomy_level"] == "L1"
-    assert normalized["current_level"] == "L1"
-    assert normalized["difficulty_key"] == "low"
-    assert normalized["difficulty_display"] == "low"
-    assert normalized["difficulty_raw"] == "1"
-
     _, platform = bridge._normalize_platform_task_fields({
         "TaskName": "\u5e73\u53f0\u4efb\u52a1",
-        "ID": "DefaultID",
-        "AIAutonomyLeve": "1",
-        "Difficulty": "3",
+        "ID": "PlatformUser",
+        "AIAutonomyLeve": "3",
+        "Difficulty": "1",
         "Action": "task_start",
     })
-    assert platform["current_level"] == "L3"
-    assert platform["difficulty_key"] == "high"
-    assert platform["difficulty_display"] == "high"
+    _, weapon = bridge._normalize_platform_task_fields({
+        "TaskName": "\u6b66\u5668\u53d1\u5c04\u4efb\u52a1",
+        "ID": "DefaultID",
+        "AIAutonomyLeve": "3",
+        "Difficulty": "1",
+        "Action": "task_start",
+    })
+
+    assert radar["current_level"] == "L3"
+    assert radar["difficulty_key"] == "low"
+    assert sa["current_level"] == "L1"
+    assert sa["difficulty_key"] == "high"
+    assert platform["current_level"] == "L1"
+    assert platform["difficulty_key"] == "low"
+    assert weapon["current_level"] == "L1"
+    assert weapon["difficulty_key"] == "low"
 
 
-def test_platform_numeric_autonomy_uses_inverse_internal_levels():
+def test_shared_numeric_autonomy_maps_to_internal_levels():
     config = make_config()
 
-    assert bridge._normalize_current_level("1", config, "platform_control") == "L3"
-    assert bridge._normalize_current_level("2", config, "platform_control") == "L2"
-    assert bridge._normalize_current_level("3", config, "platform_control") == "L1"
-    assert bridge._normalize_current_level("1", config, "weapon_launch") == "L3"
-    assert bridge._normalize_current_level("3", config, "weapon_launch") == "L1"
-
-
-def test_web_task_numeric_autonomy_maps_directly_to_internal_levels():
-    config = make_config()
-
-    assert bridge._normalize_current_level("1", config, "radar") == "L1"
-    assert bridge._normalize_current_level("2", config, "radar") == "L2"
-    assert bridge._normalize_current_level("3", config, "sa") == "L3"
+    assert bridge._normalize_current_level("1", config) == "L3"
+    assert bridge._normalize_current_level("2", config) == "L2"
+    assert bridge._normalize_current_level("3", config) == "L1"
 
 
 def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):
@@ -395,11 +369,14 @@ def test_web_overlay_entry_semantics_and_task_scoped_pending(monkeypatch):
     setup_bridge(monkeypatch)
 
     radar_meta = bridge.apply_platform_task_message(radar_overlay())
+    radar_cached = json.loads(Path(bridge.INIT_CONFIG_PATH).read_text(encoding="utf-8"))
     sa_meta = bridge.apply_platform_task_message(sa_overlay())
 
     assert radar_meta["entry_mode"] == "web_overlay"
     assert radar_meta["task_type"] == "RADAR_TARGETING"
     assert radar_meta["task_category"] == "radar"
+    assert radar_cached["platformTask"]["raw"]["Difficulty"] == radar_overlay()["Difficulty"]
+    assert radar_cached["platformTask"]["normalized"] == radar_meta
     assert sa_meta["entry_mode"] == "web_overlay"
     assert sa_meta["task_type"] == "SA_THREAT_RESPONSE"
     assert bridge.peek_pending_include_ai("RadarUser", "RADAR_TARGETING") is None
@@ -422,6 +399,8 @@ def test_web_overlay_entry_semantics_and_task_scoped_pending(monkeypatch):
     assert cached["userId"] == "SaUser"
     assert cached["taskType"] == "sa"
     assert cached["taskNumber"] == 4
+    assert cached["platformTask"]["raw"]["Difficulty"] == sa_overlay()["Difficulty"]
+    assert cached["platformTask"]["normalized"] == sa_meta
 
 
 def test_simple_task_start_records_sub_start(monkeypatch):
@@ -436,7 +415,7 @@ def test_simple_task_start_records_sub_start(monkeypatch):
     assert fake_db.events[-1]["sub_task_seq"] == 1
 
 
-def test_simple_task_start_without_overall_starts_external_collectors(monkeypatch):
+def test_simple_task_start_without_overall_is_ignored(monkeypatch):
     fake_db = setup_bridge(monkeypatch)
     external = FakeExternalCollectors()
 
@@ -446,14 +425,13 @@ def test_simple_task_start_without_overall_starts_external_collectors(monkeypatc
         external_collectors=external,
     )
 
-    assert replies[0]["task_id"] == 42
-    assert replies[0]["sub_task_seq"] == 1
-    assert fake_db.runs[42]["task_type"] == "PLATFORM_CONTROL"
-    assert [event["event_type"] for event in fake_db.events] == ["sub_start"]
-    assert external.started[0][0] == "PLATFORM_CONTROL"
-    assert external.started[0][1] == "DefaultID"
-    assert external.started[0][2] == "42"
-    assert [marker["name"] for marker in external.markers] == ["sub_start"]
+    assert replies[0]["status"] == "ignored"
+    assert replies[0]["event_type"] == "need_overall_config"
+    assert replies[0]["diagnostics"]["event_role"] == "simple_task_start_without_overall_ignored"
+    assert fake_db.runs == {}
+    assert fake_db.events == []
+    assert external.started == []
+    assert external.markers == []
 
 
 def test_weapon_simple_task_start_without_overall_starts_external_collectors(monkeypatch):
@@ -577,7 +555,7 @@ def test_sub_end_prestarts_next_external_collector(monkeypatch):
         external_collectors=external,
     )
     duplicate_start = bridge._handle_external_task(
-        sub_start(),
+        simple_task_start(),
         "platform_control",
         external_collectors=external,
     )
@@ -592,6 +570,20 @@ def test_sub_end_prestarts_next_external_collector(monkeypatch):
     assert external.started[1][3]["message"]["_inferred_from_action"] == "previous_sub_end"
     assert [marker["name"] for marker in external.markers] == ["sub_start", "sub_end", "sub_start"]
     assert external.stopped == ["43"]
+
+
+def test_simple_task_start_after_completed_overall_is_ignored(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    bridge._handle_external_task(overall_start("1"), "platform_control")
+    bridge._handle_external_task(sub_start(), "platform_control")
+    bridge._handle_external_task(sub_end(), "platform_control")
+
+    replies = bridge._handle_external_task(simple_task_start(), "platform_control")
+
+    assert replies[0]["status"] == "ignored"
+    assert replies[0]["event_type"] == "need_overall_config"
+    assert list(fake_db.runs) == [42, 43]
+    assert bridge._active_external_tasks == {}
 
 
 def test_sub_end_without_sub_start_infers_external_start(monkeypatch):
