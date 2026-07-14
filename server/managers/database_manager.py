@@ -1211,11 +1211,13 @@ class DatabaseManager:
         return {
             "task_id": run.get("task_id"),
             "task_group_id": self._safe_int(run.get("group_id")) or self._safe_int(config.get("overall_task_id")) or run.get("task_id"),
+            "user_id": run.get("user_id"),
             "task_type": self._normalize_runtime_task_type(run.get("task_type")),
             "difficulty": self.normalize_difficulty_value(difficulty),
             "autonomy_level": None if autonomy_level is None else str(autonomy_level),
             "is_ai_active": self._safe_bool(include_ai),
             "is_practice": self._safe_bool(is_practice),
+            "repetition_current": run.get("current_subtask_seq") or run.get("completed_subtasks"),
             "repetition_total": run.get("expected_subtasks") or normalized.get("repetition_total_override"),
         }
 
@@ -1235,28 +1237,34 @@ class DatabaseManager:
                     run = self._load_task_run_by_id(cursor, submitted_id)
                     if run:
                         return self._questionnaire_context_from_task_run(run)
-                    return {"task_id": submitted_id, "task_type": normalized_task_type}
+                    # A stale/unknown task id must not prevent the normal
+                    # user + task-type fallback below.  External platforms
+                    # commonly cannot retain our generated task id.
+                    submitted_id = None
 
-                if not user_id or not normalized_task_type:
-                    return {"task_type": normalized_task_type}
-
-                task_types = [normalized_task_type]
-                if normalized_task_type == "WEAPON_FIRING":
-                    task_types.append("WEAPON_LAUNCH")
-                placeholders = ",".join("?" for _ in task_types)
+                clauses = ["status = 'completed'"]
+                params = []
+                if user_id:
+                    clauses.append("user_id = ?")
+                    params.append(user_id)
+                if normalized_task_type:
+                    task_types = [normalized_task_type]
+                    if normalized_task_type == "WEAPON_FIRING":
+                        task_types.append("WEAPON_LAUNCH")
+                    placeholders = ",".join("?" for _ in task_types)
+                    clauses.append(f"task_type IN ({placeholders})")
+                    params.extend(task_types)
                 cursor.execute(
                     f"""
                     SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
                            completed_subtasks, current_subtask_seq, started_at_ms,
                            completed_at_ms, config_json, last_raw_message_json
                     FROM task_runs
-                    WHERE user_id = ?
-                      AND task_type IN ({placeholders})
-                      AND status = 'completed'
+                    WHERE {' AND '.join(clauses)}
                     ORDER BY COALESCE(completed_at_ms, updated_at, started_at_ms) DESC, task_id DESC
                     LIMIT 50
                     """,
-                    tuple([user_id] + task_types),
+                    tuple(params),
                 )
                 fallback_overall_run = None
                 for row in cursor.fetchall():

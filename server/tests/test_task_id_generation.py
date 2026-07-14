@@ -157,3 +157,39 @@ def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):
             """
         ).fetchone()
     assert row == (101, 100, "PLATFORM_CONTROL", "high", "3", 1, 0)
+
+
+def test_questionnaire_context_falls_back_from_stale_id_to_latest_completed_run(tmp_path):
+    db_path = tmp_path / "questionnaire-context.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    config = {
+        "normalized": {
+            "difficulty_key": "low",
+            "current_level": "L1",
+            "include_ai": True,
+            "is_practice": False,
+        },
+        "overall_task_id": 10,
+        "sub_task_seq": 1,
+    }
+    with manager.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO task_runs (
+                task_id, group_id, task_type, user_id, status, expected_subtasks,
+                completed_subtasks, current_subtask_seq, started_at_ms,
+                completed_at_ms, config_json, last_raw_message_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (11, 10, "PLATFORM_CONTROL", "u1", "completed", 1, 1, 1, 10, 20, json.dumps(config), "{}"),
+        )
+        conn.commit()
+
+    stale_context = manager.resolve_questionnaire_task_context("u1", "PLATFORM_CONTROL", submitted_task_id=999)
+    blank_context = manager.resolve_questionnaire_task_context("", "")
+
+    assert stale_context["task_id"] == 11
+    assert blank_context["task_id"] == 11
+    assert blank_context["difficulty"] == "low"
+    assert blank_context["autonomy_level"] == "L1"

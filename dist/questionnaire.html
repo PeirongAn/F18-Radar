@@ -423,7 +423,7 @@ function getParams() {
   const p = new URLSearchParams(window.location.search);
   return {
     userId:       p.get('userId')       || '',
-    taskType:     p.get('taskType')     || 'RADAR_TARGETING',
+    taskType:     p.get('taskType')     || '',
     taskId:       p.get('taskId')       || p.get('task_id') || '',
     difficulty:   p.get('difficulty')   || '',
     autonomyLevel: p.get('autonomyLevel') || p.get('autonomy_level') ||
@@ -529,6 +529,36 @@ function setSelectValue(id, value) {
   opt.textContent = value;
   sel.appendChild(opt);
   sel.value = value;
+}
+
+// The questionnaire display is owned by the completed server-side task run,
+// not by difficulty/autonomy values embedded in an externally opened URL.
+// taskId is preferred when available; the API falls back to the user's most
+// recent completed task of the requested type when it is absent or stale.
+async function loadAuthoritativeContext() {
+  const { userId, taskType, taskId } = contextData;
+  const query = new URLSearchParams();
+  if (userId) query.set('userId', userId);
+  if (taskType) query.set('taskType', taskType);
+  if (taskId) query.set('taskId', taskId);
+  try {
+    const response = await fetch(`/api/questionnaire/context?${query.toString()}`, {
+      cache: 'no-store',
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    if (payload?.ok && payload.type === 'questionnaire_context') {
+      applyContext({
+        ...payload,
+        experimentNo: payload.experimentNo ?? contextData.experimentNo,
+        total: payload.total ?? contextData.total,
+      });
+    }
+  } catch (error) {
+    // URL values remain the final compatibility fallback when the server is
+    // unavailable or no completed task can be resolved.
+    console.warn('无法读取服务端任务上下文，使用 URL 兜底值', error);
+  }
 }
 
 function createEmptyConfig() {
@@ -758,10 +788,13 @@ function handleSubmit() {
   // 2. Load config (needed before renderContext)
   await loadConfig();
 
-  // 3. Pre-fill answers from URL (e.g. q1=5&q2=3)
+  // 3. Prefer the server-side completed task context over URL display fields.
+  await loadAuthoritativeContext();
+
+  // 4. Pre-fill answers from URL (e.g. q1=5&q2=3)
   prefillAnswersFromURL();
 
-  // 4. Connect WS
+  // 5. Connect WS
   connectWS();
 })();
 

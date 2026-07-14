@@ -452,8 +452,13 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 外部平台在任务结束后，通过浏览器打开以下 URL 让被试填写问卷：
 
 ```
-http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型>&difficulty=<难度>&autonomyLevel=<自主等级>&isPractice=<是否练习>&experimentNo=<当前序号>&total=<总数>
+http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型>
 ```
+
+问卷页从服务端读取最近完成任务的权威配置。外部平台不应传递
+`difficulty`、`autonomyLevel`、`isPractice` 等显示参数。若能获得服务端的
+`taskId` 可额外传递，服务端优先按该任务读取；否则按 `userId + taskType`
+查询；这两个参数也没有时，读取全库最近完成的一条任务。
 
 **参数说明：**
 
@@ -461,23 +466,21 @@ http://<server>:8080/questionnaire.html?userId=<用户ID>&taskType=<任务类型
 |---|---|---|---|---|
 | userId | string | 是 | 被试 ID，应与 task_start 中的 `ID` 一致 | 如 `12345` |
 | taskType | string | 是 | 任务类型常量 | `PLATFORM_CONTROL` / `WEAPON_FIRING` |
-| difficulty | string | 否 | 任务难度 | `low` / `medium` / `high` |
-| autonomyLevel | string | 否 | AI 自主等级，对应平台字段 `AIAutonomyLevel` / `AIAutonomyLeve`。所有任务的数值协议为 `1`=高（L3）、`2`=中（L2）、`3`=低（L1） | `L1` / `L2` / `L3` 或 `1` / `2` / `3` |
-| isPractice | string | 否 | 是否练习模式 | `true` / `false` |
-| experimentNo | string | 否 | 当前实验序号 | 如 `3` |
-| total | string | 否 | 总实验数 | 如 `10` |
+| taskId | string | 否 | 服务端生成的任务 ID；提供时优先精确读取 | 如 `4` |
+| difficulty / autonomyLevel / isPractice | string | 否 | 仅兼容旧页面的最后兜底，服务端可用时不使用 | - |
+| experimentNo / total | string | 否 | 仅兼容旧页面的显示兜底 | 如 `3` / `10` |
 | q1 ~ q7 | string | 否 | 预填答案（1=非常不同意，5=非常同意） | `1` ~ `5` |
 
 **平台控制任务示例：**
 
 ```
-http://localhost:8080/questionnaire.html?userId=12345&taskType=PLATFORM_CONTROL&difficulty=high&autonomyLevel=L2&isPractice=false&experimentNo=3&total=10
+http://localhost:8080/questionnaire.html?userId=12345&taskType=PLATFORM_CONTROL
 ```
 
 **武器发射任务示例：**
 
 ```
-http://localhost:8080/questionnaire.html?userId=12345&taskType=WEAPON_FIRING&difficulty=medium&autonomyLevel=L1&isPractice=false&experimentNo=5&total=10
+http://localhost:8080/questionnaire.html?userId=12345&taskType=WEAPON_FIRING
 ```
 
 ### 问卷提交方式

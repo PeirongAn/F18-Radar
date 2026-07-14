@@ -40,9 +40,15 @@ def _valid_levels(config: Dict[str, Any]) -> List[str]:
     return [lv.get("level") for lv in config.get("levels", []) if lv.get("level")]
 
 
+def _uses_direct_numeric_protocol(task_category: Optional[str]) -> bool:
+    """RADAR and SA send numeric values in their natural low-to-high order."""
+    return task_category in ("radar", "sa")
+
+
 def _normalize_current_level(
     raw: Any,
     config: Dict[str, Any],
+    task_category: Optional[str] = None,
 ) -> str:
     valid = _valid_levels(config)
     default = config.get("current_level") or (valid[0] if valid else "L1")
@@ -60,9 +66,13 @@ def _normalize_current_level(
             return cand
     try:
         n = int(float(s))
-        # The external WebSocket protocol is shared by all task categories.
-        # 1=high, 2=medium, 3=low; internal levels are L3/L2/L1.
-        protocol_map = {1: "L3", 2: "L2", 3: "L1"}
+        # RADAR/SA use 1=low and 3=high, while platform/weapon use the
+        # inverse protocol observed in their external lifecycle messages.
+        protocol_map = (
+            {1: "L1", 2: "L2", 3: "L3"}
+            if _uses_direct_numeric_protocol(task_category)
+            else {1: "L3", 2: "L2", 3: "L1"}
+        )
         cand = protocol_map.get(n)
         if cand:
             return cand
@@ -75,7 +85,11 @@ def _normalize_difficulty_display_key(raw: Any, engine_key: str) -> str:
     return engine_key
 
 
-def _normalize_difficulty_key(raw: Any, config: Dict[str, Any]) -> str:
+def _normalize_difficulty_key(
+    raw: Any,
+    config: Dict[str, Any],
+    task_category: Optional[str] = None,
+) -> str:
     gs = config.get("game_settings", {})
     diff_levels = gs.get("difficulty_levels", {}) or {}
     keys = list(diff_levels.keys())
@@ -87,14 +101,12 @@ def _normalize_difficulty_key(raw: Any, config: Dict[str, Any]) -> str:
         return s
     try:
         n = int(float(s))
-        # The external WebSocket protocol is shared by all task categories.
-        # 1=low, 2=medium, 3=high.
-        if n <= 1:
-            pick = "low"
-        elif n == 2:
-            pick = "medium"
-        else:  # n >= 3
-            pick = "high"
+        if _uses_direct_numeric_protocol(task_category):
+            # RADAR/SA: 1=high, 2=medium, 3=low.
+            pick = "high" if n <= 1 else "medium" if n == 2 else "low"
+        else:
+            # Platform control / weapon launch: 1=low, 2=medium, 3=high.
+            pick = "low" if n <= 1 else "medium" if n == 2 else "high"
         return pick
     except ValueError:
         pass
@@ -221,8 +233,9 @@ def _normalize_platform_task_fields(
     if ai_raw is None:
         ai_raw = message.get("AIAutonomyLeve")
     web_task_kind = _infer_web_task_kind(message)
-    current_level = _normalize_current_level(ai_raw, cfg)
-    difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg)
+    mapping_category = task_category or web_task_kind or _classify_task_category(message)
+    current_level = _normalize_current_level(ai_raw, cfg, mapping_category)
+    difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg, mapping_category)
     difficulty_display = _normalize_difficulty_display_key(
         message.get("Difficulty"),
         difficulty_key,
@@ -772,7 +785,7 @@ def _active_from_task_run(
         "normalized": copy.deepcopy(effective_normalized),
         "gaze_task_id": str(run["task_id"]),
     }
-    if is_subtask_run:
+    if is_subtask_run or current_subtask_seq > completed_subtasks:
         active["current_subtask_task_id"] = task_id
         active["current_subtask_started_by"] = "restored"
     return active
@@ -1713,8 +1726,35 @@ def _handle_external_task(
                     config_json=_json_dump(_task_run_config(category, raw_fields, normalized)),
                     raw_message_json=raw,
                 )
+                # The full overall task_start is also the first real subtask.
+                # Do not allocate a second task id for the immediately
+                # following simple task_start sent by the external platform.
+                active["current_subtask_seq"] = 1
+                active["current_subtask_task_id"] = tid
+                active["current_subtask_started_by"] = "overall"
+                db_manager.update_task_run_progress(
+                    task_id=tid,
+                    current_subtask_seq=1,
+                    raw_message_json=raw,
+                )
+                db_manager.update_task_group_progress(
+                    group_id=tid,
+                    current_task_seq=1,
+                    raw_message_json=raw,
+                )
+                _start_external_marker_context(
+                    active,
+                    category,
+                    message_data,
+                    timestamp_ms=ts,
+                    gaze_svc=gaze_svc,
+                    physio_svc=physio_svc,
+                    external_collectors=external_collectors,
+                    event_type="sub_start",
+                    sub_task_seq=1,
+                )
                 logger.info(
-                    "[REMOTE_TASK_COUNT] external overall task_start stored "
+                    "[REMOTE_TASK_COUNT] external overall task_start stored and started first subtask "
                     "category=%s task_type=%s entry_mode=%s user=%s task_id=%s total=%s",
                     category,
                     task_type,
@@ -1728,14 +1768,19 @@ def _handle_external_task(
                 task_id=tid,
                 task_type=task_type,
                 user_id=user_id,
-                event_type="overall_start",
+                event_type="sub_start",
+                sub_task_seq=1,
                 timestamp_ms=ts,
-                payload_json=_json_dump(_task_run_config(category, raw_fields, normalized)),
+                payload_json=_json_dump({
+                    **_task_run_config(category, raw_fields, normalized),
+                    "initial_subtask_started_by": "overall_task_start",
+                }),
                 raw_message_json=raw,
             )
             return [{"type": "platform_task_ack", "status": "ok",
                      "task_id": tid, "task_type": task_type,
                      "task_category": category, "entry_mode": "external_lifecycle",
+                     "sub_task_seq": active.get("current_subtask_seq"),
                      "expected_subtasks": active.get("expected_subtasks"),
                      "completed_subtasks": active.get("completed_subtasks"),
                      "diagnostics": _external_task_diagnostics(
