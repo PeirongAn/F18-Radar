@@ -231,7 +231,11 @@ class GlobalWebSocketManager {
         messageId += '_' + rawData.timestamp;
       } else if (rawData.type === 'platform_task_config') {
         const pid = rawData.normalized?.platform_task_id ?? rawData.raw?.ID;
-        messageId += '_' + String(pid ?? Date.now());
+        const level = rawData.normalized?.current_level ?? rawData.normalized?.ai_autonomy_level ?? rawData.raw?.AIAutonomyLevel ?? rawData.raw?.AIAutonomyLeve;
+        const difficulty = rawData.normalized?.difficulty_key ?? rawData.raw?.Difficulty;
+        const taskNumber = rawData.normalized?.repetition_total_override ?? rawData.normalized?.task_number ?? rawData.raw?.TaskNumber;
+        const taskKind = rawData.normalized?.web_task_kind ?? rawData.normalized?.task_type ?? rawData.raw?.TaskName;
+        messageId += '_' + [pid ?? 'unknown', taskKind ?? 'unknown', level ?? 'unknown', difficulty ?? 'unknown', taskNumber ?? 'unknown'].join(':');
       } else if (rawData.type === 'attention_feedback' && rawData.server_time_ms) {
         messageId += '_' + rawData.server_time_ms;
       }
@@ -571,6 +575,8 @@ const useRadarData = (
     isPractice: boolean;
     useJoystick: boolean;
     taskNumber?: number;
+    autonomyLevel?: string;
+    requestId: string;
   } | null>(null);
 
   // gazerelation: 统一构造 Tobii 回合消息体（与 Tobii main.py 的 hand 协议一致）
@@ -1103,6 +1109,16 @@ const useRadarData = (
         const taskNumber = Number.isFinite(parsedTaskNumber) && parsedTaskNumber > 0
           ? Math.max(1, Math.floor(parsedTaskNumber))
           : undefined;
+        const autonomyLevel = String(
+          message.normalized.current_level ?? message.normalized.ai_autonomy_level ?? ''
+        ) || undefined;
+        const requestId = `platform:${[
+          message.normalized.platform_task_id ?? message.raw.ID ?? userId,
+          message.normalized.web_task_kind ?? message.normalized.task_type ?? taskType,
+          autonomyLevel ?? 'unknown',
+          message.normalized.difficulty_key ?? message.raw.Difficulty ?? 'unknown',
+          taskNumber ?? 'unknown',
+        ].join(':')}`;
         setPlatformAutoStart({
           userId,
           taskType,
@@ -1110,6 +1126,8 @@ const useRadarData = (
           isPractice: Boolean(message.normalized.is_practice),
           useJoystick: message.useJoystick !== false,
           taskNumber,
+          autonomyLevel,
+          requestId,
         });
       }
       return;

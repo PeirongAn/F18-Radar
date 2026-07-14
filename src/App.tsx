@@ -491,6 +491,7 @@ const MainApp: React.FC = observer(() => {
   const shownQuestionnairesRef = useRef<Set<string>>(new Set());
   const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
   const activeQuestionnaireRunRef = useRef<Partial<Record<TaskType, string>>>({});
+  const lastHandledTaskGroupCompletionRef = useRef<any>(null);
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
   const [isQuestionnaireVisible, setIsQuestionnaireVisible] = useState(false);
 
@@ -599,6 +600,11 @@ const MainApp: React.FC = observer(() => {
     if (!canShowQuestionnaire(taskType, source)) return;
     const key = getCompletionKey(taskType, source);
     if (shownQuestionnairesRef.current.has(key)) return;
+    const modal = questionnaireRef.current;
+    if (!modal) {
+      console.warn('[App] Questionnaire modal is not mounted for completed group:', key);
+      return;
+    }
     shownQuestionnairesRef.current.add(key);
     const completionInfo = source?.repetition_info
       ? {
@@ -607,7 +613,7 @@ const MainApp: React.FC = observer(() => {
           task_group_id: source.task_group_id ?? source.repetition_info.task_group_id,
         }
       : undefined;
-    questionnaireRef.current?.show(taskType, completionInfo);
+    modal.show(taskType, completionInfo);
   }, [canShowQuestionnaire, getCompletionKey]);
 
   const showCompletionNoticeForTask = useCallback((taskType: TaskType, source?: any) => {
@@ -633,7 +639,6 @@ const MainApp: React.FC = observer(() => {
     for (const key of shownCompletionNoticeRef.current) {
       if (key.startsWith(keyPrefix)) shownCompletionNoticeRef.current.delete(key);
     }
-
     setCompletionNoticeTask(current => current === taskType ? null : current);
   }, [initSettings]);
 
@@ -716,6 +721,10 @@ const MainApp: React.FC = observer(() => {
 
   useEffect(() => {
     if (!lastTaskGroupCompletion) return;
+    // Callback dependencies change when the next level starts. Do not replay
+    // the previous group's durable completion object during that render.
+    if (lastHandledTaskGroupCompletionRef.current === lastTaskGroupCompletion) return;
+    lastHandledTaskGroupCompletionRef.current = lastTaskGroupCompletion;
     const taskType = lastTaskGroupCompletion.task_type as TaskType | undefined;
     if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
     showQuestionnaireForTask(taskType, lastTaskGroupCompletion);
@@ -791,8 +800,18 @@ const MainApp: React.FC = observer(() => {
     practice: boolean,
     _useJoystick: boolean,
     taskNumber?: number,
+    autonomyLevel?: string,
+    groupStartRequestId?: string,
   ) => {
-    const startKey = `${id}::${taskType}::${withAI ? 'ai' : 'manual'}::${practice ? 'practice' : 'formal'}::${taskNumber ?? 'default'}`;
+    const startKey = [
+      id,
+      taskType,
+      withAI ? 'ai' : 'manual',
+      practice ? 'practice' : 'formal',
+      taskNumber ?? 'default',
+      autonomyLevel ?? 'default-level',
+      groupStartRequestId ?? 'manual-start',
+    ].join('::');
     const now = Date.now();
     const lastStart = lastStartRequestRef.current;
     if (lastStart?.key === startKey && now - lastStart.timestamp < 1000) {
@@ -866,6 +885,8 @@ const MainApp: React.FC = observer(() => {
       platformAutoStart.isPractice,
       platformAutoStart.useJoystick,
       platformAutoStart.taskNumber,
+      platformAutoStart.autonomyLevel,
+      platformAutoStart.requestId,
     );
   }, [platformAutoStart, handleStartApp]);
 
