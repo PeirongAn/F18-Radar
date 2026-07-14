@@ -40,7 +40,16 @@ def _valid_levels(config: Dict[str, Any]) -> List[str]:
     return [lv.get("level") for lv in config.get("levels", []) if lv.get("level")]
 
 
-def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
+def _uses_inverse_numeric_protocol(task_category: Optional[str]) -> bool:
+    """Platform-control/weapon-launch numeric enums run opposite to Radar/SA."""
+    return task_category in ("platform_control", "weapon_launch")
+
+
+def _normalize_current_level(
+    raw: Any,
+    config: Dict[str, Any],
+    task_category: Optional[str] = None,
+) -> str:
     valid = _valid_levels(config)
     default = config.get("current_level") or (valid[0] if valid else "L1")
     if raw is None or str(raw).strip() == "":
@@ -57,12 +66,12 @@ def _normalize_current_level(raw: Any, config: Dict[str, Any]) -> str:
             return cand
     try:
         n = int(float(s))
-        # External platform protocol: 1=L1, 2=L2, 3=L3.
-        protocol_map = {
-            1: "L1",
-            2: "L2",
-            3: "L3",
-        }
+        if _uses_inverse_numeric_protocol(task_category):
+            # Platform-control/weapon-launch: 1=high, 2=medium, 3=low.
+            protocol_map = {1: "L3", 2: "L2", 3: "L1"}
+        else:
+            # Radar/SA: numeric level maps directly to the internal L level.
+            protocol_map = {1: "L1", 2: "L2", 3: "L3"}
         cand = protocol_map.get(n)
         if cand:
             return cand
@@ -87,13 +96,22 @@ def _normalize_difficulty_key(raw: Any, config: Dict[str, Any], task_category: O
         return s
     try:
         n = int(float(s))
-        # All external task categories use the same protocol: 1=high, 2=medium, 3=low.
-        if n <= 1:
-            pick = "high"
-        elif n == 2:
-            pick = "medium"
-        else:  # n >= 3
-            pick = "low"
+        if _uses_inverse_numeric_protocol(task_category):
+            # Platform-control/weapon-launch: 1=low, 2=medium, 3=high.
+            if n <= 1:
+                pick = "low"
+            elif n == 2:
+                pick = "medium"
+            else:  # n >= 3
+                pick = "high"
+        else:
+            # Radar/SA: 1=high, 2=medium, 3=low.
+            if n <= 1:
+                pick = "high"
+            elif n == 2:
+                pick = "medium"
+            else:  # n >= 3
+                pick = "low"
         return pick
     except ValueError:
         pass
@@ -219,13 +237,19 @@ def _normalize_platform_task_fields(
     ai_raw = message.get("AIAutonomyLevel")
     if ai_raw is None:
         ai_raw = message.get("AIAutonomyLeve")
-    current_level = _normalize_current_level(ai_raw, cfg)
     web_task_kind = _infer_web_task_kind(message)
-    difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg, task_category)
+    category_for_protocol = task_category or _classify_task_category(message)
+    if category_for_protocol == "unknown":
+        if web_task_kind == "sa":
+            category_for_protocol = "sa"
+        elif web_task_kind == "radar":
+            category_for_protocol = "radar"
+    current_level = _normalize_current_level(ai_raw, cfg, category_for_protocol)
+    difficulty_key = _normalize_difficulty_key(message.get("Difficulty"), cfg, category_for_protocol)
     difficulty_display = _normalize_difficulty_display_key(
         message.get("Difficulty"),
         difficulty_key,
-        task_category,
+        category_for_protocol,
     )
     # DefaultControlMode: "0"=人工(manual), "1"=AI
     include_ai = _task_mode_to_include_ai(message.get("DefaultControlMode"))

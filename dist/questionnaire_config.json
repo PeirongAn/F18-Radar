@@ -23,6 +23,14 @@
     "L2": "L2",
     "L3": "L3"
   },
+  "difficultyLabelsByTaskType": {
+    "PLATFORM_CONTROL": { "1": "低", "2": "中", "3": "高" },
+    "WEAPON_FIRING": { "1": "低", "2": "中", "3": "高" }
+  },
+  "autonomyLabelsByTaskType": {
+    "PLATFORM_CONTROL": { "1": "L3", "2": "L2", "3": "L1" },
+    "WEAPON_FIRING": { "1": "L3", "2": "L2", "3": "L1" }
+  },
   "taskTypeLabels": {
     "RADAR_TARGETING": "传感器任务",
     "SA_THREAT_RESPONSE": "威胁排序任务",

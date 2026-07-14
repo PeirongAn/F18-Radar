@@ -200,29 +200,33 @@ def setup_bridge(monkeypatch):
     return fake_db
 
 
-def test_web_task_numeric_difficulty_uses_shared_protocol(monkeypatch):
+def test_radar_and_sa_use_web_task_numeric_protocol(monkeypatch):
     setup_bridge(monkeypatch)
 
     _, radar = bridge._normalize_platform_task_fields({
         "TaskName": "\u4f20\u611f\u5668\u4efb\u52a1",
         "ID": "RadarUser",
+        "AIAutonomyLeve": "1",
         "Difficulty": "1",
         "Action": "task_start",
     })
     _, sa = bridge._normalize_platform_task_fields({
         "TaskName": "\u5a01\u80c1\u6392\u5e8f\u4efb\u52a1",
         "ID": "SaUser",
+        "AIAutonomyLeve": "3",
         "Difficulty": "3",
         "Action": "task_start",
     })
 
+    assert radar["current_level"] == "L1"
     assert radar["difficulty_key"] == "high"
     assert radar["difficulty_display"] == "high"
+    assert sa["current_level"] == "L3"
     assert sa["difficulty_key"] == "low"
     assert sa["difficulty_display"] == "low"
 
 
-def test_external_lifecycle_numeric_difficulty_uses_shared_protocol(monkeypatch):
+def test_platform_and_weapon_use_inverse_numeric_protocol(monkeypatch):
     setup_bridge(monkeypatch)
     _, normalized = bridge._normalize_platform_task_fields({
         "TaskName": "\u6b66\u5668\u53d1\u5c04\u4efb\u52a1",
@@ -237,20 +241,40 @@ def test_external_lifecycle_numeric_difficulty_uses_shared_protocol(monkeypatch)
         "Action": "task_start",
     })
 
-    assert normalized["ai_autonomy_level"] == "L3"
-    assert normalized["current_level"] == "L3"
-    assert normalized["difficulty_key"] == "high"
-    assert normalized["difficulty_display"] == "high"
+    assert normalized["ai_autonomy_level"] == "L1"
+    assert normalized["current_level"] == "L1"
+    assert normalized["difficulty_key"] == "low"
+    assert normalized["difficulty_display"] == "low"
     assert normalized["difficulty_raw"] == "1"
 
     _, platform = bridge._normalize_platform_task_fields({
         "TaskName": "\u5e73\u53f0\u4efb\u52a1",
         "ID": "DefaultID",
+        "AIAutonomyLeve": "1",
         "Difficulty": "3",
         "Action": "task_start",
     })
-    assert platform["difficulty_key"] == "low"
-    assert platform["difficulty_display"] == "low"
+    assert platform["current_level"] == "L3"
+    assert platform["difficulty_key"] == "high"
+    assert platform["difficulty_display"] == "high"
+
+
+def test_platform_numeric_autonomy_uses_inverse_internal_levels():
+    config = make_config()
+
+    assert bridge._normalize_current_level("1", config, "platform_control") == "L3"
+    assert bridge._normalize_current_level("2", config, "platform_control") == "L2"
+    assert bridge._normalize_current_level("3", config, "platform_control") == "L1"
+    assert bridge._normalize_current_level("1", config, "weapon_launch") == "L3"
+    assert bridge._normalize_current_level("3", config, "weapon_launch") == "L1"
+
+
+def test_web_task_numeric_autonomy_maps_directly_to_internal_levels():
+    config = make_config()
+
+    assert bridge._normalize_current_level("1", config, "radar") == "L1"
+    assert bridge._normalize_current_level("2", config, "radar") == "L2"
+    assert bridge._normalize_current_level("3", config, "sa") == "L3"
 
 
 def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):
@@ -359,6 +383,8 @@ def test_overall_task_start_creates_task_run_and_event(monkeypatch):
     assert replies[0]["task_type"] == "PLATFORM_CONTROL"
     assert fake_db.groups[42]["expected_task_count"] == 3
     assert fake_db.groups[42]["task_type"] == "PLATFORM_CONTROL"
+    assert fake_db.groups[42]["autonomy_level"] == "L1"
+    assert fake_db.groups[42]["difficulty"] == "low"
     assert fake_db.runs[42]["expected_subtasks"] == 3
     assert fake_db.runs[42]["completed_subtasks"] == 0
     assert fake_db.events[0]["event_type"] == "overall_start"

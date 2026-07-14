@@ -25,16 +25,19 @@ const TaskInfoDisplay: React.FC<TaskInfoDisplayProps> = ({ current, total, scena
     : null;
 
   function translateDifficulty(difficulty: string): React.ReactNode {
+      const inverseProtocol = task_type === 'PLATFORM_CONTROL' || task_type === 'WEAPON_FIRING';
       switch (difficulty) {
         case 'low':
-        case '3':
           return '低';
         case 'medium':
         case '2':
           return '中';
         case 'high':
-        case '1':
           return '高';
+        case '1':
+          return inverseProtocol ? '低' : '高';
+        case '3':
+          return inverseProtocol ? '高' : '低';
         default:
           return difficulty;
       }
