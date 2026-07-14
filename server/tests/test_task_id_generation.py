@@ -193,3 +193,30 @@ def test_questionnaire_context_falls_back_from_stale_id_to_latest_completed_run(
     assert blank_context["task_id"] == 11
     assert blank_context["difficulty"] == "low"
     assert blank_context["autonomy_level"] == "L1"
+
+
+def test_questionnaire_context_prefers_active_task_group(tmp_path):
+    db_path = tmp_path / "questionnaire-active-group.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                difficulty, autonomy_level, is_ai_active, is_practice, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (21, "PLATFORM_CONTROL", "u1", "active", 3, 1, 2, 100,
+             "low", "L1", 1, 0, "{}"),
+        )
+        conn.commit()
+
+    context = manager.resolve_questionnaire_task_context("u1", "PLATFORM_CONTROL")
+
+    assert context["task_group_id"] == 21
+    assert context["difficulty"] == "low"
+    assert context["autonomy_level"] == "L1"
+    assert context["repetition_current"] == 2
+    assert context["repetition_total"] == 3

@@ -424,13 +424,12 @@ function getParams() {
   return {
     userId:       p.get('userId')       || '',
     taskType:     p.get('taskType')     || '',
-    taskId:       p.get('taskId')       || p.get('task_id') || '',
-    difficulty:   p.get('difficulty')   || '',
-    autonomyLevel: p.get('autonomyLevel') || p.get('autonomy_level') ||
-      p.get('AIAutonomyLevel') || p.get('AIAutonomyLeve') || '',
-    isPractice:   p.get('isPractice')   === 'true',
-    experimentNo: p.get('experimentNo') || p.get('current') || '-',
-    total:        p.get('total')        || '-',
+    taskId:       '',
+    difficulty:   '',
+    autonomyLevel: '',
+    isPractice:   false,
+    experimentNo: '-',
+    total:        '-',
   };
 }
 
@@ -536,11 +535,10 @@ function setSelectValue(id, value) {
 // taskId is preferred when available; the API falls back to the user's most
 // recent completed task of the requested type when it is absent or stale.
 async function loadAuthoritativeContext() {
-  const { userId, taskType, taskId } = contextData;
+  const { userId, taskType } = contextData;
   const query = new URLSearchParams();
   if (userId) query.set('userId', userId);
   if (taskType) query.set('taskType', taskType);
-  if (taskId) query.set('taskId', taskId);
   try {
     const response = await fetch(`/api/questionnaire/context?${query.toString()}`, {
       cache: 'no-store',

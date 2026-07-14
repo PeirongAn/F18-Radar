@@ -645,13 +645,12 @@ class HTTPServer:
     async def questionnaire_context_handler(self, request: web.Request) -> web.Response:
         """Return the authoritative completed task context for questionnaire display.
 
-        A supplied taskId is preferred. If it is unavailable or stale, the
-        resolver falls back through user/task type and then the latest run.
+        URL query parameters other than userId and taskType are ignored.
+        The resolver first uses the current active task group.
         """
         user_id = str(request.query.get('userId') or request.query.get('user_id') or '').strip()
         task_type = str(request.query.get('taskType') or request.query.get('task_type') or '').strip()
-        task_id = request.query.get('taskId') or request.query.get('task_id')
-        context = db_manager.resolve_questionnaire_task_context(user_id, task_type, task_id)
+        context = db_manager.resolve_questionnaire_task_context(user_id, task_type)
         if context.get('task_id') is None:
             return web.json_response({"ok": False, "msg": "no completed task context found"}, status=404)
 

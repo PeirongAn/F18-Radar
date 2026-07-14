@@ -1221,6 +1221,26 @@ class DatabaseManager:
             "repetition_total": run.get("expected_subtasks") or normalized.get("repetition_total_override"),
         }
 
+    def _questionnaire_context_from_task_group(self, group: Dict[str, Any]) -> Dict[str, Any]:
+        config = self._parse_json_object(group.get("config_json"))
+        normalized = config.get("normalized") if isinstance(config, dict) else {}
+        if not isinstance(normalized, dict):
+            normalized = {}
+        return {
+            "task_id": group.get("group_id"),
+            "task_group_id": group.get("group_id"),
+            "user_id": group.get("user_id"),
+            "task_type": self._normalize_runtime_task_type(group.get("task_type")),
+            "difficulty": self.normalize_difficulty_value(
+                group.get("difficulty") or normalized.get("difficulty_key")
+            ),
+            "autonomy_level": group.get("autonomy_level") or normalized.get("current_level"),
+            "is_ai_active": self._safe_bool(group.get("is_ai_active")),
+            "is_practice": self._safe_bool(group.get("is_practice")),
+            "repetition_current": group.get("current_task_seq") or group.get("completed_task_count"),
+            "repetition_total": group.get("expected_task_count") or normalized.get("repetition_total_override"),
+        }
+
     def resolve_questionnaire_task_context(
         self,
         user_id: str,
@@ -1233,6 +1253,40 @@ class DatabaseManager:
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                # A currently active task group is the authority for the
+                # questionnaire display. It retains the configuration even
+                # when the browser did not receive taskId or other URL fields.
+                if user_id and normalized_task_type:
+                    cursor.execute(
+                        """
+                        SELECT * FROM task_groups
+                        WHERE user_id = ? AND task_type = ? AND status != 'completed'
+                        ORDER BY started_at_ms DESC, group_id DESC
+                        LIMIT 1
+                        """,
+                        (user_id, normalized_task_type),
+                    )
+                    group_row = cursor.fetchone()
+                    if group_row:
+                        columns = [description[0] for description in cursor.description]
+                        return self._questionnaire_context_from_task_group(dict(zip(columns, group_row)))
+
+                # A bare questionnaire URL has no external identity context.
+                # In that case use the most recently created task group, not
+                # URL display fields or a task-run heuristic.
+                if not user_id and not normalized_task_type:
+                    cursor.execute(
+                        """
+                        SELECT * FROM task_groups
+                        ORDER BY started_at_ms DESC, group_id DESC
+                        LIMIT 1
+                        """
+                    )
+                    group_row = cursor.fetchone()
+                    if group_row:
+                        columns = [description[0] for description in cursor.description]
+                        return self._questionnaire_context_from_task_group(dict(zip(columns, group_row)))
+
                 if submitted_id is not None:
                     run = self._load_task_run_by_id(cursor, submitted_id)
                     if run:
