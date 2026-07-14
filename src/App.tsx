@@ -490,7 +490,7 @@ const MainApp: React.FC = observer(() => {
   });
   const shownQuestionnairesRef = useRef<Set<string>>(new Set());
   const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
-  const activeQuestionnaireRunRef = useRef<Partial<Record<TaskType, string>>>({});
+  const activeTaskGroupIdRef = useRef<Partial<Record<TaskType, string>>>({});
   const lastHandledTaskGroupCompletionRef = useRef<any>(null);
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
   const [isQuestionnaireVisible, setIsQuestionnaireVisible] = useState(false);
@@ -543,20 +543,9 @@ const MainApp: React.FC = observer(() => {
     (['RADAR_TARGETING', 'SA_THREAT_RESPONSE', 'PLATFORM_CONTROL', 'WEAPON_FIRING'] as TaskType[]).forEach(taskType => {
       const info = repetitionInfos[taskType];
       if (!info || typeof info === 'string') return;
-      const runIdentity = String(
-        (info as any).task_group_id ??
-        (info as any).task_id ??
-        `${(info as any).difficulty ?? ''}:${(info as any).autonomy_level ?? ''}:${(info as any).scenario_index ?? ''}`
-      );
-      if (activeQuestionnaireRunRef.current[taskType] !== runIdentity) {
-        const keyPrefix = `${taskType}::`;
-        for (const key of shownQuestionnairesRef.current) {
-          if (key.startsWith(keyPrefix)) shownQuestionnairesRef.current.delete(key);
-        }
-        for (const key of shownCompletionNoticeRef.current) {
-          if (key.startsWith(keyPrefix)) shownCompletionNoticeRef.current.delete(key);
-        }
-        activeQuestionnaireRunRef.current[taskType] = runIdentity;
+      const taskGroupId = (info as any).task_group_id;
+      if (taskGroupId !== undefined && taskGroupId !== null) {
+        activeTaskGroupIdRef.current[taskType] = String(taskGroupId);
       }
       lastConcreteRepetitionInfosRef.current[taskType] = info;
       questionnaireEligibilityRef.current[taskType] = {
@@ -598,6 +587,21 @@ const MainApp: React.FC = observer(() => {
 
   const showQuestionnaireForTask = useCallback((taskType: TaskType, source?: any) => {
     if (!canShowQuestionnaire(taskType, source)) return;
+    const completedTaskGroupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
+    const activeTaskGroupId = activeTaskGroupIdRef.current[taskType];
+    if (
+      completedTaskGroupId !== undefined &&
+      completedTaskGroupId !== null &&
+      activeTaskGroupId !== undefined &&
+      String(completedTaskGroupId) !== activeTaskGroupId
+    ) {
+      console.warn('[App] Ignored stale task-group completion:', {
+        taskType,
+        completedTaskGroupId,
+        activeTaskGroupId,
+      });
+      return;
+    }
     const key = getCompletionKey(taskType, source);
     if (shownQuestionnairesRef.current.has(key)) return;
     const modal = questionnaireRef.current;
@@ -617,6 +621,14 @@ const MainApp: React.FC = observer(() => {
   }, [canShowQuestionnaire, getCompletionKey]);
 
   const showCompletionNoticeForTask = useCallback((taskType: TaskType, source?: any) => {
+    const completedTaskGroupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
+    const activeTaskGroupId = activeTaskGroupIdRef.current[taskType];
+    if (
+      completedTaskGroupId !== undefined &&
+      completedTaskGroupId !== null &&
+      activeTaskGroupId !== undefined &&
+      String(completedTaskGroupId) !== activeTaskGroupId
+    ) return;
     if (canShowQuestionnaire(taskType, source)) return;
     const key = getCompletionKey(taskType, source);
     if (shownCompletionNoticeRef.current.has(key)) return;
@@ -625,20 +637,13 @@ const MainApp: React.FC = observer(() => {
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire, getCompletionKey]);
 
-  // A reset/retry can deliberately reuse server identifiers. Clear the task
-  // type's prior completion markers whenever a durable initSettings arrives.
+  // Starting the next task group must not erase completed group IDs. A delayed
+  // duplicate completion from the previous group would otherwise reopen its
+  // questionnaire before the new group has been performed.
   useEffect(() => {
     if (!initSettings) return;
     const taskType = initSettings.__task_type as TaskType | undefined;
     if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
-
-    const keyPrefix = `${taskType}::`;
-    for (const key of shownQuestionnairesRef.current) {
-      if (key.startsWith(keyPrefix)) shownQuestionnairesRef.current.delete(key);
-    }
-    for (const key of shownCompletionNoticeRef.current) {
-      if (key.startsWith(keyPrefix)) shownCompletionNoticeRef.current.delete(key);
-    }
     setCompletionNoticeTask(current => current === taskType ? null : current);
   }, [initSettings]);
 
@@ -837,6 +842,7 @@ const MainApp: React.FC = observer(() => {
         PLATFORM_CONTROL: null,
         WEAPON_FIRING: null,
       };
+      activeTaskGroupIdRef.current = {};
       aiSelectedTargetRef.current = undefined;
       completionExitSentRef.current = false;
       setCompletionNoticeTask(null);
