@@ -575,6 +575,26 @@ class TaskScenarioManager:
             self.current_scenario.get('is_ai_active'),
         )
 
+    def reset_for_external_task_group(self) -> None:
+        """Start a fresh scenario queue for a newly consumed external group.
+
+        The persistent progress key deliberately survives application restarts,
+        but a new external task_start (for example after switching AI level or
+        difficulty) is a distinct task group.  Reusing an exhausted queue here
+        would return ALL_COMPLETED before its first task is started.
+        """
+        self._initialize_new_progress()
+        if self.is_practice:
+            self._save_to_memory()
+        else:
+            self._save_to_db()
+        self.logger.info(
+            "Reset progress for external task group: user=%s task_type=%s progress=%s",
+            self.user_id,
+            self.task_type,
+            self.progress_task_type,
+        )
+
     def _refresh_scenario_config(self, scenario: Dict[str, Any]) -> None:
         """用最新配置刷新场景中所有可配置字段"""
         if not scenario:

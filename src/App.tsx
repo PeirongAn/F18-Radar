@@ -649,8 +649,25 @@ const MainApp: React.FC = observer(() => {
 
   const handleTaskGroupCompletion = useCallback((taskType: TaskType, source?: any) => {
     if (taskType === 'SA_THREAT_RESPONSE') {
-      const completedGroupId = getTaskGroupId(taskType, source);
-      if (!completedGroupId || completedGroupId !== confirmedSAResultGroupRef.current) {
+      // Only an explicit group completion emitted after task_result_confirmed
+      // may complete SA.  Do not fall back to the active group here: a stale
+      // all_tasks_completed sent while switching level/difficulty has no
+      // group id and must be ignored rather than attributed to the new group.
+      const sourceGroupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
+      if (sourceGroupId === undefined || sourceGroupId === null) {
+        console.warn('[App] Ignored SA completion without task_group_id:', source);
+        return;
+      }
+      const completedGroupId = String(sourceGroupId);
+      const activeGroupId = getTaskGroupId(taskType);
+      if (activeGroupId && completedGroupId !== activeGroupId) {
+        console.warn('[App] Ignored stale SA task-group completion:', {
+          completedGroupId,
+          activeGroupId,
+        });
+        return;
+      }
+      if (completedGroupId !== confirmedSAResultGroupRef.current) {
         pendingSACompletionRef.current = source;
         return;
       }
@@ -931,12 +948,13 @@ const MainApp: React.FC = observer(() => {
   /* ── SA 最后一项结果确认后，才允许显示已暂存的任务组问卷 ── */
   const handleSAResultConfirmed = useCallback(() => {
     const activeGroupId = getTaskGroupId('SA_THREAT_RESPONSE');
-    if (activeGroupId) confirmedSAResultGroupRef.current = activeGroupId;
+    if (!activeGroupId) return;
+    confirmedSAResultGroupRef.current = activeGroupId;
     const pendingCompletion = pendingSACompletionRef.current;
     if (!pendingCompletion) return;
 
-    const pendingGroupId = getTaskGroupId('SA_THREAT_RESPONSE', pendingCompletion);
-    if (activeGroupId && pendingGroupId && activeGroupId !== pendingGroupId) return;
+    const pendingGroupId = pendingCompletion?.task_group_id ?? pendingCompletion?.repetition_info?.task_group_id;
+    if (pendingGroupId === undefined || pendingGroupId === null || String(pendingGroupId) !== activeGroupId) return;
     pendingSACompletionRef.current = null;
     showQuestionnaireForTask('SA_THREAT_RESPONSE', pendingCompletion);
     showCompletionNoticeForTask('SA_THREAT_RESPONSE', pendingCompletion);
@@ -984,6 +1002,10 @@ const MainApp: React.FC = observer(() => {
   const rulesHref = activeDisplay === 'sa'
     ? '/threat_calculation_rules.html'
     : '/radar_target_identification.html';
+
+  const handleCloseCurrentWindow = useCallback(() => {
+    window.close();
+  }, []);
 
   /* ════════════════════════════════════════════════════
      Render
@@ -1178,6 +1200,26 @@ const MainApp: React.FC = observer(() => {
         <div style={{ marginLeft: 'auto', padding: '0 20px', fontSize: '13px', letterSpacing: '0.1em', color: '#3a7a48' }}>
           {displayLabel}
         </div>
+        <button
+          type="button"
+          onClick={handleCloseCurrentWindow}
+          title="关闭当前窗口"
+          style={{
+            marginRight: '16px',
+            minWidth: '64px',
+            padding: '5px 12px',
+            border: '1px solid #8f2c2c',
+            borderRadius: '3px',
+            background: 'rgba(90, 12, 12, 0.30)',
+            color: '#ff8585',
+            fontFamily: "'SimHei', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+            fontSize: '13px',
+            letterSpacing: '0.12em',
+            cursor: 'pointer',
+          }}
+        >
+          退出
+        </button>
       </header>
 
       {/* ── Main Layout ────────────────────────────────── */}

@@ -679,8 +679,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         return;
       }
       if (isSAAllCompleted) {
-        console.log('[SAPage] SA result ignored because task is already ALL_COMPLETED.');
-        onResultConfirmed?.();
+        console.log('[SAPage] SA result ignored because task is already ALL_COMPLETED; result confirmation is required.');
         return;
       }
 
@@ -688,9 +687,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const hasAnswer = !!userSelection;
       if (hasAnswer && taskKey && completedSATaskKeysRef.current.has(taskKey)) {
         console.log('[SAPage] SA result ignored because current task was already confirmed:', taskKey);
-        if (hasReachedSAOverallTotal || isSAAllCompleted) {
-          onResultConfirmed?.();
-        }
         return;
       }
 
