@@ -1079,11 +1079,6 @@ class MessageHandler:
             overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
         normalized_meta = (platform_meta or {}).get("normalized") or {}
-        # A pending platform task_start denotes a new external task group.
-        # Reset its persisted queue before resolving the next scenario so a
-        # completed previous level cannot produce all_tasks_completed here.
-        if overlay_source == "pending" and platform_meta:
-            task_manager.reset_for_external_task_group()
         if overlay and task_manager.current_scenario:
             task_manager.apply_platform_overlay(overlay)
         

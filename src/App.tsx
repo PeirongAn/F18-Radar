@@ -521,6 +521,7 @@ const MainApp: React.FC = observer(() => {
 
   const [messages, setMessages] = useState<LogMessage[]>([]);
   const [completionNoticeTask, setCompletionNoticeTask] = useState<TaskType | null>(null);
+  const [isEntryCompletionNotice, setIsEntryCompletionNotice] = useState(false);
   const previousCompletionNoticeButton2Ref = useRef(false);
   const completionExitSentRef = useRef(false);
   const messageIdRef = useRef(0);
@@ -638,6 +639,7 @@ const MainApp: React.FC = observer(() => {
     if (shownCompletionNoticeRef.current.has(key)) return;
     shownCompletionNoticeRef.current.add(key);
     completionExitSentRef.current = false;
+    setIsEntryCompletionNotice(false);
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire, getCompletionKey]);
 
@@ -646,6 +648,7 @@ const MainApp: React.FC = observer(() => {
     if (shownCompletionNoticeRef.current.has(key)) return;
     shownCompletionNoticeRef.current.add(key);
     completionExitSentRef.current = false;
+    setIsEntryCompletionNotice(true);
     setCompletionNoticeTask(taskType);
   }, []);
 
@@ -720,6 +723,7 @@ const MainApp: React.FC = observer(() => {
         timestamp: Date.now(),
       });
     }
+    setIsEntryCompletionNotice(false);
     setCompletionNoticeTask(null);
   }, [completionNoticeTask, sendMessage, getTaskIdForType, userId]);
 
@@ -782,11 +786,11 @@ const MainApp: React.FC = observer(() => {
   }, [lastTaskGroupCompletion, handleTaskGroupCompletion, showEntryCompletedNotice]);
 
   useEffect(() => {
-    if (completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {
+    if (!isEntryCompletionNotice && completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {
       handleCompletionNoticeConfirm();
     }
     previousCompletionNoticeButton2Ref.current = button2;
-  }, [completionNoticeTask, joystickEnabled, button2, handleCompletionNoticeConfirm]);
+  }, [completionNoticeTask, isEntryCompletionNotice, joystickEnabled, button2, handleCompletionNoticeConfirm]);
 
   /* ── 监听 SA 临机事件 ─────────────────────────── */
   useEffect(() => {
