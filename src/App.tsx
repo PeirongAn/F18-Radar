@@ -492,6 +492,10 @@ const MainApp: React.FC = observer(() => {
   const shownCompletionNoticeRef = useRef<Set<string>>(new Set());
   const activeTaskGroupIdRef = useRef<Partial<Record<TaskType, string>>>({});
   const lastHandledTaskGroupCompletionRef = useRef<any>(null);
+  // SA marks the task complete when the user opens the result, but the
+  // questionnaire must wait until the result dialog itself is confirmed.
+  const pendingSACompletionRef = useRef<any>(null);
+  const confirmedSAResultGroupRef = useRef<string | null>(null);
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
   const [isQuestionnaireVisible, setIsQuestionnaireVisible] = useState(false);
 
@@ -637,6 +641,24 @@ const MainApp: React.FC = observer(() => {
     setCompletionNoticeTask(taskType);
   }, [canShowQuestionnaire, getCompletionKey]);
 
+  const getTaskGroupId = useCallback((taskType: TaskType, source?: any): string | null => {
+    const groupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
+    if (groupId !== undefined && groupId !== null) return String(groupId);
+    return activeTaskGroupIdRef.current[taskType] ?? null;
+  }, []);
+
+  const handleTaskGroupCompletion = useCallback((taskType: TaskType, source?: any) => {
+    if (taskType === 'SA_THREAT_RESPONSE') {
+      const completedGroupId = getTaskGroupId(taskType, source);
+      if (!completedGroupId || completedGroupId !== confirmedSAResultGroupRef.current) {
+        pendingSACompletionRef.current = source;
+        return;
+      }
+    }
+    showQuestionnaireForTask(taskType, source);
+    showCompletionNoticeForTask(taskType, source);
+  }, [getTaskGroupId, showQuestionnaireForTask, showCompletionNoticeForTask]);
+
   // Starting the next task group must not erase completed group IDs. A delayed
   // duplicate completion from the previous group would otherwise reopen its
   // questionnaire before the new group has been performed.
@@ -705,10 +727,10 @@ const MainApp: React.FC = observer(() => {
     } else if (lastMessage.type === 'show_questionnaire') {
       const taskType = lastMessage.task_type as TaskType | undefined;
       if (taskType && repetitionInfos[taskType] === 'ALL_COMPLETED') {
-        showQuestionnaireForTask(taskType, lastMessage);
+        handleTaskGroupCompletion(taskType, lastMessage);
       }
     }
-  }, [lastMessage, repetitionInfos, showQuestionnaireForTask]);
+  }, [lastMessage, repetitionInfos, handleTaskGroupCompletion]);
 
   /* ── 每个任务类型完成后：AI正式模式弹问卷；其它模式显示结束提示 ── */
   useEffect(() => {
@@ -717,12 +739,7 @@ const MainApp: React.FC = observer(() => {
       showQuestionnaireForTask('RADAR_TARGETING', source);
       showCompletionNoticeForTask('RADAR_TARGETING', source);
     }
-    if (repetitionInfos.SA_THREAT_RESPONSE === 'ALL_COMPLETED') {
-      const source = lastMessage?.task_type === 'SA_THREAT_RESPONSE' ? lastMessage : undefined;
-      showQuestionnaireForTask('SA_THREAT_RESPONSE', source);
-      showCompletionNoticeForTask('SA_THREAT_RESPONSE', source);
-    }
-  }, [repetitionInfos.RADAR_TARGETING, repetitionInfos.SA_THREAT_RESPONSE, lastMessage, showQuestionnaireForTask, showCompletionNoticeForTask]);
+  }, [repetitionInfos.RADAR_TARGETING, lastMessage, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   useEffect(() => {
     if (!lastTaskGroupCompletion) return;
@@ -732,9 +749,8 @@ const MainApp: React.FC = observer(() => {
     lastHandledTaskGroupCompletionRef.current = lastTaskGroupCompletion;
     const taskType = lastTaskGroupCompletion.task_type as TaskType | undefined;
     if (taskType !== 'RADAR_TARGETING' && taskType !== 'SA_THREAT_RESPONSE') return;
-    showQuestionnaireForTask(taskType, lastTaskGroupCompletion);
-    showCompletionNoticeForTask(taskType, lastTaskGroupCompletion);
-  }, [lastTaskGroupCompletion, showQuestionnaireForTask, showCompletionNoticeForTask]);
+    handleTaskGroupCompletion(taskType, lastTaskGroupCompletion);
+  }, [lastTaskGroupCompletion, handleTaskGroupCompletion]);
 
   useEffect(() => {
     if (completionNoticeTask && joystickEnabled && button2 && !previousCompletionNoticeButton2Ref.current) {
@@ -912,15 +928,19 @@ const MainApp: React.FC = observer(() => {
     showCompletionNoticeForTask('RADAR_TARGETING', source);
   }, [radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
-  /* ── SA 查看结果确认回调保留给页面流程；问卷由任务类型完成状态统一控制 ── */
+  /* ── SA 最后一项结果确认后，才允许显示已暂存的任务组问卷 ── */
   const handleSAResultConfirmed = useCallback(() => {
-    const source = {
-      is_ai_active: agentStore.isAIActive,
-      is_practice: radarStore.isPractice,
-    };
-    showQuestionnaireForTask('SA_THREAT_RESPONSE', source);
-    showCompletionNoticeForTask('SA_THREAT_RESPONSE', source);
-  }, [radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
+    const activeGroupId = getTaskGroupId('SA_THREAT_RESPONSE');
+    if (activeGroupId) confirmedSAResultGroupRef.current = activeGroupId;
+    const pendingCompletion = pendingSACompletionRef.current;
+    if (!pendingCompletion) return;
+
+    const pendingGroupId = getTaskGroupId('SA_THREAT_RESPONSE', pendingCompletion);
+    if (activeGroupId && pendingGroupId && activeGroupId !== pendingGroupId) return;
+    pendingSACompletionRef.current = null;
+    showQuestionnaireForTask('SA_THREAT_RESPONSE', pendingCompletion);
+    showCompletionNoticeForTask('SA_THREAT_RESPONSE', pendingCompletion);
+  }, [getTaskGroupId, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── SA 重置 ──────────────────────────────────── */
   const handleSATaskReset = useCallback(() => {
