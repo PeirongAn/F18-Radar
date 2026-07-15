@@ -145,6 +145,10 @@ class WebSocketServer:
             try:
                 if await self.send_message(websocket, message):
                     ok_count += 1
+                else:
+                    # send_message converts transport failures to False.
+                    # Unregister that dead peer immediately (for example UE).
+                    disconnected.append(cid)
             except Exception as e:
                 self.logger.warning(f"向客户端 {cid} 广播失败: {e}")
                 disconnected.append(cid)
@@ -344,6 +348,8 @@ class WebSocketServer:
                             # 现在准备并发送主数据帧
                             data = target_manager.get_radar_data(include_targets=include_targets)
                             data["type"] = "radar_data"
+                            if settings_updated.get("task_id") is not None:
+                                data["task_id"] = settings_updated["task_id"]
                             data["_timestamp"] = time.time()
                             data_json = json.dumps(data)
 

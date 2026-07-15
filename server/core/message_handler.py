@@ -682,6 +682,25 @@ class MessageHandler:
                                     client_event_owner: str) -> List[Dict[str, Any]]:
         """处理设置更新消息"""
         print("消息类型: settings_update")
+
+        current_task_id = self._get_current_task_id('RADAR_TARGETING')
+        message_task_id = message.get('task_id')
+        if (
+            message_task_id is not None
+            and current_task_id is not None
+            and str(message_task_id) != str(current_task_id)
+        ):
+            self.logger.info(
+                "ignore stale settings_update message_task_id=%s current_task_id=%s",
+                message_task_id,
+                current_task_id,
+            )
+            return [{
+                "type": "settings_validation",
+                "status": "ignored",
+                "task_id": message_task_id,
+                "message": "Ignored stale radar settings update.",
+            }]
         
         # 验证雷达参数是否与init_settings一致
         client_range = message.get('range')
@@ -693,7 +712,7 @@ class MessageHandler:
             # 参数正确，进入天线调整阶段
             print("雷达参数验证成功，发送天线调整指令。")
             
-            task_id = self._get_current_task_id('RADAR_TARGETING')
+            task_id = current_task_id
             if not session_state.get('is_practice', False) and task_id:
                 operation = {
                     'task_id': task_id,
@@ -716,13 +735,23 @@ class MessageHandler:
                 "scanAngle": client_scan_angle,
             })
 
-            validation_response = {"type": "settings_validation", "status": "success", "message": "雷达参数设置正确，请继续进行天线高度调整"}
+            validation_response = {
+                "type": "settings_validation",
+                "status": "success",
+                "task_id": current_task_id,
+                "message": "雷达参数设置正确，请继续进行天线高度调整",
+            }
             antenna_command = self._generate_antenna_adjustment()
             return [validation_response, antenna_command]
         else:
             # 参数不正确
             print(f"雷达参数验证失败。需要: range={required_range}, scanAngle={required_scan_angle}。收到: range={client_range}, scanAngle={client_scan_angle}")
-            validation_response = {"type": "settings_validation", "status": "error", "message": "雷达参数设置不正确，请调整参数"}
+            validation_response = {
+                "type": "settings_validation",
+                "status": "error",
+                "task_id": current_task_id,
+                "message": "雷达参数设置不正确，请调整参数",
+            }
             return [validation_response]
     
     async def _handle_antenna_adjusted(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -1485,6 +1514,7 @@ class MessageHandler:
                 return {
                     "type": "settings_validation",
                     "status": "ignored",
+                    "task_id": message_task_id,
                     "message": "Ignored stale antenna adjustment confirmation.",
                 }, False
             
@@ -1508,6 +1538,7 @@ class MessageHandler:
                     return {
                         "type": "settings_validation",
                         "status": "ignored",
+                        "task_id": message_task_id or current_task_id,
                         "message": "Ignored antenna adjustment confirmation without a pending target.",
                     }, False
 
@@ -1515,6 +1546,7 @@ class MessageHandler:
                 return {
                     "type": "settings_validation",
                     "status": "error",
+                    "task_id": current_task_id,
                     "message": f"天线目标高度已更新，请按最新提示调整。当前提示目标为{client_target_elevation}°，服务端目标为{target_elevation}°"
                 }, False
             
@@ -1525,6 +1557,7 @@ class MessageHandler:
                 return {
                     "type": "settings_validation",
                     "status": "success",
+                    "task_id": current_task_id,
                     "message": "天线高度设置正确，开始发送目标数据"
                 }, True
             else:
@@ -1532,6 +1565,7 @@ class MessageHandler:
                 return {
                     "type": "settings_validation",
                     "status": "error",
+                    "task_id": current_task_id,
                     "message": f"天线高度设置不正确，目标为{target_elevation}°，当前为{client_elevation}°"
                 }, False
         except Exception as e:

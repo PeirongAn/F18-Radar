@@ -189,6 +189,20 @@ class GlobalWebSocketManager {
         });
         return;
       }
+
+      if (
+        rawData.type === 'radar_data'
+        && rawData.task_id !== undefined
+        && rawData.task_id !== null
+        && radarStore.taskId !== null
+        && String(rawData.task_id) !== String(radarStore.taskId)
+      ) {
+        console.log('[GlobalWS] Ignored radar data for another task:', {
+          messageTaskId: rawData.task_id,
+          currentTaskId: radarStore.taskId,
+        });
+        return;
+      }
       
       // 添加调试日志 - 检查消息类型
       console.log('【调试】消息类型:', rawData.type);
@@ -210,7 +224,7 @@ class GlobalWebSocketManager {
           rawData.timestamp ?? Date.now(),
         ].join(':');
       } else if (rawData.type === 'settings_validation') {
-        messageId += '_' + (rawData.timestamp ?? messageSequence);
+        messageId += '_' + [rawData.task_id ?? 'unknown', rawData.timestamp ?? messageSequence].join(':');
       } else if (rawData.type === 'all_tasks_completed') {
         messageId += '_' + [
           rawData.task_type ?? 'unknown',
@@ -290,9 +304,15 @@ class GlobalWebSocketManager {
         rawData.type === 'all_tasks_completed' ||
         rawData.type === 'reset_view';
 
+      const shouldClearTargets = shouldClearExternalTargets;
+
       const newData: RadarData = {
         // 对于列表数据，如果新消息中没有，则保留旧值
-        targets: rawData.targets !== undefined ? rawData.targets : (this.state.radarData?.targets || []),
+        targets: rawData.targets !== undefined
+          ? rawData.targets
+          : shouldClearTargets
+            ? []
+            : (this.state.radarData?.targets || []),
         
         // Preserve target returns across unrelated control/feedback messages.
         externalTargets: rawData.externalTargets !== undefined
@@ -992,6 +1012,7 @@ const useRadarData = (
     const timestamp = Date.now();
     const settingsMessage = {
       type: 'settings_update',
+      task_id: radarStore.taskId,
       timestamp: timestamp,
       receive_timestamp: initSettingsTimestamp,  // 使用之前保存的时间戳
       user_id: radarStore.userId, // 添加用户ID
@@ -1200,6 +1221,18 @@ const useRadarData = (
       if ((window as any).__settingsTimeoutRef) clearTimeout((window as any).__settingsTimeoutRef.current);
       if (message.status === 'ignored') {
         console.log('[useRadarData] Ignored stale settings validation:', message.message);
+        return;
+      }
+      if (
+        message.task_id !== undefined
+        && message.task_id !== null
+        && radarStore.taskId !== null
+        && String(message.task_id) !== String(radarStore.taskId)
+      ) {
+        console.log('[useRadarData] Ignored settings validation for another task:', {
+          messageTaskId: message.task_id,
+          currentTaskId: radarStore.taskId,
+        });
         return;
       }
       const ts = Date.now();

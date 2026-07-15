@@ -250,6 +250,7 @@ def test_stale_antenna_confirmation_is_ignored_after_task_reset():
 
     assert is_valid is False
     assert response["status"] == "ignored"
+    assert response["task_id"] == 100
     assert "stale" in response["message"]
 
 
@@ -270,6 +271,7 @@ def test_antenna_confirmation_recovers_missing_target_for_current_task():
 
     assert is_valid is True
     assert response["status"] == "success"
+    assert response["task_id"] == 101
     assert handler.current_session["target_elevation"] == 2
 
 
@@ -293,3 +295,57 @@ def test_ignored_antenna_confirmation_is_not_sent_to_client():
     ))
 
     assert result == []
+
+
+def test_stale_settings_update_is_ignored_after_task_reset():
+    handler = MessageHandler()
+    handler.current_session.update({
+        "task_id": 101,
+        "task_ids": {"RADAR_TARGETING": 101},
+        "target_elevation": None,
+        "stage": "init",
+    })
+
+    result = asyncio.run(handler._handle_settings_update(
+        {
+            "task_id": 100,
+            "range": 80,
+            "scanAngle": 30,
+        },
+        {},
+        "AI",
+    ))
+
+    assert result == [{
+        "type": "settings_validation",
+        "status": "ignored",
+        "task_id": 100,
+        "message": "Ignored stale radar settings update.",
+    }]
+    assert handler.current_session["target_elevation"] is None
+
+
+def test_current_settings_validation_is_scoped_to_current_task():
+    handler = MessageHandler()
+    handler.current_session.update({
+        "task_id": 101,
+        "task_ids": {"RADAR_TARGETING": 101},
+        "target_elevation": None,
+        "stage": "init",
+    })
+
+    result = asyncio.run(handler._handle_settings_update(
+        {
+            "task_id": 101,
+            "range": 80,
+            "scanAngle": 30,
+        },
+        {"is_practice": True},
+        "AI",
+    ))
+
+    assert result[0]["type"] == "settings_validation"
+    assert result[0]["status"] == "success"
+    assert result[0]["task_id"] == 101
+    assert result[1]["type"] == "adjust_antenna"
+    assert result[1]["task_id"] == 101

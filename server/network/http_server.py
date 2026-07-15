@@ -226,7 +226,9 @@ class HTTPServer:
     
     async def websocket_handler(self, request):
         """处理WebSocket连接"""
-        ws = WebSocketResponse(protocols=("ws",))
+        # Close WebSocket peers that stop answering control-frame heartbeats.
+        # The connection is then removed from websocket_server in finally.
+        ws = WebSocketResponse(protocols=("ws",), heartbeat=30.0)
         await ws.prepare(request)
         
         client_id = str(uuid.uuid4())
@@ -266,6 +268,7 @@ class HTTPServer:
                     message = msg.data
                     self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
                     self.logger.debug(f"接收到WebSocket消息")
+
                     
 
 
@@ -278,6 +281,17 @@ class HTTPServer:
                         message_type = ''
 
                     self._log_ws_request(client_id, message, message_data)
+
+                    # UE has an application-level heartbeat too.  Reply on
+                    # the same connection rather than via the broadcast path,
+                    # which deliberately excludes the message sender.
+                    if message_type == 'ue_ping':
+                        session_state['client_role'] = 'ue'
+                        await ws.send_str(json.dumps({
+                            'type': 'ue_pong',
+                            'timestamp': int(time.time() * 1000),
+                        }, ensure_ascii=False))
+                        continue
                     
                     # 1) 如果收到的是config_update
                     if  message_type == "config_update":
@@ -419,6 +433,8 @@ class HTTPServer:
                             # 发送主数据
                             data = target_manager.get_radar_data(include_targets=include_targets)
                             data["type"] = "radar_data"
+                            if settings_updated.get("task_id") is not None:
+                                data["task_id"] = settings_updated["task_id"]
                             data["_timestamp"] = time.time()
                             await ws.send_str(json.dumps(data))
                             
