@@ -371,7 +371,7 @@
     </div>
 
     <!-- Instruction -->
-    <div class="instruction" id="instructionText">请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。</div>
+    <div class="instruction" id="instructionText" hidden></div>
 
     <!-- Validation error -->
     <div class="error-banner" id="errorBanner">⚠ 请完成所有题目的评分后再提交。</div>
@@ -502,8 +502,10 @@ function renderContext() {
   const title = config?.taskTitles?.[taskType] ?? config?.title ?? document.title;
   document.getElementById('titleText').textContent = title;
   document.title = title;
-  document.getElementById('instructionText').textContent =
-    config?.instruction || '请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。';
+  const instruction = config?.instruction || '';
+  const instructionElement = document.getElementById('instructionText');
+  instructionElement.textContent = instruction;
+  instructionElement.hidden = !instruction;
 }
 
 function setSelectValue(id, value) {
@@ -593,7 +595,7 @@ async function loadConfig() {
 }
 
 function buildTable() {
-  const scales    = config.scales || ['1', '2', '3', '4', '5'];
+  const scales    = config.scales || ['1', '2', '3', '4', '5', '6', '7'];
   const questions = config.questions || [];
 
   // Body

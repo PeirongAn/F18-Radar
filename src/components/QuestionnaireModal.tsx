@@ -86,43 +86,37 @@ interface QuestionnaireModalProps {
 ───────────────────────────────────────────────────────────── */
 const DEFAULT_CONFIG: QuestionnaireConfig = {
   title: '座舱认知状态问卷',
-  instruction: '请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。',
-  scales: ['1', '2', '3', '4', '5'],
+  scales: ['1', '2', '3', '4', '5', '6', '7'],
   questions: [
     {
       id: 1,
       text: '我对该智能辅助系统有信心。',
-      options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
+      options: ['非常不同意', '不同意', '比较不同意', '中立', '比较同意', '同意', '非常同意'],
     },
     {
       id: 2,
       text: '我认为该智能辅助系统是可靠的。',
-      options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
+      options: ['非常不同意', '不同意', '比较不同意', '中立', '比较同意', '同意', '非常同意'],
     },
     {
       id: 3,
-      text: '我愿意信任该辅助智能系统的判断或建议。',
-      options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
+      text: '我愿意信任该辅助智能系统。',
+      options: ['非常不同意', '不同意', '比较不同意', '中立', '比较同意', '同意', '非常同意'],
     },
     {
       id: 4,
-      text: '请评估您当前的精神疲劳/困倦程度。',
-      options: ['非常清醒，状态良好', '清醒，但反应略慢', '既不清醒也不困倦', '有些困倦，精力下降', '非常困倦，难以保持清醒'],
+      text: '请根据你此刻的实际感受，评价你当前的清醒或困倦程度。',
+      options: ['非常清醒，状态良好', '清醒，状态较好', '略感困倦，但反应基本正常', '既不清醒，也不困倦', '有些困倦，精力有所下降', '比较困倦，反应明显变慢', '非常困倦，难以保持清醒'],
     },
     {
       id: 5,
-      text: '请评估你当前的身体疲劳程度。',
-      options: ['完全不疲劳', '轻微疲劳', '比较疲劳', '很疲劳', '非常疲劳'],
+      text: '请评估你完成本轮任务所投入的脑力努力程度。',
+      options: ['完全不费脑力', '非常轻微费脑力', '轻微费脑力', '中等程度费脑力', '比较费脑力', '很费脑力', '非常费脑力'],
     },
     {
       id: 6,
-      text: '请评估你刚才完成任务所投入的脑力努力程度。',
-      options: ['完全不费脑力', '轻微费脑力', '比较费脑力', '很费脑力', '非常费脑力'],
-    },
-    {
-      id: 7,
-      text: '请评价你在本轮任务中感受到的压力或紧张程度。',
-      options: ['完全没有压力，非常放松', '轻度压力，基本放松', '中等压力，需要持续注意和应对', '压力较大，明显感到紧张或负担', '非常有压力，难以放松'],
+      text: '请评价你在本轮任务过程中感到紧张或不安的程度。',
+      options: ['完全不紧张', '非常轻微', '较轻', '中等', '较强', '很强', '极度紧张'],
     },
   ],
 };
@@ -427,20 +421,22 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
             </div>
 
             {/* Instruction */}
-            <div
-              style={{
-                fontSize: '14px',
-                color: '#334155',
-                marginBottom: '18px',
-                padding: '12px 14px',
-                background: '#eef4fb',
-                border: '1px solid #d7e2ef',
-                borderRadius: '8px',
-                lineHeight: 1.6,
-              }}
-            >
-              {config.instruction ?? DEFAULT_CONFIG.instruction}
-            </div>
+            {config.instruction && (
+              <div
+                style={{
+                  fontSize: '14px',
+                  color: '#334155',
+                  marginBottom: '18px',
+                  padding: '12px 14px',
+                  background: '#eef4fb',
+                  border: '1px solid #d7e2ef',
+                  borderRadius: '8px',
+                  lineHeight: 1.6,
+                }}
+              >
+                {config.instruction}
+              </div>
+            )}
 
             {/* Validation error */}
             {validationError && (
