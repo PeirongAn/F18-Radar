@@ -1246,13 +1246,88 @@ class DatabaseManager:
         user_id: str,
         task_type: str,
         submitted_task_id: Any = None,
+        difficulty: Any = None,
+        autonomy_level: Any = None,
     ) -> Dict[str, Any]:
         """Resolve an HTML questionnaire to the canonical task_run context."""
         normalized_task_type = self._normalize_runtime_task_type(task_type)
         submitted_id = self._safe_int(submitted_task_id)
+        normalized_difficulty = self.normalize_difficulty_value(difficulty) if difficulty is not None else None
+        normalized_autonomy = str(autonomy_level) if autonomy_level not in (None, "") else None
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                # Questionnaire storage is linked by its stable business
+                # identity, not by a transient task_run id.
+                if user_id and normalized_difficulty is not None:
+                    clauses = ["user_id = ?", "difficulty = ?"]
+                    params = [user_id, normalized_difficulty]
+                    if normalized_task_type:
+                        clauses.append("task_type = ?")
+                        params.append(normalized_task_type)
+                    if normalized_autonomy is None:
+                        clauses.append("(autonomy_level IS NULL OR autonomy_level = '')")
+                    else:
+                        clauses.append("autonomy_level = ?")
+                        params.append(normalized_autonomy)
+                    cursor.execute(
+                        f"""
+                        SELECT * FROM task_groups
+                        WHERE {' AND '.join(clauses)}
+                        ORDER BY CASE WHEN status = 'completed' THEN 0 ELSE 1 END,
+                                 COALESCE(completed_at_ms, started_at_ms) DESC,
+                                 group_id DESC
+                        LIMIT 1
+                        """,
+                        tuple(params),
+                    )
+                    group_row = cursor.fetchone()
+                    if group_row:
+                        columns = [description[0] for description in cursor.description]
+                        return self._questionnaire_context_from_task_group(dict(zip(columns, group_row)))
+                    # Do not silently attach the questionnaire to another
+                    # difficulty/autonomy combination for the same user.
+                    return {
+                        "task_type": normalized_task_type,
+                        "user_id": user_id,
+                        "difficulty": normalized_difficulty,
+                        "autonomy_level": normalized_autonomy,
+                        "task_group_id": None,
+                    }
+
+                # Platform/weapon questionnaires may be opened without task
+                # configuration. In that case, fall back only within the
+                # same user and corresponding task type, using the newest
+                # task_groups row as the authoritative configuration.
+                if user_id and normalized_difficulty is None and normalized_task_type in (
+                    "PLATFORM_CONTROL",
+                    "WEAPON_FIRING",
+                    "WEAPON_LAUNCH",
+                ):
+                    task_types = [normalized_task_type]
+                    if normalized_task_type in ("WEAPON_FIRING", "WEAPON_LAUNCH"):
+                        task_types = ["WEAPON_FIRING", "WEAPON_LAUNCH"]
+                    placeholders = ",".join("?" for _ in task_types)
+                    cursor.execute(
+                        f"""
+                        SELECT * FROM task_groups
+                        WHERE user_id = ? AND task_type IN ({placeholders})
+                        ORDER BY COALESCE(completed_at_ms, started_at_ms) DESC,
+                                 group_id DESC
+                        LIMIT 1
+                        """,
+                        (user_id, *task_types),
+                    )
+                    group_row = cursor.fetchone()
+                    if group_row:
+                        columns = [description[0] for description in cursor.description]
+                        return self._questionnaire_context_from_task_group(dict(zip(columns, group_row)))
+                    return {
+                        "task_type": normalized_task_type,
+                        "user_id": user_id,
+                        "task_group_id": None,
+                    }
+
                 # A currently active task group is the authority for the
                 # questionnaire display. It retains the configuration even
                 # when the browser did not receive taskId or other URL fields.
@@ -1724,7 +1799,6 @@ class DatabaseManager:
                 CREATE TABLE questionnaire_responses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id TEXT,
-                    task_id INTEGER,
                     task_group_id INTEGER,
                     task_type TEXT NOT NULL,
                     repetition_current INTEGER,
@@ -1744,8 +1818,41 @@ class DatabaseManager:
         else:
             cursor.execute("PRAGMA table_info(questionnaire_responses)")
             columns = {row[1] for row in cursor.fetchall()}
+            if 'task_id' in columns:
+                cursor.execute("ALTER TABLE questionnaire_responses RENAME TO questionnaire_responses_legacy")
+                cursor.execute("""
+                    CREATE TABLE questionnaire_responses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT,
+                        task_group_id INTEGER,
+                        task_type TEXT NOT NULL,
+                        repetition_current INTEGER,
+                        repetition_total INTEGER,
+                        difficulty TEXT,
+                        autonomy_level TEXT,
+                        is_ai_active BOOLEAN,
+                        is_practice BOOLEAN,
+                        answers_json TEXT NOT NULL,
+                        source TEXT DEFAULT 'unknown',
+                        client_timestamp INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    INSERT INTO questionnaire_responses (
+                        id, user_id, task_group_id, task_type, repetition_current,
+                        repetition_total, difficulty, autonomy_level, is_ai_active,
+                        is_practice, answers_json, source, client_timestamp, created_at
+                    )
+                    SELECT id, user_id, task_group_id, task_type, repetition_current,
+                           repetition_total, difficulty, autonomy_level, is_ai_active,
+                           is_practice, answers_json, source, client_timestamp, created_at
+                    FROM questionnaire_responses_legacy
+                """)
+                cursor.execute("DROP TABLE questionnaire_responses_legacy")
+                conn.commit()
+                columns.discard('task_id')
             additions = {
-                'task_id': 'INTEGER',
                 'task_group_id': 'INTEGER',
                 'autonomy_level': 'TEXT',
             }
@@ -1764,13 +1871,15 @@ class DatabaseManager:
         user_id = data.get('userId') or data.get('user_id') or ''
         task_type = self._normalize_runtime_task_type(data.get('taskType') or data.get('task_type') or '')
         source = data.get('source', 'unknown')
-        submitted_task_id = data.get('taskId', data.get('task_id'))
-        context = self.resolve_questionnaire_task_context(user_id, task_type, submitted_task_id)
-        resolved_task_id = self._safe_int(context.get('task_id')) or self._safe_int(submitted_task_id)
-        resolved_task_group_id = self._safe_int(context.get('task_group_id')) or resolved_task_id
-
         autonomy_level = task_info.get('autonomyLevel') or task_info.get('autonomy_level')
         difficulty = self.normalize_difficulty_value(task_info.get('difficulty'))
+        context = self.resolve_questionnaire_task_context(
+            user_id,
+            task_type,
+            difficulty=difficulty,
+            autonomy_level=autonomy_level,
+        )
+        resolved_task_group_id = self._safe_int(context.get('task_group_id'))
         is_practice = self._safe_bool(task_info.get('isPractice', task_info.get('is_practice')))
         is_ai_active = self._safe_bool(task_info.get('is_ai_active'))
         if is_ai_active is None:
@@ -1792,14 +1901,13 @@ class DatabaseManager:
 
         sql = """
             INSERT INTO questionnaire_responses (
-                user_id, task_id, task_group_id, task_type, repetition_current, repetition_total,
+                user_id, task_group_id, task_type, repetition_current, repetition_total,
                 difficulty, autonomy_level, is_ai_active, is_practice,
                 answers_json, source, client_timestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             user_id,
-            resolved_task_id,
             resolved_task_group_id,
             task_type,
             data.get('repetitionCurrent', data.get('repetition_current', 0)),

@@ -522,8 +522,8 @@ function setSelectValue(id, value) {
 
 // The questionnaire display is owned by the completed server-side task run,
 // not by difficulty/autonomy values embedded in an externally opened URL.
-// taskId is preferred when available; the API falls back to the user's most
-// recent completed task of the requested type when it is absent or stale.
+// The API resolves display context from the user's task group. Questionnaire
+// storage itself is linked by user, difficulty, and autonomy level.
 async function loadAuthoritativeContext() {
   const { userId, taskType } = contextData;
   const query = new URLSearchParams();
@@ -723,7 +723,6 @@ function handleSubmit() {
   const payload = {
     type:               'questionnaire_submitted',
     taskType:           taskType || 'RADAR_TARGETING',
-    taskId:             taskId ? Number(taskId) || taskId : undefined,
     userId:             userId || '',
     repetitionCurrent:  parseInt(experimentNo) || 0,
     repetitionTotal:    parseInt(total) || 0,

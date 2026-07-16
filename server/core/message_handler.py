@@ -150,7 +150,20 @@ class MessageHandler:
             current_scenario.pop("task_group_id", None)
             repetition_info.pop("task_group_id", None)
 
-        task_group_id = current_scenario.get("task_group_id") or repetition_info.get("task_group_id")
+        platform_overall_task_id = (
+            (platform_meta or {}).get("normalized", {}).get("overall_task_id")
+            if isinstance((platform_meta or {}).get("normalized"), dict)
+            else None
+        )
+        task_group_id = (
+            platform_overall_task_id
+            or current_scenario.get("task_group_id")
+            or repetition_info.get("task_group_id")
+        )
+        if platform_overall_task_id:
+            current_scenario["task_group_id"] = task_group_id
+            repetition_info["task_group_id"] = task_group_id
+            current_scenario["repetition_info"] = repetition_info
         if not task_group_id:
             task_group_id = generate_task_id()
             current_scenario["task_group_id"] = task_group_id

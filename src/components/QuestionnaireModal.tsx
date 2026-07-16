@@ -52,7 +52,6 @@ interface QuestionnaireConfig {
 
 export interface QuestionnaireSubmitData {
   taskType: TaskType;
-  taskId?: number;
   userId: string;
   repetitionCurrent: number;
   repetitionTotal: number;
@@ -266,7 +265,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
       const data: QuestionnaireSubmitData = {
         taskType: currentTaskType,
-        taskId: infoObj?.task_id,
         userId,
         repetitionCurrent: infoObj?.current ?? 0,
         repetitionTotal: infoObj?.total ?? 0,

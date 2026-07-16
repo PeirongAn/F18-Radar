@@ -113,6 +113,17 @@ def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):
     with manager.get_connection() as conn:
         conn.execute(
             """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, difficulty, autonomy_level, is_ai_active,
+                is_practice, config_json
+            ) VALUES (100, 'PLATFORM_CONTROL', 'u1', 'completed', 2, 2, 2,
+                      10, 21, 'high', '3', 1, 0, '{}')
+            """
+        )
+        conn.execute(
+            """
             INSERT INTO task_runs (
                 task_id, task_type, user_id, status, expected_subtasks,
                 completed_subtasks, current_subtask_seq, started_at_ms,
@@ -140,9 +151,9 @@ def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):
         "repetitionCurrent": 1,
         "repetitionTotal": 0,
         "taskInfo": {
-            "difficulty": "low",
-            "autonomyLevel": "1",
-            "isPractice": True,
+            "difficulty": "high",
+            "autonomyLevel": "3",
+            "isPractice": False,
         },
         "answers": {"1": 5},
         "source": "react_modal",
@@ -152,11 +163,14 @@ def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT task_id, task_group_id, task_type, difficulty, autonomy_level, is_ai_active, is_practice
+            SELECT task_group_id, task_type, difficulty, autonomy_level, is_ai_active, is_practice
             FROM questionnaire_responses
             """
         ).fetchone()
-    assert row == (101, 100, "PLATFORM_CONTROL", "high", "3", 1, 0)
+    assert row == (100, "PLATFORM_CONTROL", "high", "3", 1, 0)
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(questionnaire_responses)")}
+    assert "task_id" not in columns
 
 
 def test_questionnaire_context_falls_back_from_stale_id_to_latest_completed_run(tmp_path):
@@ -176,6 +190,17 @@ def test_questionnaire_context_falls_back_from_stale_id_to_latest_completed_run(
     with manager.get_connection() as conn:
         conn.execute(
             """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, difficulty, autonomy_level, is_ai_active,
+                is_practice, config_json
+            ) VALUES (10, 'PLATFORM_CONTROL', 'u1', 'completed', 1, 1, 1,
+                      10, 20, 'low', 'L1', 1, 0, '{}')
+            """
+        )
+        conn.execute(
+            """
             INSERT INTO task_runs (
                 task_id, group_id, task_type, user_id, status, expected_subtasks,
                 completed_subtasks, current_subtask_seq, started_at_ms,
@@ -189,8 +214,8 @@ def test_questionnaire_context_falls_back_from_stale_id_to_latest_completed_run(
     stale_context = manager.resolve_questionnaire_task_context("u1", "PLATFORM_CONTROL", submitted_task_id=999)
     blank_context = manager.resolve_questionnaire_task_context("", "")
 
-    assert stale_context["task_id"] == 11
-    assert blank_context["task_id"] == 11
+    assert stale_context["task_group_id"] == 10
+    assert blank_context["task_group_id"] == 10
     assert blank_context["difficulty"] == "low"
     assert blank_context["autonomy_level"] == "L1"
 
@@ -220,3 +245,74 @@ def test_questionnaire_context_prefers_active_task_group(tmp_path):
     assert context["autonomy_level"] == "L1"
     assert context["repetition_current"] == 2
     assert context["repetition_total"] == 3
+
+
+def test_questionnaire_uses_user_difficulty_and_autonomy_task_group(tmp_path):
+    db_path = tmp_path / "questionnaire-business-key.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, difficulty, autonomy_level, is_ai_active,
+                is_practice, config_json
+            ) VALUES (?, ?, ?, 'completed', 3, 3, 3, ?, ?, ?, ?, 1, 0, '{}')
+            """,
+            [
+                (31, "RADAR_TARGETING", "u1", 100, 200, "low", "L1"),
+                (32, "RADAR_TARGETING", "u1", 300, 400, "high", "L3"),
+                (33, "RADAR_TARGETING", "u2", 500, 600, "high", "L3"),
+            ],
+        )
+        conn.commit()
+
+    manager.record_questionnaire({
+        "userId": "u1",
+        "taskType": "RADAR_TARGETING",
+        "taskId": 999999,
+        "taskInfo": {"difficulty": "high", "autonomyLevel": "L3"},
+        "answers": {"1": 5},
+    })
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT task_group_id, difficulty, autonomy_level FROM questionnaire_responses"
+        ).fetchone()
+    assert row == (32, "high", "L3")
+
+
+def test_platform_and_weapon_questionnaires_without_config_use_latest_matching_group(tmp_path):
+    db_path = tmp_path / "questionnaire-latest-group.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, difficulty, autonomy_level, is_ai_active,
+                is_practice, config_json
+            ) VALUES (?, ?, ?, 'completed', 1, 1, 1, ?, ?, ?, ?, 1, 0, '{}')
+            """,
+            [
+                (41, "PLATFORM_CONTROL", "u1", 100, 200, "low", "L1"),
+                (42, "PLATFORM_CONTROL", "u1", 300, 400, "high", "L3"),
+                (43, "PLATFORM_CONTROL", "u2", 500, 600, "medium", "L2"),
+                (44, "WEAPON_LAUNCH", "u1", 700, 800, "medium", "L2"),
+            ],
+        )
+        conn.commit()
+
+    platform = manager.resolve_questionnaire_task_context("u1", "PLATFORM_CONTROL")
+    weapon = manager.resolve_questionnaire_task_context("u1", "WEAPON_FIRING")
+
+    assert platform["task_group_id"] == 42
+    assert platform["difficulty"] == "high"
+    assert platform["autonomy_level"] == "L3"
+    assert weapon["task_group_id"] == 44
+    assert weapon["difficulty"] == "medium"
+    assert weapon["autonomy_level"] == "L2"

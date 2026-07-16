@@ -1687,6 +1687,11 @@ def _handle_external_task(
                 )
             else:
                 tid = generate_task_id()
+                # Keep the web task lifecycle bound to the task_groups row
+                # created for this external overall task.  The pending object
+                # holds the same normalized mapping and will pass this id to
+                # MessageHandler when the web task starts.
+                normalized["overall_task_id"] = tid
                 active = {
                     "task_id": tid,
                     "overall_task_id": tid,
