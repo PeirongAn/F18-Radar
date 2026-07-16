@@ -1342,6 +1342,7 @@ const MainApp: React.FC = observer(() => {
                 isStarted={isStarted}
                 taskId={taskId}
                 currentTask={activeDisplay === 'sa' ? 'sa' : 'radar'}
+                isAIActive={agentStore.isAIActive}
                 radarRange={radarRange}
                 scanAngle={scanAngle}
                 antennaAdjustmentRequired={antennaAdjustmentRequired}

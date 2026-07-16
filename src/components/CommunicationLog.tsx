@@ -15,6 +15,7 @@ interface CommunicationLogProps {
   isStarted?: boolean; // 系统是否已启动的标志
   taskId?: number | null;
   currentTask?: 'radar' | 'sa'; // 当前任务类型
+  isAIActive?: boolean;
   messages: LogMessage[];
   onAddMessage?: (type: MessageType, content: string) => void;
   radarRange?: number;
@@ -36,6 +37,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   isStarted = false,
   taskId = null,
   currentTask = 'radar',
+  isAIActive = false,
   messages: incomingMessages,
   onAddMessage: onAddMessageProp,
   radarRange,
@@ -235,12 +237,14 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
             onAddMessageProp('info', `当前参数设置: 范围 ${settings.range} 海里, 扫描角度 ${settings.scanAngle}°`);
           }
         } else {
-          onAddMessageProp('error', `参数验证失败: ${message}`);
+          if (!(isAIActive && currentTask === 'radar')) {
+            onAddMessageProp('error', `参数验证失败: ${message}`);
+          }
         }
         validationOp._displayed = true;
       }
     }
-  }, [operations, isStarted, onAddMessageProp]);
+  }, [operations, isStarted, onAddMessageProp, isAIActive, currentTask]);
   
   const addExternalMessage = useCallback((type: MessageType, content: string) => {
     if (onAddMessageProp) {
