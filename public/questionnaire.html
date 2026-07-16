@@ -368,16 +368,10 @@
     <div class="attr-row">
       <span class="attr-label">任务类型：</span>
       <select class="attr-select" id="selTaskType" disabled></select>
-
-      <span class="attr-label">任务难度：</span>
-      <select class="attr-select" id="selDifficulty" disabled></select>
-
-      <span class="attr-label">自主等级：</span>
-      <select class="attr-select" id="selAutonomy" disabled></select>
     </div>
 
     <!-- Instruction -->
-    <div class="instruction">请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。</div>
+    <div class="instruction" id="instructionText">请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。</div>
 
     <!-- Validation error -->
     <div class="error-banner" id="errorBanner">⚠ 请完成所有题目的评分后再提交。</div>
@@ -496,7 +490,7 @@ function applyContext(ctx) {
 }
 
 function renderContext() {
-  const { userId, taskType, difficulty, autonomyLevel } = contextData;
+  const { userId, taskType } = contextData;
 
   document.getElementById('displayUserId').textContent = userId || '-';
 
@@ -504,20 +498,12 @@ function renderContext() {
   const taskLabel = config?.taskTypeLabels?.[taskType] ?? taskType ?? '-';
   setSelectValue('selTaskType', taskLabel);
 
-  // Difficulty
-  const diffLabels = config?.difficultyLabels || {};
-  const diffLabel  = diffLabels[difficulty] || difficulty || '-';
-  setSelectValue('selDifficulty', diffLabel);
-
-  // Autonomy
-  const aiLabels = config?.autonomyLabels || {};
-  const autoLabel = aiLabels[autonomyLevel] || autonomyLevel || '-';
-  setSelectValue('selAutonomy', autoLabel);
-
   // Title
   const title = config?.taskTitles?.[taskType] ?? config?.title ?? document.title;
   document.getElementById('titleText').textContent = title;
   document.title = title;
+  document.getElementById('instructionText').textContent =
+    config?.instruction || '请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。';
 }
 
 function setSelectValue(id, value) {
@@ -562,6 +548,7 @@ async function loadAuthoritativeContext() {
 function createEmptyConfig() {
   return {
     title: document.title || 'Questionnaire',
+    instruction: '',
     taskTitles: {},
     taskTypeLabels: {},
     difficultyLabels: {},

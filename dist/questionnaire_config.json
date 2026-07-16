@@ -1,5 +1,6 @@
 {
   "title": "座舱认知状态问卷",
+  "instruction": "请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。",
   "taskTitles": {
     "RADAR_TARGETING": "传感器任务 · 座舱认知状态问卷",
     "SA_THREAT_RESPONSE": "威胁排序任务 · 座舱认知状态问卷",

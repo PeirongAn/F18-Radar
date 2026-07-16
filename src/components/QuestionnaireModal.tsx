@@ -41,6 +41,7 @@ interface QuestionItem {
 
 interface QuestionnaireConfig {
   title?: string;
+  instruction?: string;
   taskTitles?: Partial<Record<TaskType, string>>;
   scales?: string[];
   questions: QuestionItem[];
@@ -85,79 +86,46 @@ interface QuestionnaireModalProps {
 ───────────────────────────────────────────────────────────── */
 const DEFAULT_CONFIG: QuestionnaireConfig = {
   title: '座舱认知状态问卷',
+  instruction: '请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。',
   scales: ['1', '2', '3', '4', '5'],
   questions: [
     {
       id: 1,
-      text: 'T1：我对该智能辅助系统有信心。',
+      text: '我对该智能辅助系统有信心。',
       options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
     },
     {
       id: 2,
-      text: 'T2：我认为该智能辅助系统是可靠的。',
+      text: '我认为该智能辅助系统是可靠的。',
       options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
     },
     {
       id: 3,
-      text: 'T3：我愿意信任该辅助智能系统的判断或建议。',
+      text: '我愿意信任该辅助智能系统的判断或建议。',
       options: ['非常不同意', '不太同意', '中立', '比较同意', '非常同意'],
     },
     {
       id: 4,
-      text: 'MF：请评估您当前的精神疲劳/困倦程度。',
+      text: '请评估您当前的精神疲劳/困倦程度。',
       options: ['非常清醒，状态良好', '清醒，但反应略慢', '既不清醒也不困倦', '有些困倦，精力下降', '非常困倦，难以保持清醒'],
     },
     {
       id: 5,
-      text: 'PF：请评估你当前的身体疲劳程度。',
+      text: '请评估你当前的身体疲劳程度。',
       options: ['完全不疲劳', '轻微疲劳', '比较疲劳', '很疲劳', '非常疲劳'],
     },
     {
       id: 6,
-      text: 'ML：请评估你刚才完成任务所投入的脑力努力程度。',
+      text: '请评估你刚才完成任务所投入的脑力努力程度。',
       options: ['完全不费脑力', '轻微费脑力', '比较费脑力', '很费脑力', '非常费脑力'],
     },
     {
       id: 7,
-      text: 'S：请评价你在本轮任务中感受到的压力或紧张程度。',
+      text: '请评价你在本轮任务中感受到的压力或紧张程度。',
       options: ['完全没有压力，非常放松', '轻度压力，基本放松', '中等压力，需要持续注意和应对', '压力较大，明显感到紧张或负担', '非常有压力，难以放松'],
     },
   ],
 };
-
-function translateDifficulty(
-  d: string | undefined,
-  labels?: Record<string, string>,
-): string {
-  if (!d) return '-';
-  if (labels?.[d]) return labels[d];
-  switch (d) {
-    case 'low': return '低';
-    case 'medium': return '中';
-    case 'high': return '高';
-    case '1': return '低';
-    case '2': return '中';
-    case '3': return '高';
-    default: return d;
-  }
-}
-
-function translateAutonomyLevel(
-  level: string | undefined,
-  labels?: Record<string, string>,
-): string {
-  if (!level) return '-';
-  if (labels?.[level]) return labels[level];
-  switch (level) {
-    case 'L1': return 'L1';
-    case 'L2': return 'L2';
-    case 'L3': return 'L3';
-    case '1': return 'L3';
-    case '2': return 'L2';
-    case '3': return 'L1';
-    default: return level;
-  }
-}
 
 /* ─────────────────────────────────────────────────────────────
    Shared inline styles
@@ -334,8 +302,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     }, [config, answers, currentTaskType, userId, getInfoForTask, sendMessage, onSubmit]);
 
     /* ── Derive display values ── */
-    const info = getInfoForTask(currentTaskType);
-
     const scales = config.scales ?? DEFAULT_CONFIG.scales!;
 
     const FALLBACK_TASK_LABELS: Record<string, string> = {
@@ -345,15 +311,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     const taskLabel =
       config.taskTypeLabels?.[currentTaskType] ??
       FALLBACK_TASK_LABELS[currentTaskType] ?? currentTaskType;
-
-    const difficultyLabel = translateDifficulty(
-      info?.difficulty,
-      config.difficultyLabels,
-    );
-    const autonomyLabel = translateAutonomyLevel(
-      info?.autonomy_level,
-      config.autonomyLabels,
-    );
 
     const modalTitle =
       config.taskTitles?.[currentTaskType] ?? config.title ?? '座舱认知状态问卷';
@@ -467,20 +424,6 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 <option>{taskLabel}</option>
               </select>
 
-              <span style={{ fontSize: '14px', color: '#475569' }}>任务难度</span>
-              <select
-                style={selectStyle}
-                value={difficultyLabel}
-                disabled
-                onChange={() => {}}
-              >
-                <option>{difficultyLabel}</option>
-              </select>
-
-              <span style={{ fontSize: '14px', color: '#475569' }}>自主等级</span>
-              <select style={selectStyle} value={autonomyLabel} disabled onChange={() => {}}>
-                <option>{autonomyLabel}</option>
-              </select>
             </div>
 
             {/* Instruction */}
@@ -496,7 +439,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 lineHeight: 1.6,
               }}
             >
-              请根据刚才这段任务中的真实感受作答。没有对错，请凭第一反应选择。
+              {config.instruction ?? DEFAULT_CONFIG.instruction}
             </div>
 
             {/* Validation error */}
