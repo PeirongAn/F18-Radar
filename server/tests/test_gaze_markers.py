@@ -296,6 +296,50 @@ def test_raw_gaze_frame_writes_hits_only_when_region_matches():
         rows = _task_rows(Path(tmp) / "gaze_records.db")
         assert rows[0][4:] == (1, 1, 1)
 
+
+def test_raw_gaze_frame_keeps_tobii_per_eye_measurements():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[], screen_size=None, task_id="eye-data-task", user_id="S008",
+                system_time=1_700_000_000_000_000,
+            )
+            svc._gaze_data_callback({
+                "device_time_stamp": 123456,
+                "system_time_stamp": 123999,
+                "left_gaze_point_validity": 1,
+                "right_gaze_point_validity": 0,
+                "left_gaze_point_on_display_area": (0.4, 0.5),
+                "right_gaze_point_on_display_area": (float("nan"), float("nan")),
+                "left_gaze_point_in_user_coordinate_system": (10.0, 20.0, 30.0),
+                "right_gaze_point_in_user_coordinate_system": (11.0, 21.0, 31.0),
+                "left_pupil_diameter": 3.2,
+                "right_pupil_diameter": float("nan"),
+                "left_pupil_validity": 1,
+                "right_pupil_validity": 0,
+                "left_gaze_origin_in_user_coordinate_system": (1.0, 2.0, 600.0),
+                "right_gaze_origin_in_user_coordinate_system": (2.0, 2.0, 600.0),
+                "left_gaze_origin_in_trackbox_coordinate_system": (0.4, 0.5, 0.6),
+                "right_gaze_origin_in_trackbox_coordinate_system": (0.6, 0.5, 0.6),
+                "left_gaze_origin_validity": 1,
+                "right_gaze_origin_validity": 1,
+            })
+            svc.stop_task(task_id="eye-data-task", system_time=1_700_000_000_500_000)
+        finally:
+            svc.shutdown()
+
+        raw_file = Path(tmp) / "raw" / "S008" / "eye-data-task" / "raw_gaze.jsonl"
+        frame = json.loads(raw_file.read_text(encoding="utf-8").strip())
+        assert frame["device_ts_us"] == 123456
+        assert frame["sdk_system_ts_us"] == 123999
+        assert frame["left_eye"]["pupil_diameter_mm"] == 3.2
+        assert frame["left_eye"]["origin_user_mm"] == [1.0, 2.0, 600.0]
+        assert frame["left_eye"]["gaze_valid"] is True
+        assert frame["right_eye"]["pupil_diameter_mm"] is None
+        assert frame["right_eye"]["gaze_display"] == [None, None]
+        assert frame["right_eye"]["pupil_valid"] is False
+
 def test_empty_attention_region_does_not_trigger_feedback():
     with tempfile.TemporaryDirectory() as tmp:
         svc = GazeService(data_dir=tmp)

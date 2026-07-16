@@ -751,6 +751,7 @@ class GazeService:
             "gaze": list(gaze_point) if gaze_valid else None,
             "hit": current_in_region,
         }
+        frame_data.update(_extract_tobii_raw_fields(gaze_data))
         if current_in_region:
             frame_data["hits"] = region_hits
 
@@ -1029,6 +1030,51 @@ def _sanitize_feedback_payload(payload: dict) -> dict:
         for key, value in payload.items()
         if key not in duplicated_fields
     }
+
+
+def _json_safe_tobii_value(value):
+    """Convert SDK tuples and non-finite sentinel values to strict JSON values."""
+    if isinstance(value, (tuple, list)):
+        return [_json_safe_tobii_value(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _extract_tobii_raw_fields(gaze_data: dict) -> dict:
+    """Keep the per-eye measurements that arrive with Tobii gaze data."""
+    raw = {}
+    timestamp_fields = {
+        "device_time_stamp": "device_ts_us",
+        "system_time_stamp": "sdk_system_ts_us",
+    }
+    for sdk_key, raw_key in timestamp_fields.items():
+        if sdk_key in gaze_data:
+            raw[raw_key] = _json_safe_tobii_value(gaze_data[sdk_key])
+
+    eye_fields = {
+        "gaze_point_on_display_area": "gaze_display",
+        "gaze_point_in_user_coordinate_system": "gaze_user_mm",
+        "gaze_point_validity": "gaze_valid",
+        "pupil_diameter": "pupil_diameter_mm",
+        "pupil_validity": "pupil_valid",
+        "gaze_origin_in_user_coordinate_system": "origin_user_mm",
+        "gaze_origin_in_trackbox_coordinate_system": "origin_trackbox",
+        "gaze_origin_validity": "origin_valid",
+    }
+    for side in ("left", "right"):
+        eye = {}
+        for sdk_suffix, raw_key in eye_fields.items():
+            sdk_key = f"{side}_{sdk_suffix}"
+            if sdk_key not in gaze_data:
+                continue
+            value = gaze_data[sdk_key]
+            if sdk_suffix.endswith("validity"):
+                value = bool(value)
+            eye[raw_key] = _json_safe_tobii_value(value)
+        if eye:
+            raw[f"{side}_eye"] = eye
+    return raw
 
 
 def _get_gaze_point(gaze_data: dict) -> tuple[tuple | None, bool]:
