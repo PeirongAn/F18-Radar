@@ -199,8 +199,10 @@
     }
     .option-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(7, minmax(115px, 1fr));
       gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
     }
     .option-choice {
       min-height: 54px;
@@ -324,7 +326,7 @@
         max-height: calc(100vh - 16px);
       }
       .body { padding: 14px 16px 20px; }
-      .option-grid { grid-template-columns: 1fr; }
+      .option-grid { grid-template-columns: repeat(7, minmax(115px, 1fr)); }
       .progress-line {
         align-items: flex-start;
         flex-direction: column;

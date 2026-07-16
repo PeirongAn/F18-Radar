@@ -508,8 +508,10 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                     <div
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                        gridTemplateColumns: 'repeat(7, minmax(115px, 1fr))',
                         gap: '8px',
+                        overflowX: 'auto',
+                        paddingBottom: '2px',
                       }}
                     >
                       {scales.map((scale, scaleIdx) => {
