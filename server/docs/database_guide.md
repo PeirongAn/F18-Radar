@@ -67,6 +67,7 @@ erDiagram
         TEXT status
         INTEGER expected_task_count
         INTEGER completed_task_count
+        INTEGER current_task_seq
     }
     task_runs {
         INTEGER task_id PK
@@ -95,8 +96,8 @@ erDiagram
 
 关系说明：
 
-- `task_groups` 表示“一组配置相同、完成后需要统一结算的任务”。难度或 AI 等级切换后应产生新的任务组。
-- `task_runs` 表示一次实际任务实例，可通过 `group_id` 归属于任务组。
+- `task_groups` 表示“一组配置相同、完成后需要统一结算的任务”。它是组级总数、当前进度和最终状态的唯一汇总来源；难度或 AI 等级切换后应产生新的任务组。
+- `task_runs` 表示一次实际任务实例，可通过 `group_id` 归属于任务组。一个 `task_runs.task_id` 只对应一个实际子任务，不能同时充当整组汇总记录。
 - `task_events` 保存任务生命周期事件，例如开始、子任务开始、子任务结束和任务结果。
 - `task_subtask_results` 保存每个子任务的结构化结果和统计指标。
 - `task_settings` 和 `user_operations` 保存 RADAR/SA 实验任务的配置和操作明细。
@@ -121,7 +122,7 @@ erDiagram
 
 ### 5.1 `task_groups`：任务组
 
-这是任务组完成判断和问卷上下文的主要数据源。
+这是任务组完成判断和问卷上下文的主要数据源。组内任务数和完成进度只维护在本表，不能从任一 `task_runs` 行推断整组状态。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -151,19 +152,21 @@ CREATE INDEX idx_task_groups_active
 ON task_groups(user_id, task_type, status, started_at_ms);
 ```
 
-### 5.2 `task_runs`：任务实例
+### 5.2 `task_runs`：单次任务（子任务）实例
+
+每一行只对应一次实际执行的任务；对于平台控制和武器发射，一组有 N 个子任务就有 N 行 `task_runs`，并且这些行通过同一个 `group_id` 关联到 `task_groups`。`task_id` 因而始终是单次任务/子任务 ID，不是组 ID 或父任务 ID。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `task_id` | INTEGER PK | 内部任务 ID |
 | `group_id` | INTEGER | 所属任务组 ID，可为空 |
-| `task_seq` | INTEGER | 在组内的任务序号 |
+| `task_seq` | INTEGER | 在组内的任务序号；这是识别该子任务顺序的规范字段 |
 | `task_type` | TEXT | 标准任务类型 |
 | `user_id` | TEXT | 被试/用户 ID |
 | `status` | TEXT | 通常为 `active` 或 `completed` |
-| `expected_subtasks` | INTEGER | 预计子任务数 |
-| `completed_subtasks` | INTEGER | 已完成子任务数 |
-| `current_subtask_seq` | INTEGER | 当前子任务序号 |
+| `expected_subtasks` | INTEGER | 本行任务的预计子任务数。新写入模型中固定为 `1`，保留该列是为兼容历史数据 |
+| `completed_subtasks` | INTEGER | 本行任务的完成数：活跃时为 `0`，完成后为 `1`；不记录整组累计数 |
+| `current_subtask_seq` | INTEGER | 兼容字段，记录当前外部子任务序号；组内顺序应以 `task_seq` 为准，组进度以 `task_groups.current_task_seq` 为准 |
 | `started_at_ms` | INTEGER | 开始时间，Unix 毫秒 |
 | `completed_at_ms` | INTEGER | 完成时间，Unix 毫秒 |
 | `config_json` | TEXT | 本次任务配置 JSON |
@@ -332,14 +335,14 @@ ON task_runs(user_id, task_type, status, started_at_ms);
 ```text
 外部 task_start
   -> task_groups：创建/恢复一组任务
-  -> task_runs：创建当前任务实例
+  -> task_runs：为当前实际子任务创建一行（首个 `task_start` 即为第 1 个子任务）
   -> task_events：记录 task_start/sub_start
 
 外部 sub_end 或 task_result
   -> task_subtask_results：保存子任务结果
   -> task_events：记录 sub_end/task_result
-  -> task_runs：更新完成数和状态
-  -> task_groups：更新整组完成数和状态
+  -> task_runs：仅将当前子任务更新为完成（`completed_subtasks=1`）
+  -> task_groups：累计 `completed_task_count`、更新 `current_task_seq`，并在达到 `expected_task_count` 时更新为 completed
 
 任务组完成后提交问卷
   -> questionnaire_responses：绑定 task_group_id
@@ -562,9 +565,9 @@ PRAGMA wal_checkpoint(TRUNCATE);
 
 1. `task_events` 是否收到预期数量的 `sub_end` 或 `task_result`。
 2. `task_subtask_results` 的 `(task_id, sub_task_seq)` 是否完整。
-3. `task_runs.completed_subtasks` 是否达到 `expected_subtasks`。
-4. `task_groups.completed_task_count` 是否达到 `expected_task_count`。
-5. `task_runs.group_id` 是否指向正确任务组。
+3. 每个 `task_runs` 行是否均为 `completed`，且 `completed_subtasks=1`、`expected_subtasks=1`。
+4. `task_groups.completed_task_count` 是否达到 `expected_task_count`，以及 `current_task_seq` 是否为最后一个 `task_seq`。
+5. 每个 `task_runs.group_id` 是否指向正确任务组。
 
 ### 问卷关联到错误难度或 AI 等级
 

@@ -361,8 +361,9 @@ def test_overall_task_start_creates_and_starts_first_task_once(monkeypatch):
     assert fake_db.groups[42]["task_type"] == "PLATFORM_CONTROL"
     assert fake_db.groups[42]["autonomy_level"] == "L1"
     assert fake_db.groups[42]["difficulty"] == "low"
-    assert fake_db.runs[42]["expected_subtasks"] == 3
+    assert fake_db.runs[42]["expected_subtasks"] == 1
     assert fake_db.runs[42]["task_seq"] == 1
+    assert fake_db.runs[42]["group_id"] == 42
     assert fake_db.runs[42]["completed_subtasks"] == 0
     assert replies[0]["sub_task_seq"] == 1
     assert fake_db.events[0]["event_type"] == "sub_start"
@@ -495,9 +496,14 @@ def test_sub_end_maintains_task_count_without_sub_start(monkeypatch):
     assert second[0]["sub_task_seq"] == 2
     assert second[0]["completed_subtasks"] == 2
     assert second[0]["task_status"] == "completed"
-    assert fake_db.runs[42]["current_subtask_seq"] == 2
-    assert fake_db.runs[42]["completed_subtasks"] == 2
+    assert fake_db.runs[42]["expected_subtasks"] == 1
     assert fake_db.runs[42]["status"] == "completed"
+    assert fake_db.runs[43]["expected_subtasks"] == 1
+    assert fake_db.runs[43]["task_seq"] == 2
+    assert fake_db.runs[43]["status"] == "completed"
+    assert fake_db.groups[42]["current_task_seq"] == 2
+    assert fake_db.groups[42]["completed_task_count"] == 2
+    assert fake_db.groups[42]["status"] == "completed"
     assert first[0]["task_id"] == 42
     assert second[0]["task_id"] == 43
     assert [event["sub_task_seq"] for event in fake_db.events if event["event_type"] == "sub_start"] == [1, 2]
@@ -623,15 +629,15 @@ def test_overall_task_start_resumes_unfinished_task(monkeypatch):
     bridge._handle_external_task(overall_start("3"), "platform_control")
     bridge._handle_external_task(sub_start(), "platform_control")
     bridge._handle_external_task(sub_end(), "platform_control")
-    fake_db.runs[42]["task_seq"] = None
+    fake_db.runs[43]["task_seq"] = None
     bridge._active_external_tasks.clear()
 
     replies = bridge._handle_external_task(overall_start("3"), "platform_control")
 
-    assert replies[0]["task_id"] == 42
+    assert replies[0]["task_id"] == 43
     assert replies[0]["completed_subtasks"] == 1
-    assert fake_db.runs[42]["status"] == "active"
-    assert fake_db.runs[42]["task_seq"] == 2
+    assert fake_db.runs[43]["status"] == "active"
+    assert fake_db.runs[43]["task_seq"] == 2
     assert fake_db.events[-1]["event_type"] == "sub_start"
 
 

@@ -975,7 +975,6 @@ def _start_external_subtask_context(
         raw_message_json=raw_message_json,
     )
     if overall_tid is not None:
-        db_manager.update_task_run_progress(task_id=overall_tid, current_subtask_seq=seq, raw_message_json=raw_message_json)
         db_manager.update_task_group_progress(group_id=overall_tid, current_task_seq=seq, raw_message_json=raw_message_json)
     event_payload = {"task_category": category, "sub_task_seq": seq}
     if inferred:
@@ -1199,6 +1198,12 @@ def _handle_overall_stop_compat_if_needed(
     gaze_svc: Any = None,
     physio_svc: Any = None,
 ) -> Optional[List[Dict[str, Any]]]:
+    active_finder = getattr(db_manager, "find_active_task_run", None)
+    if callable(active_finder) and active_finder(user_id, task_type):
+        # A duplicate overall start can be the reconnect/resume signal for a
+        # later subtask.  Only apply the legacy stop compatibility rule when
+        # the group has no active subtask.
+        return None
     finder = getattr(db_manager, "find_recent_completed_task_run", None)
     if not callable(finder):
         return None
@@ -1210,8 +1215,6 @@ def _handle_overall_stop_compat_if_needed(
         recent_config_obj = json.loads(recent_config) if isinstance(recent_config, str) else recent_config
     except (TypeError, ValueError):
         recent_config_obj = {}
-    if isinstance(recent_config_obj, dict) and recent_config_obj.get("overall_task_id") is not None:
-        return None
     recent_raw = _config_json_raw(recent.get("config_json"))
     if recent_raw != raw_fields:
         return None
@@ -1667,7 +1670,9 @@ def _handle_external_task(
                 )
 
             expected = _expected_subtasks_from_normalized(normalized)
-            run = db_manager.find_active_task_run(user_id, task_type, overall_only=True)
+            # Every task_runs row is a concrete subtask.  The group owns the
+            # aggregate lifecycle, so resume the latest active subtask.
+            run = db_manager.find_active_task_run(user_id, task_type)
             if run:
                 active = _active_from_task_run(run, category, raw_fields, normalized)
                 _active_external_tasks[key] = active
@@ -1694,15 +1699,19 @@ def _handle_external_task(
                     active.get("expected_subtasks"),
                 )
             else:
-                tid = generate_task_id()
+                # group_id and task_id live in different tables.  Preserve
+                # the existing external numeric id while keeping this row a
+                # pure first-subtask run rather than a parent summary row.
+                group_id = generate_task_id()
+                tid = group_id
                 # Keep the web task lifecycle bound to the task_groups row
                 # created for this external overall task.  The pending object
                 # holds the same normalized mapping and will pass this id to
                 # MessageHandler when the web task starts.
-                normalized["overall_task_id"] = tid
+                normalized["overall_task_id"] = group_id
                 active = {
                     "task_id": tid,
-                    "overall_task_id": tid,
+                    "overall_task_id": group_id,
                     "task_type": task_type,
                     "task_category": category,
                     "user_id": user_id,
@@ -1716,7 +1725,7 @@ def _handle_external_task(
                 }
                 _active_external_tasks[key] = active
                 db_manager.create_task_group(
-                    group_id=tid,
+                    group_id=group_id,
                     task_type=task_type,
                     user_id=user_id,
                     expected_task_count=expected,
@@ -1731,13 +1740,17 @@ def _handle_external_task(
                 )
                 db_manager.create_task_run(
                     task_id=tid,
-                    group_id=tid,
+                    group_id=group_id,
                     task_seq=1,
                     task_type=task_type,
                     user_id=user_id,
-                    expected_subtasks=expected,
+                    expected_subtasks=1,
                     started_at_ms=ts,
-                    config_json=_json_dump(_task_run_config(category, raw_fields, normalized)),
+                    config_json=_json_dump({
+                        **_task_run_config(category, raw_fields, normalized),
+                        "overall_task_id": group_id,
+                        "sub_task_seq": 1,
+                    }),
                     raw_message_json=raw,
                 )
                 # The full overall task_start is also the first real subtask.
@@ -1752,7 +1765,7 @@ def _handle_external_task(
                     raw_message_json=raw,
                 )
                 db_manager.update_task_group_progress(
-                    group_id=tid,
+                    group_id=group_id,
                     current_task_seq=1,
                     raw_message_json=raw,
                 )
@@ -2025,14 +2038,6 @@ def _handle_external_task(
             raw_message_json=raw,
         )
         if overall_tid is not None:
-            db_manager.update_task_run_progress(
-                task_id=overall_tid,
-                completed_subtasks=completed,
-                current_subtask_seq=seq,
-                status=status,
-                completed_at_ms=ts if status == "completed" else None,
-                raw_message_json=raw,
-            )
             db_manager.update_task_group_progress(
                 group_id=overall_tid,
                 completed_task_count=completed,
@@ -2134,13 +2139,6 @@ def _handle_external_task(
         if active.get("current_subtask_task_id"):
             db_manager.update_task_run_progress(
                 task_id=active["current_subtask_task_id"],
-                status="completed",
-                completed_at_ms=ts,
-                raw_message_json=raw,
-            )
-        if overall_tid is not None and overall_tid != tid:
-            db_manager.update_task_run_progress(
-                task_id=overall_tid,
                 status="completed",
                 completed_at_ms=ts,
                 raw_message_json=raw,
@@ -2268,14 +2266,6 @@ def handle_platform_task_result_ws(
     if overall_tid is not None:
         completed = int(active.get("completed_subtasks") or 0) + 1
         active["completed_subtasks"] = completed
-        db_manager.update_task_run_progress(
-            task_id=overall_tid,
-            completed_subtasks=completed,
-            current_subtask_seq=seq,
-            status="completed",
-            completed_at_ms=ts,
-            raw_message_json=raw,
-        )
         db_manager.update_task_group_progress(
             group_id=overall_tid,
             completed_task_count=completed,
