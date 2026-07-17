@@ -684,6 +684,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       task_type: 'RADAR_TARGETING',
       task_id: getCurrentRadarTaskId(),
       timestamp: Date.now(),
+      // Result confirmation is always a human action, even in an AI-assisted task.
+      event_owner: 'manual',
     });
 
     if (hasReachedRadarTaskTotal) {

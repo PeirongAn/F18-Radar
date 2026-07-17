@@ -1535,6 +1535,39 @@ class DatabaseManager:
             columns = [description[0] for description in cursor.description]
             return dict(zip(columns, row))
 
+    def find_active_task_group(self, user_id: str, task_type: str,
+                               progress_key: str = None, difficulty: str = None,
+                               autonomy_level: str = None) -> Optional[Dict[str, Any]]:
+        """Find the active lifecycle row for the same incoming task group."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            clauses = ["user_id = ?", "task_type = ?", "status = 'active'"]
+            params = [user_id or "", task_type]
+            if progress_key:
+                clauses.append("progress_key = ?")
+                params.append(progress_key)
+            else:
+                if difficulty is not None:
+                    clauses.append("difficulty = ?")
+                    params.append(difficulty)
+                if autonomy_level is not None:
+                    clauses.append("autonomy_level = ?")
+                    params.append(autonomy_level)
+            cursor.execute(
+                f"""
+                SELECT * FROM task_groups
+                WHERE {' AND '.join(clauses)}
+                ORDER BY started_at_ms DESC, group_id DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            columns = [description[0] for description in cursor.description]
+            return dict(zip(columns, row))
+
     def create_task_run(self, task_id: int, task_type: str, user_id: str,
                         expected_subtasks: int, started_at_ms: int,
                         config_json: str, raw_message_json: str,
@@ -1606,12 +1639,16 @@ class DatabaseManager:
                 cursor.execute(f"UPDATE task_runs SET {', '.join(fields)} WHERE task_id = ?", tuple(params))
             conn.commit()
 
-    def update_task_run_progress(self, task_id: int, current_subtask_seq: int = None,
+    def update_task_run_progress(self, task_id: int, task_seq: int = None,
+                                 current_subtask_seq: int = None,
                                  completed_subtasks: int = None, status: str = None,
                                  completed_at_ms: int = None,
                                  raw_message_json: str = None) -> None:
         fields = ["updated_at = CURRENT_TIMESTAMP"]
         params = []
+        if task_seq is not None:
+            fields.append("task_seq = ?")
+            params.append(task_seq)
         if current_subtask_seq is not None:
             fields.append("current_subtask_seq = ?")
             params.append(current_subtask_seq)

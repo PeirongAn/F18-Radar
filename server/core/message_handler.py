@@ -160,12 +160,30 @@ class MessageHandler:
             or current_scenario.get("task_group_id")
             or repetition_info.get("task_group_id")
         )
+        difficulty = current_scenario.get("external_difficulty_display") or current_scenario.get("difficulty_name")
+        autonomy_level = current_scenario.get("autonomy_level") or current_scenario.get("ai_level_name")
         if platform_overall_task_id:
             current_scenario["task_group_id"] = task_group_id
             repetition_info["task_group_id"] = task_group_id
             current_scenario["repetition_info"] = repetition_info
         if not task_group_id:
-            task_group_id = generate_task_id()
+            try:
+                active_group = db_manager.find_active_task_group(
+                    user_id=user_id or "",
+                    task_type=task_type,
+                    progress_key=progress_key,
+                    difficulty=difficulty,
+                    autonomy_level=autonomy_level,
+                )
+                task_group_id = active_group.get("group_id") if active_group else None
+            except Exception as e:
+                self.logger.warning(
+                    "find active task_group failed: task_type=%s user=%s error=%s",
+                    task_type, user_id, e,
+                    exc_info=True,
+                )
+            if not task_group_id:
+                task_group_id = generate_task_id()
             current_scenario["task_group_id"] = task_group_id
             repetition_info["task_group_id"] = task_group_id
             current_scenario["repetition_info"] = repetition_info
@@ -185,8 +203,8 @@ class MessageHandler:
                 started_at_ms=started_at_ms,
                 config_json=self._task_run_config(current_scenario, event_owner, trust_state, platform_meta),
                 raw_message_json=json.dumps(message or {}, ensure_ascii=False),
-                difficulty=current_scenario.get("external_difficulty_display") or current_scenario.get("difficulty_name"),
-                autonomy_level=current_scenario.get("autonomy_level") or current_scenario.get("ai_level_name"),
+                difficulty=difficulty,
+                autonomy_level=autonomy_level,
                 is_ai_active=current_scenario.get("is_ai_active"),
                 is_practice=getattr(task_manager, "is_practice", False),
                 progress_key=progress_key,

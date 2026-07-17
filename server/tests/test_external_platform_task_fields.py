@@ -362,6 +362,7 @@ def test_overall_task_start_creates_and_starts_first_task_once(monkeypatch):
     assert fake_db.groups[42]["autonomy_level"] == "L1"
     assert fake_db.groups[42]["difficulty"] == "low"
     assert fake_db.runs[42]["expected_subtasks"] == 3
+    assert fake_db.runs[42]["task_seq"] == 1
     assert fake_db.runs[42]["completed_subtasks"] == 0
     assert replies[0]["sub_task_seq"] == 1
     assert fake_db.events[0]["event_type"] == "sub_start"
@@ -622,6 +623,7 @@ def test_overall_task_start_resumes_unfinished_task(monkeypatch):
     bridge._handle_external_task(overall_start("3"), "platform_control")
     bridge._handle_external_task(sub_start(), "platform_control")
     bridge._handle_external_task(sub_end(), "platform_control")
+    fake_db.runs[42]["task_seq"] = None
     bridge._active_external_tasks.clear()
 
     replies = bridge._handle_external_task(overall_start("3"), "platform_control")
@@ -629,6 +631,7 @@ def test_overall_task_start_resumes_unfinished_task(monkeypatch):
     assert replies[0]["task_id"] == 42
     assert replies[0]["completed_subtasks"] == 1
     assert fake_db.runs[42]["status"] == "active"
+    assert fake_db.runs[42]["task_seq"] == 2
     assert fake_db.events[-1]["event_type"] == "sub_start"
 
 

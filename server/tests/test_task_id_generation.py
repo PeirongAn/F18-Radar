@@ -316,3 +316,35 @@ def test_platform_and_weapon_questionnaires_without_config_use_latest_matching_g
     assert weapon["task_group_id"] == 44
     assert weapon["difficulty"] == "medium"
     assert weapon["autonomy_level"] == "L2"
+
+
+def test_find_active_task_group_uses_same_progress_key_only(tmp_path):
+    db_path = tmp_path / "active-task-group.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                difficulty, autonomy_level, is_ai_active, is_practice,
+                progress_key, config_json
+            ) VALUES (?, 'RADAR_TARGETING', 'u1', ?, 2, 0, 0, ?, 'low', 'L1', 1, 0, ?, '{}')
+            """,
+            [
+                (51, "completed", 100, "RADAR_TARGETING::1-L1-low"),
+                (52, "active", 200, "RADAR_TARGETING::1-L1-low"),
+                (53, "active", 300, "RADAR_TARGETING::2-L1-low"),
+            ],
+        )
+        conn.commit()
+
+    group = manager.find_active_task_group(
+        user_id="u1",
+        task_type="RADAR_TARGETING",
+        progress_key="RADAR_TARGETING::1-L1-low",
+    )
+
+    assert group is not None
+    assert group["group_id"] == 52

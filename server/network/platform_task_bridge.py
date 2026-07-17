@@ -1672,6 +1672,14 @@ def _handle_external_task(
                 active = _active_from_task_run(run, category, raw_fields, normalized)
                 _active_external_tasks[key] = active
                 tid = active["task_id"]
+                if run.get("task_seq") is None:
+                    # Legacy overall rows were created before task_seq was
+                    # populated. Repair them while restoring the active task.
+                    restored_seq = int(active.get("current_subtask_seq") or 0) or 1
+                    db_manager.update_task_run_progress(
+                        task_id=tid,
+                        task_seq=restored_seq,
+                    )
                 logger.info(
                     "[REMOTE_TASK_COUNT] external overall task_start resumed "
                     "category=%s task_type=%s entry_mode=%s user=%s task_id=%s "
@@ -1724,6 +1732,7 @@ def _handle_external_task(
                 db_manager.create_task_run(
                     task_id=tid,
                     group_id=tid,
+                    task_seq=1,
                     task_type=task_type,
                     user_id=user_id,
                     expected_subtasks=expected,
