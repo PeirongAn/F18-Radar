@@ -374,6 +374,11 @@ class HTTPServer:
                         await ws.send_str(json.dumps(reply, ensure_ascii=False))
                         continue
 
+                    if message_type == 'tobii_aoi_snapshot':
+                        reply = await websocket_server._handle_tobii_aoi_snapshot(message_data)
+                        await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                        continue
+
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'tobii_marker':
                         reply = await websocket_server._handle_tobii_marker(message_data)

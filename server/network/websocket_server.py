@@ -281,6 +281,11 @@ class WebSocketServer:
                         await self.send_message(websocket, reply)
                         continue
 
+                    if message_type == 'tobii_aoi_snapshot':
+                        reply = await self._handle_tobii_aoi_snapshot(message_data)
+                        await self.send_message(websocket, reply)
+                        continue
+
                     # 收到 joystick_connect 时触发延迟初始化
                     if message_type == 'tobii_marker':
                         reply = await self._handle_tobii_marker(message_data)
@@ -453,6 +458,56 @@ class WebSocketServer:
                 "msg": "目标框消失，bbox 已清空",
                 "task_id": self._gaze_svc.get_active_task_id(),
             }
+
+    async def _handle_tobii_aoi_snapshot(self, data: dict) -> dict:
+        """Store analysis-only AOIs without touching attention regions."""
+        if self._gaze_svc is None:
+            return {
+                "type": "tobii_aoi_snapshot_result",
+                "ok": False,
+                "msg": "gaze service is not available",
+            }
+        try:
+            result = self._gaze_svc.set_analysis_aoi_snapshot(
+                task_id=str(data.get("task_id")) if data.get("task_id") is not None else None,
+                trial_id=str(data.get("trial_id")) if data.get("trial_id") is not None else None,
+                task_group_id=(
+                    str(data.get("task_group_id"))
+                    if data.get("task_group_id") is not None else None
+                ),
+                task_type=str(data.get("task_type") or ""),
+                client_snapshot_id=(
+                    str(data.get("client_snapshot_id"))
+                    if data.get("client_snapshot_id") else None
+                ),
+                client_captured_at_ms=(
+                    int(data.get("captured_at_ms"))
+                    if data.get("captured_at_ms") is not None else None
+                ),
+                change_reasons=(
+                    data.get("change_reasons")
+                    if isinstance(data.get("change_reasons"), list) else []
+                ),
+                coordinate_space=(
+                    data.get("coordinate_space")
+                    if isinstance(data.get("coordinate_space"), str) else None
+                ),
+                display=data.get("display") if isinstance(data.get("display"), dict) else {},
+                regions=data.get("regions") if isinstance(data.get("regions"), list) else [],
+            )
+        except (TypeError, ValueError) as exc:
+            return {
+                "type": "tobii_aoi_snapshot_result",
+                "ok": False,
+                "msg": str(exc),
+                "task_id": self._gaze_svc.get_active_task_id(),
+                "client_snapshot_id": data.get("client_snapshot_id"),
+            }
+        return {
+            "type": "tobii_aoi_snapshot_result",
+            "client_snapshot_id": data.get("client_snapshot_id"),
+            **result,
+        }
 
     async def _handle_tobii_marker(self, data: dict) -> dict:
         """Handle a WebSocket Tobii marker message."""

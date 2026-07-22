@@ -165,16 +165,23 @@ All messages follow JSON format:
 {
   "type": "joystick_data",
   "data": {
-    "axis_x": 0.5,
-    "axis_y": -0.3,
-    "buttons": [false, true, false, false],
-    "raw_data": [128, 96, 0, 0]
+    "main_x": 0.5,
+    "main_y": -0.3,
+    "sub_x": 0,
+    "sub_y": 0,
+    "buttons": {
+      "button0": false,
+      "button1": false,
+      "button2": true,
+      "button7": false
+    }
   },
-  "device_status": "active",
-  "user_id": "user_123",
-  "timestamp": 1234567890123
+  "device_status": "connected",
+  "timestamp": 1234567890.123
 }
 ```
+
+后台按键字段使用 pygame/DirectInput 的零基索引，因此操杆实体第3键对应 `button2`：`button2=true` 表示按下人工复核键，`button2=false` 表示松开。任一按键状态变化都会触发数据广播，不依赖操纵轴是否移动。
 
 #### 3.4 Joystick Status Request
 ```json

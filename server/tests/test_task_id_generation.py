@@ -2,6 +2,7 @@ import os
 import sys
 import sqlite3
 import json
+import threading
 from contextlib import contextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -348,3 +349,46 @@ def test_find_active_task_group_uses_same_progress_key_only(tmp_path):
 
     assert group is not None
     assert group["group_id"] == 52
+
+
+def test_retry_settings_keep_old_rows_and_resolve_latest_task_id(tmp_path):
+    db_path = tmp_path / "retry-settings.db"
+    manager = make_sync_database_manager(db_path)
+    manager._task_settings_lock = threading.Lock()
+    manager.initialize_database()
+    scenario = {
+        "difficulty_name": "low",
+        "difficulty_config": {"target_count": 3},
+        "repetition_info": {"current": 1},
+        "is_ai_active": True,
+        "ai_level_name": "L2",
+        "ai_level_config": {"accuracy": 0.8},
+        "audio_enabled": False,
+    }
+    manager.record_retry_task_settings(
+        101, scenario, "u1", "AI", False, "RADAR_TARGETING", ""
+    )
+    manager.record_retry_task_settings(
+        102, scenario, "u1", "AI", False, "RADAR_TARGETING", ""
+    )
+
+    assert manager.find_existing_task_setting_id(
+        scenario, "u1", "AI", "RADAR_TARGETING", ""
+    ) == 102
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT task_id FROM task_settings ORDER BY id"
+        ).fetchall()
+        conn.executemany(
+            """
+            INSERT INTO task_runs (task_id, task_type, user_id, status, started_at_ms)
+            VALUES (?, 'RADAR_TARGETING', 'u1', ?, ?)
+            """,
+            [(101, "retried", 100), (102, "active", 200)],
+        )
+        conn.commit()
+    assert rows == [(101,), (102,)]
+    active_run = manager.find_active_task_run("u1", "RADAR_TARGETING")
+    assert active_run is not None
+    assert active_run["task_id"] == 102
+    assert active_run["status"] == "active"

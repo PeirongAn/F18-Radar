@@ -1,6 +1,7 @@
 import json
 import time
 import random
+import copy
 import asyncio
 from typing import Dict, Any, List, Tuple, Optional, Union
 
@@ -17,6 +18,7 @@ from network.platform_task_bridge import (
 )
 from models.threat_models import RadarConfig
 from network.message_protocol import message_protocol
+from services.trust_control import build_trust_control_state, classify_trust_outcome
 
 class MessageHandler:
     """消息处理器，负责处理客户端消息和业务逻辑"""
@@ -27,6 +29,9 @@ class MessageHandler:
             'task_ids': {},
             'task_started_at_ms': None,
             'task_started_at_ms_by_type': {},
+            'task_active_by_type': {},
+            'task_setting_keys': {},
+            'task_start_responses': {},
             'stage': 'init',
             'target_elevation': None,
             'operations': []
@@ -39,11 +44,15 @@ class MessageHandler:
         self._external_collectors = None
         self.logger = get_logger("message_handler")
 
-    def _set_current_task(self, task_type: str, task_id, started_at_ms: int) -> None:
+    def _set_current_task(self, task_type: str, task_id, started_at_ms: int,
+                          task_setting_key: Optional[Tuple[Any, ...]] = None) -> None:
         self.current_session['task_id'] = task_id
         self.current_session.setdefault('task_ids', {})[task_type] = task_id
         self.current_session['task_started_at_ms'] = started_at_ms
         self.current_session.setdefault('task_started_at_ms_by_type', {})[task_type] = started_at_ms
+        self.current_session.setdefault('task_active_by_type', {})[task_type] = True
+        if task_setting_key is not None:
+            self.current_session.setdefault('task_setting_keys', {})[task_type] = task_setting_key
 
     def _get_current_task_id(self, task_type: str = ''):
         if task_type:
@@ -58,6 +67,97 @@ class MessageHandler:
             if task_type in started_by_type:
                 return started_by_type.get(task_type)
         return self.current_session.get('task_started_at_ms')
+
+    def _mark_current_task_inactive(self, task_type: str, task_id: Any) -> None:
+        current_task_id = self._get_current_task_id(task_type)
+        if current_task_id is not None and str(current_task_id) == str(task_id):
+            self.current_session.setdefault('task_active_by_type', {})[task_type] = False
+
+    def _cache_task_start_responses(self, task_type: str, task_id: Any,
+                                    task_setting_key: Tuple[Any, ...],
+                                    responses: List[Dict[str, Any]]) -> None:
+        self.current_session.setdefault('task_start_responses', {})[task_type] = {
+            'task_id': str(task_id),
+            'task_setting_key': task_setting_key,
+            'responses': copy.deepcopy(responses),
+        }
+
+    def _get_cached_task_start_responses(self, task_type: str, task_id: Any,
+                                         task_setting_key: Tuple[Any, ...]) -> Optional[List[Dict[str, Any]]]:
+        cached = (self.current_session.get('task_start_responses') or {}).get(task_type)
+        if not isinstance(cached, dict):
+            return None
+        if str(cached.get('task_id')) != str(task_id):
+            return None
+        if cached.get('task_setting_key') != task_setting_key:
+            return None
+        return copy.deepcopy(cached.get('responses') or [])
+
+    def _prepare_task_start_identity(
+        self,
+        task_type: str,
+        task_setting_key: Tuple[Any, ...],
+        existing_task_id: Any,
+        task_started_at_ms: int,
+    ) -> Tuple[int, bool, Optional[int], int]:
+        """Resolve duplicate starts versus a new execution of a retried condition."""
+        current_task_id = self._get_current_task_id(task_type)
+        current_active = bool(
+            (self.current_session.get('task_active_by_type') or {}).get(task_type)
+        )
+        current_key = (self.current_session.get('task_setting_keys') or {}).get(task_type)
+        if current_active and current_task_id is not None and current_key == task_setting_key:
+            original_started_at_ms = self._get_task_started_at_ms(task_type)
+            return (
+                int(current_task_id),
+                True,
+                None,
+                int(original_started_at_ms or task_started_at_ms),
+            )
+
+        replacement_task_id = int(generate_task_id())
+        retry_candidate = existing_task_id
+        if retry_candidate is None and current_active and current_task_id is not None:
+            retry_candidate = current_task_id
+        retried_task_id = None
+        if retry_candidate is not None:
+            task_run = db_manager.get_task_run(int(retry_candidate))
+            if task_run and str(task_run.get('status') or '').lower() not in {
+                'completed', 'retried', 'aborted', 'cancelled'
+            }:
+                retried_task_id = int(retry_candidate)
+        return replacement_task_id, False, retried_task_id, task_started_at_ms
+
+    def _mark_task_run_retried(self, old_task_id: Optional[int], new_task_id: int,
+                               task_type: str, user_id: str,
+                               task_started_at_ms: int) -> None:
+        if old_task_id is None:
+            return
+        payload = json.dumps({
+            'replacement_task_id': int(new_task_id),
+            'reason': 'new_trial_execution',
+        }, ensure_ascii=False)
+        try:
+            db_manager.update_task_run_progress(
+                task_id=int(old_task_id),
+                status='retried',
+                completed_at_ms=task_started_at_ms,
+                raw_message_json=payload,
+            )
+            db_manager.record_task_event(
+                task_id=int(old_task_id),
+                task_type=task_type,
+                user_id=user_id or '',
+                event_type='task_retried',
+                timestamp_ms=task_started_at_ms,
+                payload_json=payload,
+                raw_message_json=payload,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                'mark task run retried failed: old_task_id=%s new_task_id=%s error=%s',
+                old_task_id, new_task_id, exc, exc_info=True,
+            )
 
     def _task_run_config(
         self,
@@ -224,6 +324,201 @@ class MessageHandler:
         state_key = 'threat' if task_type == 'SA_THREAT_RESPONSE' else 'sensor'
         state = state_config.get(state_key)
         return state if isinstance(state, str) else ''
+
+    def _build_trust_control_state(self, task_group_id: Any, task_type: str,
+                                   current_scenario: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        scenario = current_scenario or {}
+        difficulty = scenario.get("external_difficulty_display") or scenario.get("difficulty_name") or ""
+        ai_level = scenario.get("autonomy_level") or scenario.get("ai_level_name") or ""
+        config = config_manager.get_trust_control_config()
+        manual_review_button = int(config.get("manual_review_button", 3))
+        if manual_review_button in {1, 2, 7}:
+            self.logger.warning(
+                "manual_review_button=%s conflicts with an existing task control; using button 3",
+                manual_review_button,
+            )
+            manual_review_button = 3
+        outcomes: List[str] = []
+        ai_correct_history: List[bool] = []
+        if task_group_id is not None:
+            try:
+                history = db_manager.get_trust_history(
+                    int(task_group_id), task_type, str(difficulty), str(ai_level)
+                )
+                outcomes = [item["trust_outcome"] for item in history]
+                ai_correct_history = [bool(item["ai_correct"]) for item in history]
+            except Exception as exc:
+                self.logger.warning("load trust history failed: group=%s error=%s", task_group_id, exc)
+        return {
+            "enabled": bool(config.get("enabled", True)),
+            **build_trust_control_state(
+                task_group_id=task_group_id,
+                task_type=task_type,
+                difficulty=difficulty,
+                ai_level=ai_level,
+                outcomes=outcomes,
+                ai_correct_history=ai_correct_history,
+                disclose_ai_reliability=bool(config.get("disclose_ai_reliability", False)),
+            ),
+            "manual_review_button": manual_review_button,
+            "sensor_focus_radius_px": int(config.get("sensor_focus_radius_px", 30)),
+            "threat_focus_radius_px": int(config.get("threat_focus_radius_px", 40)),
+            "focus_dwell_ms": int(config.get("focus_dwell_ms", 150)),
+        }
+
+    @staticmethod
+    def _store_trust_task_snapshot(session_state: Dict[str, Any], task_id: Any,
+                                   task_type: str, candidates: List[Dict[str, Any]],
+                                   ground_truth: Any) -> None:
+        if task_id is None:
+            return
+        normalized_candidates = [
+            {
+                "id": str(item.get("id")),
+                "type": item.get("type"),
+                "score": item.get("score", item.get("threat_score")),
+            }
+            for item in candidates
+            if isinstance(item, dict) and item.get("id") is not None
+        ]
+        snapshots = session_state.setdefault("trust_task_snapshots", {})
+        snapshots[str(task_id)] = {
+            "task_type": task_type,
+            "candidate_ids": [item["id"] for item in normalized_candidates],
+            "candidates": normalized_candidates,
+            "ground_truth": ground_truth,
+            # Retain the legacy scalar field for older sessions and SA tasks.
+            "ground_truth_id": str(ground_truth) if ground_truth is not None and not isinstance(ground_truth, (list, tuple, set)) else None,
+            "updated_at_ms": int(time.time() * 1000),
+        }
+
+    async def _handle_trust_trial_event(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        allowed = {
+            "ai_recommendation_shown", "glow_started", "glow_ended",
+            "tdc_focus_enter", "tdc_focus_leave", "detail_shown", "detail_hidden",
+            "manual_review_started", "manual_review_ended",
+            "manual_review_done", "manual_review_ignored", "human_selection_changed",
+            "comparison_shown", "comparison_hidden", "final_selection_confirmed", "trial_completed",
+            "aoi_snapshot",
+        }
+        event_type = str(message.get("event_type") or "")
+        task_type = str(message.get("task_type") or "")
+        task_id = message.get("task_id") or self._get_current_task_id(task_type)
+        if event_type not in allowed or not task_id or not task_type:
+            return []
+        current_task_id = self._get_current_task_id(task_type)
+        # A held Button3 review belongs to the trial on which it started.  The
+        # UI may only discover a task switch after the server has advanced to
+        # the next trial, so allow the closing event to retain the old trial id.
+        if (
+            current_task_id is not None
+            and str(task_id) != str(current_task_id)
+            and event_type != "manual_review_ended"
+        ):
+            return []
+        timestamp_ms = int(message.get("timestamp") or time.time() * 1000)
+        user_id = message.get("user_id") or self.current_session.get("user_id", "")
+        db_manager.record_task_event(
+            task_id=int(task_id), task_type=task_type, user_id=user_id,
+            event_type=event_type, timestamp_ms=timestamp_ms,
+            sub_task_seq=message.get("trial_sequence"),
+            payload_json=json.dumps({
+                "event_id": message.get("event_id"),
+                "trial_id": message.get("trial_id"),
+                "task_group_id": message.get("task_group_id"),
+                "ui_mode": message.get("ui_mode"),
+                "target_id": message.get("target_id"),
+                "extra": message.get("extra") or {},
+            }, ensure_ascii=False),
+            raw_message_json=json.dumps(message, ensure_ascii=False),
+        )
+        return []
+
+    def _settle_trust_trial(self, message: Dict[str, Any], task_type: str,
+                            task_id: Any, task_group_id: Any,
+                            current_scenario: Optional[Dict[str, Any]],
+                            user_id: str,
+                            session_state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        extra = message.get("extra") if isinstance(message.get("extra"), dict) else {}
+        trial = extra.get("trust_trial") if isinstance(extra.get("trust_trial"), dict) else None
+        if not trial or task_id is None or task_group_id is None:
+            return None
+        scenario = current_scenario or {}
+        difficulty = scenario.get("external_difficulty_display") or scenario.get("difficulty_name") or ""
+        ai_level = scenario.get("autonomy_level") or scenario.get("ai_level_name") or ""
+        snapshot = (session_state.get("trust_task_snapshots") or {}).get(str(task_id), {})
+        server_truth = (
+            snapshot.get("ground_truth")
+            or snapshot.get("ground_truth_id")
+            or scenario.get("ground_truth_id")
+            or scenario.get("correct_target_id")
+            or scenario.get("highest_priority_threat_id")
+        )
+        ground_truth = server_truth
+        candidate_ids = {str(value) for value in snapshot.get("candidate_ids") or []}
+        ai_recommendation = trial.get("ai_recommendation")
+        human_selection = trial.get("human_final_selection")
+        ground_truth_ids = (
+            {str(value) for value in ground_truth}
+            if isinstance(ground_truth, (list, tuple, set))
+            else {str(ground_truth)}
+        )
+        if not ground_truth:
+            self.logger.warning("skip trust trial without server ground truth: task_id=%s", task_id)
+            return None
+        if candidate_ids and (
+            str(ai_recommendation) not in candidate_ids
+            or str(human_selection) not in candidate_ids
+            or not ground_truth_ids.issubset(candidate_ids)
+        ):
+            self.logger.warning("skip trust trial with selection outside task snapshot: task_id=%s", task_id)
+            return None
+        try:
+            classification = classify_trust_outcome(
+                ai_recommendation, human_selection, ground_truth
+            )
+        except ValueError as exc:
+            self.logger.warning("skip incomplete trust trial: task_id=%s error=%s", task_id, exc)
+            return None
+
+        state = self._build_trust_control_state(task_group_id, task_type, scenario)
+        completed_at = int(message.get("timestamp") or time.time() * 1000)
+        settled = {
+            "trial_id": str(trial.get("trial_id") or task_id),
+            "task_id": int(task_id),
+            "task_group_id": int(task_group_id),
+            "user_id": user_id,
+            "trial_sequence": trial.get("trial_sequence") or (scenario.get("repetition_info") or {}).get("current"),
+            "task_type": task_type,
+            "difficulty": str(difficulty),
+            "ai_level": str(ai_level),
+            "ai_recommendation": trial.get("ai_recommendation"),
+            "human_final_selection": trial.get("human_final_selection"),
+            "ground_truth": ground_truth,
+            **classification,
+            "ui_mode": state["ui_mode"],
+            "history_count": state["history_count"],
+            "appropriate_rate_before": state["appropriate_rate"],
+            "under_trust_rate_before": state["under_trust_rate"],
+            "over_trust_rate_before": state["over_trust_rate"],
+            "direction_index_before": state["direction_index"],
+            "ai_history_accuracy_before": state["ai_history_accuracy"],
+            "ai_history_correct_count_before": state["ai_history_correct_count"],
+            "ai_history_valid_count_before": state["ai_history_valid_count"],
+            "manual_review_used": bool(trial.get("manual_review_used", False)),
+            "manual_review_count": int(trial.get("manual_review_count") or 0),
+            "manual_review_duration_ms": int(trial.get("manual_review_duration_ms") or 0),
+            "invalid_review_count": int(trial.get("invalid_review_count") or 0),
+            "task_started_at_ms": self._get_task_started_at_ms(task_type),
+            "ai_recommendation_shown_at_ms": trial.get("ai_recommendation_shown_at_ms"),
+            "final_selection_confirmed_at_ms": trial.get("final_selection_confirmed_at_ms") or completed_at,
+            "trial_completed_at_ms": completed_at,
+        }
+        inserted = db_manager.record_trust_trial_outcome(settled)
+        settled["inserted"] = inserted
+        extra["trust_trial"] = settled
+        message["extra"] = extra
+        return settled
 
     def set_gaze_service(self, gaze_svc) -> None:
         """注入眼动追踪服务（由 server/main.py 的 initialize_system 调用）。"""
@@ -451,6 +746,8 @@ class MessageHandler:
                 return await self._handle_target_selected(message, session_state, client_event_owner)
             elif message_type == 'threat_clicked':
                 return await self._handle_threat_clicked(message, session_state, client_event_owner)
+            elif message_type == 'trust_trial_event':
+                return await self._handle_trust_trial_event(message)
             elif message_type == 'task_result_confirmed':
                 return await self._handle_task_result_confirmed(message, session_state)
             elif message_type == 'task_exit_request':
@@ -599,12 +896,9 @@ class MessageHandler:
             task_type,
             trust_state,
         )
-        is_retrying_incomplete_task = bool(
-            existing_task_id and
-            current_scenario.get('repetition_info', {}).get('previous_task_completed') is False
+        task_setting_key = db_manager.build_task_setting_key(
+            current_scenario, user_id, event_owner, task_type, trust_state
         )
-        if is_retrying_incomplete_task:
-            db_manager.clear_task_operations(existing_task_id)
         task_started_at_ms = int(time.time() * 1000)
         task_group_id, task_seq = self._ensure_current_task_group(
             task_manager,
@@ -619,8 +913,27 @@ class MessageHandler:
             platform_meta=platform_meta,
             force_new_group=overlay_source == "pending" and bool(platform_meta),
         )
-        task_id = existing_task_id or generate_task_id()
-        self._set_current_task(task_type, task_id, task_started_at_ms)
+        task_id, duplicate_start, retried_task_id, task_started_at_ms = self._prepare_task_start_identity(
+            task_type,
+            task_setting_key,
+            existing_task_id,
+            task_started_at_ms,
+        )
+        if duplicate_start:
+            cached_responses = self._get_cached_task_start_responses(
+                task_type, task_id, task_setting_key
+            )
+            if cached_responses is not None:
+                self.logger.info(
+                    "忽略同一活跃试次的重复启动: task_type=%s task_id=%s",
+                    task_type, task_id,
+                )
+                return cached_responses
+            self.logger.warning(
+                "活跃试次缺少启动响应缓存，将继续重建响应: task_type=%s task_id=%s",
+                task_type, task_id,
+            )
+        self._set_current_task(task_type, task_id, task_started_at_ms, task_setting_key)
         self._ensure_unified_task_run(
             task_id,
             task_type,
@@ -633,12 +946,14 @@ class MessageHandler:
             platform_meta=platform_meta,
             group_id=task_group_id,
             task_seq=task_seq,
-            reactivate=is_retrying_incomplete_task,
+            reactivate=False,
+        )
+        self._mark_task_run_retried(
+            retried_task_id, task_id, task_type, user_id, task_started_at_ms
         )
         
         # 记录操作
-        should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
-        if not session_state.get('is_practice', False) and should_record_task_start:
+        if not session_state.get('is_practice', False):
             operation = {
                 'task_id': task_id,
                 'operationType': 'task_start',
@@ -652,16 +967,31 @@ class MessageHandler:
         else:
             print("练习模式或重复启动，跳过 task_start 数据库记录。")
 
-        db_manager.record_task_settings(
-            task_id,
-            current_scenario,
-            user_id,
-            event_owner,
-            session_state.get('is_practice', False),
-            task_type,
-            trust_state,
-        )
+        if existing_task_id is not None and str(existing_task_id) != str(task_id):
+            db_manager.record_retry_task_settings(
+                task_id, current_scenario, user_id, event_owner,
+                session_state.get('is_practice', False), task_type, trust_state,
+            )
+        else:
+            db_manager.record_task_settings(
+                task_id,
+                current_scenario,
+                user_id,
+                event_owner,
+                session_state.get('is_practice', False),
+                task_type,
+                trust_state,
+            )
         target_manager.initialize_targets(current_scenario['difficulty_config'])
+        radar_targets = target_manager.get_targets()
+        radar_ground_truth = [
+            target.get("id")
+            for target in radar_targets
+            if target.get("type") == "army" and target.get("id") is not None
+        ]
+        self._store_trust_task_snapshot(
+            session_state, task_id, task_type, radar_targets, radar_ground_truth
+        )
 
         # 启动眼动追踪（有 Tobii 时生效，否则静默跳过）
         self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
@@ -680,6 +1010,9 @@ class MessageHandler:
             "repetition_info": current_scenario['repetition_info'],
             "task_type": task_type
         }
+        init_response["trust_control"] = self._build_trust_control_state(
+            task_group_id, task_type, current_scenario
+        )
         if platform_meta:
             init_response["platform_task"] = platform_meta
         self._log_task_count_notice(
@@ -707,7 +1040,11 @@ class MessageHandler:
             "task_id": task_id,
             "task_type": task_type,
         })
-        return [init_response, initial_radar_data]
+        responses = [init_response, initial_radar_data]
+        self._cache_task_start_responses(
+            task_type, task_id, task_setting_key, responses
+        )
+        return responses
     
     async def _handle_settings_update(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                     client_event_owner: str) -> List[Dict[str, Any]]:
@@ -995,6 +1332,18 @@ class MessageHandler:
             or repetition_info.get("task_group_id")
         )
 
+        if not session_state.get('is_practice', False):
+            try:
+                self._settle_trust_trial(
+                    message, task_type or "", current_task_id, task_group_id,
+                    current_scenario, user_id, session_state,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "settle trust trial failed: task_id=%s error=%s",
+                    current_task_id, exc, exc_info=True,
+                )
+
         task_id = current_task_id
         if not session_state.get('is_practice', False) and task_id:
             operation = {
@@ -1071,6 +1420,7 @@ class MessageHandler:
             session_state,
         )
         self._gaze_stop(current_task_id)
+        self._mark_current_task_inactive(task_type or "", current_task_id)
         if group_completed and task_type in ("RADAR_TARGETING", "SA_THREAT_RESPONSE"):
             return [{
                 "type": "all_tasks_completed",
@@ -1213,12 +1563,9 @@ class MessageHandler:
             task_type,
             trust_state,
         )
-        is_retrying_incomplete_task = bool(
-            existing_task_id and
-            current_scenario.get('repetition_info', {}).get('previous_task_completed') is False
+        task_setting_key = db_manager.build_task_setting_key(
+            current_scenario, user_id, event_owner, task_type, trust_state
         )
-        if is_retrying_incomplete_task:
-            db_manager.clear_task_operations(existing_task_id)
         task_started_at_ms = int(time.time() * 1000)
         task_group_id, task_seq = self._ensure_current_task_group(
             task_manager,
@@ -1233,8 +1580,27 @@ class MessageHandler:
             platform_meta=platform_meta,
             force_new_group=overlay_source == "pending" and bool(platform_meta),
         )
-        task_id = existing_task_id or generate_task_id()
-        self._set_current_task(task_type, task_id, task_started_at_ms)
+        task_id, duplicate_start, retried_task_id, task_started_at_ms = self._prepare_task_start_identity(
+            task_type,
+            task_setting_key,
+            existing_task_id,
+            task_started_at_ms,
+        )
+        if duplicate_start:
+            cached_responses = self._get_cached_task_start_responses(
+                task_type, task_id, task_setting_key
+            )
+            if cached_responses is not None:
+                self.logger.info(
+                    "忽略同一活跃试次的重复启动: task_type=%s task_id=%s",
+                    task_type, task_id,
+                )
+                return cached_responses
+            self.logger.warning(
+                "活跃试次缺少启动响应缓存，将继续重建响应: task_type=%s task_id=%s",
+                task_type, task_id,
+            )
+        self._set_current_task(task_type, task_id, task_started_at_ms, task_setting_key)
         self.current_session[f'{task_type}_scenario'] = current_scenario
         self._ensure_unified_task_run(
             task_id,
@@ -1248,7 +1614,10 @@ class MessageHandler:
             platform_meta=platform_meta,
             group_id=task_group_id,
             task_seq=task_seq,
-            reactivate=is_retrying_incomplete_task,
+            reactivate=False,
+        )
+        self._mark_task_run_retried(
+            retried_task_id, task_id, task_type, user_id, task_started_at_ms
         )
 
         # 启动眼动追踪
@@ -1256,8 +1625,7 @@ class MessageHandler:
         self._physio_start_task(task_type, user_id, task_id, event_owner, current_scenario, session_state)
 
         # 记录操作
-        should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
-        if not session_state.get('is_practice', False) and should_record_task_start:
+        if not session_state.get('is_practice', False):
             operation = {
                 'task_id': task_id,
                 'operationType': message.get('type'),
@@ -1268,15 +1636,21 @@ class MessageHandler:
                 'event_owner': event_owner
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
-        db_manager.record_task_settings(
-            task_id,
-            current_scenario,
-            user_id,
-            event_owner,
-            session_state.get('is_practice', False),
-            task_type,
-            trust_state,
-        )
+        if existing_task_id is not None and str(existing_task_id) != str(task_id):
+            db_manager.record_retry_task_settings(
+                task_id, current_scenario, user_id, event_owner,
+                session_state.get('is_practice', False), task_type, trust_state,
+            )
+        else:
+            db_manager.record_task_settings(
+                task_id,
+                current_scenario,
+                user_id,
+                event_owner,
+                session_state.get('is_practice', False),
+                task_type,
+                trust_state,
+            )
         if self.use_enhanced_protocol:
             # 使用增强协议生成完整威胁数据
             print("[MessageHandler] 使用增强协议生成威胁")
@@ -1297,6 +1671,13 @@ class MessageHandler:
                 current_scenario['difficulty_config'],
                 radar_config
             )
+            self._store_trust_task_snapshot(
+                session_state,
+                task_id,
+                task_type,
+                [threat.to_dict() for threat in threat_result.threats],
+                threat_result.highest_priority_threat_id,
+            )
             
             # 创建增强威胁消息
             enhanced_response = message_protocol.create_enhanced_threats_message(
@@ -1309,6 +1690,9 @@ class MessageHandler:
                 ai_configs=config_manager.get_ai_levels(),
                 audio_enabled=current_scenario['audio_enabled'],
                 trust_calibration=config_manager.get_trust_calibration_config()
+            )
+            enhanced_response["trust_control"] = self._build_trust_control_state(
+                task_group_id, task_type, current_scenario
             )
             
             if websocket:
@@ -1351,7 +1735,11 @@ class MessageHandler:
                 enhanced_response.get("repetition_info"),
                 normalized_meta.get("platform_task_id"),
             )
-            return [enhanced_response]
+            responses = [enhanced_response]
+            self._cache_task_start_responses(
+                task_type, task_id, task_setting_key, responses
+            )
+            return responses
         else:
             # 使用传统协议
             print("[MessageHandler] 使用传统协议生成威胁")
@@ -1369,6 +1757,9 @@ class MessageHandler:
                 'audio_enabled': current_scenario['audio_enabled'],
                 'trust_calibration': config_manager.get_trust_calibration_config()
             }
+            response["trust_control"] = self._build_trust_control_state(
+                task_group_id, task_type, current_scenario
+            )
 
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用
@@ -1401,7 +1792,11 @@ class MessageHandler:
                 response.get("repetition_info"),
                 normalized_meta.get("platform_task_id"),
             )
-            return [response]
+            responses = [response]
+            self._cache_task_start_responses(
+                task_type, task_id, task_setting_key, responses
+            )
+            return responses
     
     async def _handle_joystick_message(self, message: Dict[str, Any], session_state: Dict[str, Any], 
                                      websocket=None) -> List[Dict[str, Any]]:

@@ -231,7 +231,7 @@ class DatabaseManager:
                       AND difficulty_name = ?
                       AND audio_enabled = ?
                       AND IFNULL(trust_state, '') = ?
-                    ORDER BY task_id
+                    ORDER BY id DESC
                     LIMIT 1
                     """,
                     task_setting_key
@@ -325,6 +325,60 @@ class DatabaseManager:
         )
         self.execute_async(sql, params)
         self.logger.info(f"记录任务设置: task_id {task_id}")
+
+    def record_retry_task_settings(self, task_id: int, scenario: Dict[str, Any],
+                                   user_id: str, event_owner: str, is_practice: bool,
+                                   task_type: str = '', trust_state: str = '') -> None:
+        """Synchronously append settings for a new execution of the same trial condition."""
+        if is_practice:
+            return
+        sql = """
+            INSERT INTO task_settings (
+                task_id, task_type, user_id, event_owner, repetition_count, is_ai_active,
+                ai_level_config, difficulty_config, audio_enabled, ai_level_name, difficulty_name, trust_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
+        params = (
+            task_id,
+            task_type,
+            user_id,
+            event_owner,
+            scenario['repetition_info']['current'],
+            scenario['is_ai_active'],
+            json.dumps(scenario.get('ai_level_config')),
+            json.dumps(scenario['difficulty_config']),
+            scenario['audio_enabled'],
+            scenario.get('ai_level_name'),
+            difficulty_name,
+            trust_state or '',
+        )
+        with self._task_settings_lock:
+            with self.get_connection() as conn:
+                conn.execute(sql, params)
+                conn.commit()
+        self.logger.info("记录重试任务设置: task_id %s", task_id)
+
+    def get_task_run(self, task_id: int) -> Optional[Dict[str, Any]]:
+        """Return one concrete task execution by its globally unique task id."""
+        if task_id is None:
+            return None
+        try:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
+                           completed_subtasks, current_subtask_seq, started_at_ms,
+                           completed_at_ms, config_json, last_raw_message_json
+                    FROM task_runs
+                    WHERE task_id = ?
+                    """,
+                    (int(task_id),),
+                ).fetchone()
+            return self._task_run_from_row(row)
+        except Exception as exc:
+            self.logger.warning("查询 task_run 失败: task_id=%s error=%s", task_id, exc)
+            return None
     
     def record_operation(self, operation: Dict[str, Any], is_practice: bool) -> None:
         """记录用户操作"""
@@ -644,6 +698,7 @@ class DatabaseManager:
                 self._create_task_runs_table(cursor, conn)
                 self._create_task_events_table(cursor, conn)
                 self._create_task_subtask_results_table(cursor, conn)
+                self._create_trust_trial_outcomes_table(cursor, conn)
 
                 # 检查并创建 questionnaire_responses 表
                 self._create_questionnaire_responses_table(cursor, conn)
@@ -1047,6 +1102,245 @@ class DatabaseManager:
         if changed:
             conn.commit()
 
+    def _create_trust_trial_outcomes_table(self, cursor, conn) -> None:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trust_trial_outcomes'")
+        if cursor.fetchone():
+            self._update_trust_trial_outcomes_table(cursor, conn)
+            return
+        cursor.execute("""
+            CREATE TABLE trust_trial_outcomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trial_id TEXT NOT NULL UNIQUE,
+                task_id INTEGER NOT NULL,
+                task_group_id INTEGER NOT NULL,
+                user_id TEXT,
+                trial_sequence INTEGER,
+                task_type TEXT NOT NULL,
+                difficulty TEXT NOT NULL,
+                ai_level TEXT NOT NULL,
+                ai_recommendation_json TEXT NOT NULL,
+                human_final_selection_json TEXT NOT NULL,
+                ground_truth_json TEXT NOT NULL,
+                ai_correct INTEGER NOT NULL,
+                human_correct INTEGER NOT NULL,
+                accepted_ai INTEGER NOT NULL,
+                trust_outcome TEXT NOT NULL,
+                ui_mode TEXT NOT NULL,
+                history_count INTEGER NOT NULL DEFAULT 0,
+                appropriate_rate_before REAL NOT NULL DEFAULT 0,
+                under_trust_rate_before REAL NOT NULL DEFAULT 0,
+                over_trust_rate_before REAL NOT NULL DEFAULT 0,
+                direction_index_before REAL NOT NULL DEFAULT 0,
+                ai_history_accuracy_before REAL,
+                ai_history_correct_count_before INTEGER NOT NULL DEFAULT 0,
+                ai_history_valid_count_before INTEGER NOT NULL DEFAULT 0,
+                task_started_at_ms INTEGER,
+                ai_recommendation_shown_at_ms INTEGER,
+                final_selection_confirmed_at_ms INTEGER,
+                trial_completed_at_ms INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX idx_trust_trial_condition
+            ON trust_trial_outcomes(task_group_id, task_type, difficulty, ai_level, trial_completed_at_ms)
+        """)
+        conn.commit()
+
+    def _update_trust_trial_outcomes_table(self, cursor, conn) -> None:
+        cursor.execute("PRAGMA table_info(trust_trial_outcomes)")
+        columns = {row[1] for row in cursor.fetchall()}
+        additions = {
+            "ai_history_accuracy_before": "REAL",
+            "ai_history_correct_count_before": "INTEGER NOT NULL DEFAULT 0",
+            "ai_history_valid_count_before": "INTEGER NOT NULL DEFAULT 0",
+        }
+        changed = False
+        for name, column_type in additions.items():
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE trust_trial_outcomes ADD COLUMN {name} {column_type}")
+                changed = True
+        if changed:
+            conn.commit()
+
+    def get_trust_outcomes(self, task_group_id: int, task_type: str,
+                           difficulty: str, ai_level: str) -> List[str]:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT trust_outcome
+                FROM trust_trial_outcomes
+                WHERE task_group_id = ? AND task_type = ? AND difficulty = ? AND ai_level = ?
+                ORDER BY trial_completed_at_ms, id
+                """,
+                (task_group_id, task_type, difficulty or "", ai_level or ""),
+            )
+            return [str(row[0]) for row in cursor.fetchall()]
+
+    def get_trust_history(self, task_group_id: int, task_type: str,
+                          difficulty: str, ai_level: str) -> List[Dict[str, Any]]:
+        """Return settled history used for both trust state and observed AI accuracy."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT trust_outcome, ai_correct
+                FROM trust_trial_outcomes
+                WHERE task_group_id = ? AND task_type = ? AND difficulty = ? AND ai_level = ?
+                ORDER BY trial_completed_at_ms, id
+                """,
+                (task_group_id, task_type, difficulty or "", ai_level or ""),
+            )
+            return [
+                {"trust_outcome": str(row[0]), "ai_correct": bool(row[1])}
+                for row in cursor.fetchall()
+            ]
+
+    def record_trust_trial_outcome(self, outcome: Dict[str, Any]) -> bool:
+        """Persist one settled trial. Returns False for an idempotent duplicate."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO trust_trial_outcomes (
+                    trial_id, task_id, task_group_id, user_id, trial_sequence,
+                    task_type, difficulty, ai_level,
+                    ai_recommendation_json, human_final_selection_json, ground_truth_json,
+                    ai_correct, human_correct, accepted_ai, trust_outcome,
+                    ui_mode, history_count, appropriate_rate_before,
+                    under_trust_rate_before, over_trust_rate_before, direction_index_before,
+                    ai_history_accuracy_before, ai_history_correct_count_before,
+                    ai_history_valid_count_before,
+                    task_started_at_ms, ai_recommendation_shown_at_ms,
+                    final_selection_confirmed_at_ms, trial_completed_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(outcome["trial_id"]), int(outcome["task_id"]), int(outcome["task_group_id"]),
+                    outcome.get("user_id", ""), outcome.get("trial_sequence"),
+                    outcome["task_type"], outcome.get("difficulty", ""), outcome.get("ai_level", ""),
+                    json.dumps(outcome["ai_recommendation"], ensure_ascii=False),
+                    json.dumps(outcome["human_final_selection"], ensure_ascii=False),
+                    json.dumps(outcome["ground_truth"], ensure_ascii=False),
+                    int(bool(outcome["ai_correct"])), int(bool(outcome["human_correct"])),
+                    int(bool(outcome["accepted_ai"])), outcome["trust_outcome"],
+                    outcome.get("ui_mode", "standard"), int(outcome.get("history_count") or 0),
+                    float(outcome.get("appropriate_rate_before") or 0),
+                    float(outcome.get("under_trust_rate_before") or 0),
+                    float(outcome.get("over_trust_rate_before") or 0),
+                    float(outcome.get("direction_index_before") or 0),
+                    outcome.get("ai_history_accuracy_before"),
+                    int(outcome.get("ai_history_correct_count_before") or 0),
+                    int(outcome.get("ai_history_valid_count_before") or 0),
+                    outcome.get("task_started_at_ms"), outcome.get("ai_recommendation_shown_at_ms"),
+                    outcome.get("final_selection_confirmed_at_ms"), int(outcome["trial_completed_at_ms"]),
+                ),
+            )
+            inserted = cursor.rowcount > 0
+            conn.commit()
+            return inserted
+
+    def get_trust_group_performance(self, task_group_id: int) -> Dict[str, Any]:
+        """Build experiment metrics from settled trials and process events."""
+        group = self.get_task_group(task_group_id) or {}
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT task_id, human_correct, accepted_ai,
+                       ai_recommendation_shown_at_ms, final_selection_confirmed_at_ms,
+                       ai_correct
+                FROM trust_trial_outcomes
+                WHERE task_group_id = ?
+                ORDER BY trial_completed_at_ms, id
+                """,
+                (task_group_id,),
+            )
+            trials = cursor.fetchall()
+            task_ids = [int(row[0]) for row in trials]
+            events = []
+            if task_ids:
+                placeholders = ",".join("?" for _ in task_ids)
+                cursor.execute(
+                    f"""
+                    SELECT task_id, event_type, timestamp_ms, payload_json
+                    FROM task_events
+                    WHERE task_id IN ({placeholders})
+                    ORDER BY timestamp_ms, id
+                    """,
+                    tuple(task_ids),
+                )
+                events = cursor.fetchall()
+
+        valid_trials = len(trials)
+        decision_durations = [
+            max(0, int(row[4]) - int(row[3]))
+            for row in trials
+            if row[3] is not None and row[4] is not None
+        ]
+        selection_counts: Dict[int, int] = {}
+        valid_reviews = 0
+        invalid_reviews = 0
+        manual_review_duration_ms = 0
+        detail_exposure_ms = 0
+        comparison_exposure_ms = 0
+        tdc_focus_sequence: List[Dict[str, Any]] = []
+        for task_id, event_type, timestamp_ms, payload_json in events:
+            payload = self._parse_json_object(payload_json)
+            extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
+            if event_type == "human_selection_changed":
+                selection_counts[int(task_id)] = selection_counts.get(int(task_id), 0) + 1
+            elif event_type in {"manual_review_started", "manual_review_done"}:
+                valid_reviews += 1
+            elif event_type == "manual_review_ended":
+                manual_review_duration_ms += max(0, int(extra.get("duration_ms") or 0))
+            elif event_type == "manual_review_ignored":
+                invalid_reviews += 1
+            elif event_type == "detail_hidden":
+                detail_exposure_ms += max(0, int(extra.get("exposure_duration_ms") or 0))
+            elif event_type == "comparison_hidden":
+                comparison_exposure_ms += max(0, int(extra.get("exposure_duration_ms") or 0))
+            elif event_type == "tdc_focus_enter":
+                tdc_focus_sequence.append({
+                    "task_id": int(task_id),
+                    "target_id": payload.get("target_id"),
+                    "timestamp_ms": int(timestamp_ms),
+                })
+
+        started_at = group.get("started_at_ms")
+        completed_at = group.get("completed_at_ms")
+        expected = int(group.get("expected_task_count") or 0)
+        completed = int(group.get("completed_task_count") or 0)
+        return {
+            "task_group_id": task_group_id,
+            "task_group_duration_ms": (
+                max(0, int(completed_at) - int(started_at))
+                if started_at is not None and completed_at is not None else None
+            ),
+            "completion_rate": (completed / expected) if expected > 0 else 0.0,
+            "valid_trial_count": valid_trials,
+            "human_accuracy": (
+                sum(int(bool(row[1])) for row in trials) / valid_trials
+                if valid_trials else 0.0
+            ),
+            "ai_accuracy": (
+                sum(int(bool(row[5])) for row in trials) / valid_trials
+                if valid_trials else 0.0
+            ),
+            "effective_decision_duration_ms": sum(decision_durations),
+            "decision_duration_count": len(decision_durations),
+            "target_switch_count": sum(max(0, count - 1) for count in selection_counts.values()),
+            "changed_from_ai_count": sum(1 for row in trials if not bool(row[2])),
+            "valid_manual_review_count": valid_reviews,
+            "manual_review_used": valid_reviews > 0,
+            "manual_review_duration_ms": manual_review_duration_ms,
+            "invalid_manual_review_count": invalid_reviews,
+            "detail_exposure_duration_ms": detail_exposure_ms,
+            "comparison_exposure_duration_ms": comparison_exposure_ms,
+            "tdc_focus_sequence": tdc_focus_sequence,
+        }
+
     def _create_task_subtask_results_table(self, cursor, conn) -> None:
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_subtask_results'")
         if not cursor.fetchone():
@@ -1106,7 +1400,7 @@ class DatabaseManager:
                            completed_subtasks, current_subtask_seq, started_at_ms,
                            completed_at_ms, config_json, last_raw_message_json
                     FROM task_runs
-                    WHERE user_id = ? AND task_type = ? AND status != 'completed'
+                    WHERE user_id = ? AND task_type = ? AND status = 'active'
                     ORDER BY started_at_ms DESC, task_id DESC
                     LIMIT 50
                     """,

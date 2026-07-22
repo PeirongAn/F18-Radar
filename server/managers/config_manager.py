@@ -58,6 +58,10 @@ class ConfigManager:
     def get_trust_calibration_config(self) -> Dict[str, Any]:
         """获取信任调控配置"""
         return self.config.get('trust_calibration', {})
+
+    def get_trust_control_config(self) -> Dict[str, Any]:
+        """获取统一信任调控配置。"""
+        return self.config.get('trust_control', {})
     
     def is_audio_enabled(self) -> bool:
         """检查音频是否启用"""

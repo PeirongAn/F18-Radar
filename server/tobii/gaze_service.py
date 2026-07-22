@@ -31,6 +31,7 @@ import math
 import time
 import uuid
 import json
+import hashlib
 import sqlite3
 import queue
 import asyncio
@@ -57,6 +58,16 @@ GAZE_PROGRESS_LOGS_ENABLED = os.environ.get("GAZE_PROGRESS_LOGS", "").lower() in
     "true",
     "yes",
     "on",
+}
+
+ANALYSIS_AOI_IDS = {
+    "left_ai_target",
+    "left_candidate_list",
+    "right_ai_history_accuracy",
+    "right_recommendation",
+    "right_candidate_list",
+    "right_detail",
+    "right_comparison",
 }
 
 # 写入队列中的事件类型标识
@@ -263,6 +274,23 @@ class GazeService:
         with self._state_lock:
             if self._task_active and self._current_task:
                 active_task_id = str(self._current_task.get("task_id"))
+        if active_task_id == resolved_task_id:
+            # Reconnects and duplicate task-start messages belong to the same
+            # concrete trial.  Preserve AOI revision/state instead of resetting
+            # the active gaze task and reusing revision 1.
+            with self._state_lock:
+                if self._current_task and normalized_regions:
+                    self._current_task["bbox"] = normalized_regions
+                    self._current_task["regions"] = normalized_regions
+                if self._current_task:
+                    self._current_task["user_id"] = user_id or self._current_task.get("user_id", "")
+                    self._current_task["task_source"] = task_source or self._current_task.get("task_source", "")
+                    self._current_task["task_name"] = task_name or self._current_task.get("task_name", "")
+            self._log_info(
+                f"duplicate gaze task start ignored; task_id={resolved_task_id}"
+            )
+            return resolved_task_id
+
         if active_task_id and active_task_id != resolved_task_id:
             self._log_info(
                 "starting a new gaze task while another task is active; "
@@ -284,6 +312,11 @@ class GazeService:
                 "task_dir": task_dir,
                 "bbox": normalized_regions,
                 "regions": normalized_regions,
+                "analysis_aoi_regions": [],
+                "analysis_aoi_revision": None,
+                "analysis_aoi_snapshot_id": None,
+                "analysis_aoi_layout_signature": None,
+                "analysis_aoi_alignment_valid": False,
                 "start_system_time": system_time,
                 "user_id": user_id or "",
                 "task_source": task_source or "",
@@ -383,6 +416,11 @@ class GazeService:
         self._enqueue_db(
             "UPDATE gaze_targets SET disappear_time_us = ?, auto_closed = 1 "
             "WHERE task_id = ? AND disappear_time_us IS NULL",
+            (system_time, resolved_task_id),
+        )
+        self._enqueue_db(
+            "UPDATE gaze_aoi_snapshots SET valid_to_us = ? "
+            "WHERE task_id = ? AND valid_to_us IS NULL",
             (system_time, resolved_task_id),
         )
         # 更新任务记录为已完成
@@ -500,6 +538,116 @@ class GazeService:
     # 眼动数据库辅助方法
     # ═══════════════════════════════════════════
 
+    def set_analysis_aoi_snapshot(
+        self,
+        *,
+        task_id: str | None,
+        trial_id: str | None,
+        task_group_id: str | None,
+        task_type: str,
+        client_snapshot_id: str | None,
+        client_captured_at_ms: int | None,
+        change_reasons: list | None,
+        coordinate_space: str | None,
+        display: dict | None,
+        regions: list | None,
+    ) -> dict:
+        """Install versioned analysis AOIs without changing attention feedback."""
+        display_data = display if isinstance(display, dict) else {}
+        normalized_regions = _normalize_analysis_aoi_regions(
+            regions=regions,
+            coordinate_space=coordinate_space,
+            screen_width=_as_float(display_data.get("screen_width_physical_px"))
+            or _as_float(display_data.get("screen_width_css_px"))
+            or 1,
+            screen_height=_as_float(display_data.get("screen_height_physical_px"))
+            or _as_float(display_data.get("screen_height_css_px"))
+            or 1,
+        )
+        alignment_valid = bool(display_data.get("alignment_valid"))
+        canonical_payload = {
+            "coordinate_space": "display_area_normalized",
+            "display": display_data,
+            "regions": normalized_regions,
+        }
+        layout_signature = hashlib.sha256(
+            json.dumps(
+                canonical_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        now_us = int(time.time() * 1_000_000)
+
+        with self._state_lock:
+            if not self._task_active or self._current_task is None:
+                return {"ok": False, "msg": "no active gaze task"}
+            active_task_id = str(self._current_task.get("task_id"))
+            if task_id is not None and str(task_id) != active_task_id:
+                return {
+                    "ok": False,
+                    "msg": "task_id mismatch",
+                    "task_id": active_task_id,
+                }
+            if self._current_task.get("analysis_aoi_layout_signature") == layout_signature:
+                return {
+                    "ok": True,
+                    "changed": False,
+                    "task_id": active_task_id,
+                    "snapshot_id": self._current_task.get("analysis_aoi_snapshot_id"),
+                    "revision": self._current_task.get("analysis_aoi_revision"),
+                    "layout_signature": layout_signature,
+                }
+
+            revision = int(self._current_task.get("analysis_aoi_revision") or 0) + 1
+            snapshot_id = str(uuid.uuid4())
+            self._current_task["analysis_aoi_regions"] = [
+                region for region in normalized_regions if region.get("visible") is True
+            ]
+            self._current_task["analysis_aoi_revision"] = revision
+            self._current_task["analysis_aoi_snapshot_id"] = snapshot_id
+            self._current_task["analysis_aoi_layout_signature"] = layout_signature
+            self._current_task["analysis_aoi_alignment_valid"] = alignment_valid
+
+        self._enqueue_db(
+            "UPDATE gaze_aoi_snapshots SET valid_to_us = ? "
+            "WHERE task_id = ? AND valid_to_us IS NULL",
+            (now_us, active_task_id),
+        )
+        self._enqueue_db(
+            "INSERT INTO gaze_aoi_snapshots "
+            "(snapshot_id, task_id, trial_id, task_group_id, task_type, revision, "
+            "valid_from_us, change_reasons_json, layout_signature, coordinate_space, "
+            "display_json, regions_json, alignment_valid, client_captured_at_ms, client_snapshot_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                snapshot_id,
+                active_task_id,
+                str(trial_id) if trial_id is not None else active_task_id,
+                str(task_group_id) if task_group_id is not None else None,
+                str(task_type or ""),
+                revision,
+                now_us,
+                json.dumps(change_reasons or [], ensure_ascii=False),
+                layout_signature,
+                "display_area_normalized",
+                json.dumps(display_data, ensure_ascii=False, sort_keys=True),
+                json.dumps(normalized_regions, ensure_ascii=False, sort_keys=True),
+                1 if alignment_valid else 0,
+                int(client_captured_at_ms) if client_captured_at_ms is not None else None,
+                str(client_snapshot_id) if client_snapshot_id else None,
+            ),
+        )
+        return {
+            "ok": True,
+            "changed": True,
+            "task_id": active_task_id,
+            "snapshot_id": snapshot_id,
+            "revision": revision,
+            "layout_signature": layout_signature,
+        }
+
     def record_marker(
         self,
         name: str,
@@ -598,6 +746,32 @@ class GazeService:
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (task_id) REFERENCES gaze_tasks(task_id)
             );
+
+            CREATE TABLE IF NOT EXISTS gaze_aoi_snapshots (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_id TEXT    NOT NULL UNIQUE,
+                task_id     TEXT    NOT NULL,
+                trial_id    TEXT,
+                task_group_id TEXT,
+                task_type   TEXT    DEFAULT '',
+                revision    INTEGER NOT NULL,
+                valid_from_us INTEGER NOT NULL,
+                valid_to_us INTEGER,
+                change_reasons_json TEXT,
+                layout_signature TEXT NOT NULL,
+                coordinate_space TEXT DEFAULT 'display_area_normalized',
+                display_json TEXT,
+                regions_json TEXT,
+                alignment_valid INTEGER DEFAULT 0,
+                client_captured_at_ms INTEGER,
+                client_snapshot_id TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, revision),
+                FOREIGN KEY (task_id) REFERENCES gaze_tasks(task_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_gaze_aoi_snapshots_task_time
+            ON gaze_aoi_snapshots(task_id, valid_from_us);
 
             CREATE TABLE IF NOT EXISTS gaze_feedback_events (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -754,6 +928,15 @@ class GazeService:
         frame_data.update(_extract_tobii_raw_fields(gaze_data))
         if current_in_region:
             frame_data["hits"] = region_hits
+
+        aoi_revision = task.get("analysis_aoi_revision")
+        if aoi_revision is not None:
+            frame_data["aoi_revision"] = int(aoi_revision)
+            if task.get("analysis_aoi_alignment_valid"):
+                analysis_regions = task.get("analysis_aoi_regions") or []
+                frame_data["aoi_hits"] = (
+                    _region_hits(gaze_point, analysis_regions) if gaze_valid else []
+                )
 
         # 向文件写入队列发送瘦身后的逐帧数据
         self._writer_queue.put({
@@ -1175,6 +1358,43 @@ def _normalize_regions(
             normalized = _clip_region(normalized)
         result.append(normalized)
     return result
+
+
+def _normalize_analysis_aoi_regions(
+    regions: list | None,
+    coordinate_space: str | None,
+    screen_width: float,
+    screen_height: float,
+) -> list:
+    """Normalize and retain metadata for the seven experiment-analysis AOIs."""
+    if not isinstance(regions, list):
+        raise ValueError("regions must be a list")
+    seen_ids: set[str] = set()
+    result = []
+    for raw_region in regions:
+        if not isinstance(raw_region, dict):
+            continue
+        region_id = str(raw_region.get("id") or "").strip()
+        if region_id not in ANALYSIS_AOI_IDS:
+            raise ValueError(f"unsupported analysis AOI id: {region_id or '<empty>'}")
+        if region_id in seen_ids:
+            raise ValueError(f"duplicate analysis AOI id: {region_id}")
+        seen_ids.add(region_id)
+        normalized_items = _normalize_regions(
+            regions=[raw_region],
+            bbox=None,
+            coordinate_space=coordinate_space,
+            screen_width=screen_width,
+            screen_height=screen_height,
+        )
+        if not normalized_items:
+            raise ValueError(f"invalid analysis AOI geometry: {region_id}")
+        normalized = normalized_items[0]
+        normalized["visible"] = bool(raw_region.get("visible"))
+        binding = raw_region.get("binding")
+        normalized["binding"] = binding if isinstance(binding, dict) else {}
+        result.append(normalized)
+    return sorted(result, key=lambda item: item["id"])
 
 
 def _infer_coordinate_space(regions: list) -> str:

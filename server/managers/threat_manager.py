@@ -363,6 +363,36 @@ class ThreatManager:
         
         if use_enhanced_protocol:
             emergency_msg = self.generate_enhanced_sa_emergency(threats, radar_config)
+            current_candidates = list(emergency_msg.get("updated_threats") or [])
+            missile_candidate = emergency_msg.get("missile_threat")
+            if isinstance(missile_candidate, dict):
+                current_candidates.append(missile_candidate)
+            scored_candidates = [
+                candidate for candidate in current_candidates
+                if isinstance(candidate, dict) and candidate.get("id") is not None
+            ]
+            ground_truth = max(
+                scored_candidates,
+                key=lambda candidate: float(candidate.get("score") or 0),
+                default=None,
+            )
+            task_id = session_state.get("current_task_id")
+            if task_id is not None and ground_truth is not None:
+                snapshots = session_state.setdefault("trust_task_snapshots", {})
+                snapshots[str(task_id)] = {
+                    "task_type": "SA_THREAT_RESPONSE",
+                    "candidate_ids": [str(candidate["id"]) for candidate in scored_candidates],
+                    "candidates": [
+                        {
+                            "id": str(candidate["id"]),
+                            "type": candidate.get("type"),
+                            "score": candidate.get("score"),
+                        }
+                        for candidate in scored_candidates
+                    ],
+                    "ground_truth_id": str(ground_truth["id"]),
+                    "updated_at_ms": int(time.time() * 1000),
+                }
         else:
             # 回退到传统协议
             legacy_threats = [
@@ -488,4 +518,4 @@ class ThreatManager:
             print(f"记录SAEmergency日志失败: {e}")
 
 # 全局威胁管理器实例
-threat_manager = ThreatManager() 
+threat_manager = ThreatManager()

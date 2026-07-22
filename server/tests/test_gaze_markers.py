@@ -594,3 +594,222 @@ def test_feedback_payload_removes_duplicate_envelope_fields():
         assert "reason" not in payload
         assert "consecutive_false_count" not in payload
         assert "threshold" not in payload
+
+
+def test_analysis_aoi_snapshots_are_versioned_and_do_not_change_attention_hits():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[],
+                screen_size=(100, 100),
+                task_id="aoi-task",
+                user_id="S014",
+                system_time=1_700_000_000_000_000,
+                regions=[{
+                    "id": "antenna_prompt",
+                    "shape": "rect",
+                    "left": 0.4,
+                    "top": 0.3,
+                    "right": 0.5,
+                    "bottom": 0.4,
+                }],
+                coordinate_space="display_area_normalized",
+            )
+            payload = dict(
+                task_id="aoi-task",
+                trial_id="aoi-task",
+                task_group_id="group-1",
+                task_type="RADAR_TARGETING",
+                client_snapshot_id="client-1",
+                client_captured_at_ms=1_700_000_000_000,
+                change_reasons=["trial_started"],
+                coordinate_space="display_area_normalized",
+                display={
+                    "alignment_valid": True,
+                    "screen_width_css_px": 100,
+                    "screen_height_css_px": 100,
+                },
+                regions=[
+                    {
+                        "id": "left_candidate_list",
+                        "shape": "rect",
+                        "visible": True,
+                        "left": 0.3,
+                        "top": 0.2,
+                        "right": 0.6,
+                        "bottom": 0.6,
+                        "binding": {"candidate_ids": ["A"]},
+                    },
+                    {
+                        "id": "left_ai_target",
+                        "shape": "rect",
+                        "visible": True,
+                        "left": 0.4,
+                        "top": 0.3,
+                        "right": 0.5,
+                        "bottom": 0.4,
+                        "binding": {"target_id": "A"},
+                    },
+                    {
+                        "id": "right_ai_history_accuracy",
+                        "shape": "rect",
+                        "visible": True,
+                        "left": 0.4,
+                        "top": 0.3,
+                        "right": 0.5,
+                        "bottom": 0.4,
+                        "binding": {"metric": "ai_history_accuracy"},
+                    },
+                ],
+            )
+            first = svc.set_analysis_aoi_snapshot(**payload)
+            duplicate = svc.set_analysis_aoi_snapshot(**payload)
+            assert first["changed"] is True
+            assert first["revision"] == 1
+            assert duplicate["changed"] is False
+            assert duplicate["revision"] == 1
+
+            svc._gaze_data_callback({
+                "left_gaze_point_validity": 1,
+                "right_gaze_point_validity": 1,
+                "left_gaze_point_on_display_area": (0.42, 0.31),
+                "right_gaze_point_on_display_area": (0.42, 0.31),
+            })
+
+            payload["regions"][1]["left"] = 0.7
+            payload["regions"][1]["right"] = 0.8
+            payload["change_reasons"] = ["geometry_changed"]
+            second = svc.set_analysis_aoi_snapshot(**payload)
+            assert second["changed"] is True
+            assert second["revision"] == 2
+            svc.stop_task(task_id="aoi-task", system_time=1_700_000_000_500_000)
+        finally:
+            svc.shutdown()
+
+        raw_file = Path(tmp) / "raw" / "S014" / "aoi-task" / "raw_gaze.jsonl"
+        frame = json.loads(raw_file.read_text(encoding="utf-8").strip())
+        assert frame["hit"] is True
+        assert frame["hits"] == ["antenna_prompt"]
+        assert frame["aoi_revision"] == 1
+        assert frame["aoi_hits"] == ["left_ai_target", "left_candidate_list", "right_ai_history_accuracy"]
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            rows = conn.execute(
+                "SELECT revision, valid_from_us, valid_to_us, alignment_valid "
+                "FROM gaze_aoi_snapshots WHERE task_id = ? ORDER BY revision",
+                ("aoi-task",),
+            ).fetchall()
+        finally:
+            conn.close()
+        assert [row[0] for row in rows] == [1, 2]
+        assert rows[0][2] == rows[1][1]
+        assert rows[1][2] == 1_700_000_000_500_000
+        assert [row[3] for row in rows] == [1, 1]
+
+
+def test_invalid_aoi_alignment_records_revision_without_aoi_hits():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[], screen_size=None, task_id="invalid-aoi-task", user_id="S015",
+                system_time=1_700_000_000_000_000,
+            )
+            result = svc.set_analysis_aoi_snapshot(
+                task_id="invalid-aoi-task",
+                trial_id="invalid-aoi-task",
+                task_group_id=None,
+                task_type="SA_THREAT_RESPONSE",
+                client_snapshot_id="client-invalid",
+                client_captured_at_ms=1_700_000_000_000,
+                change_reasons=["fullscreen_changed"],
+                coordinate_space="display_area_normalized",
+                display={"alignment_valid": False},
+                regions=[{
+                    "id": "right_detail",
+                    "shape": "rect",
+                    "visible": True,
+                    "left": 0.6,
+                    "top": 0.2,
+                    "right": 0.9,
+                    "bottom": 0.6,
+                }],
+            )
+            assert result["revision"] == 1
+            svc._gaze_data_callback({
+                "left_gaze_point_validity": 1,
+                "right_gaze_point_validity": 1,
+                "left_gaze_point_on_display_area": (0.7, 0.4),
+                "right_gaze_point_on_display_area": (0.7, 0.4),
+            })
+            svc.stop_task(task_id="invalid-aoi-task", system_time=1_700_000_000_500_000)
+        finally:
+            svc.shutdown()
+
+        raw_file = Path(tmp) / "raw" / "S015" / "invalid-aoi-task" / "raw_gaze.jsonl"
+        frame = json.loads(raw_file.read_text(encoding="utf-8").strip())
+        assert frame["aoi_revision"] == 1
+        assert "aoi_hits" not in frame
+
+def test_duplicate_start_preserves_analysis_aoi_revision():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        try:
+            svc.start_task(
+                bbox=[], screen_size=(100, 100), task_id="same-task", user_id="S016",
+                system_time=1_700_000_000_000_000,
+            )
+            common = {
+                "task_id": "same-task",
+                "trial_id": "same-task",
+                "task_group_id": "group-1",
+                "task_type": "RADAR_TARGETING",
+                "client_snapshot_id": "snapshot-1",
+                "client_captured_at_ms": 1_700_000_000_000,
+                "change_reasons": ["trial_started"],
+                "coordinate_space": "display_area_normalized",
+                "display": {"alignment_valid": True},
+                "regions": [{
+                    "id": "right_detail",
+                    "shape": "rect",
+                    "visible": True,
+                    "left": 0.6,
+                    "top": 0.2,
+                    "right": 0.9,
+                    "bottom": 0.6,
+                    "binding": {"mode": "tdc_detail", "target_id": "target-1"},
+                }],
+            }
+            first = svc.set_analysis_aoi_snapshot(**common)
+            assert first["revision"] == 1
+
+            repeated = svc.start_task(
+                bbox=[], screen_size=(100, 100), task_id="same-task", user_id="S016",
+                system_time=1_700_000_000_100_000,
+            )
+            assert repeated == "same-task"
+
+            common["client_snapshot_id"] = "snapshot-2"
+            common["change_reasons"] = ["binding_changed"]
+            common["regions"][0]["binding"]["target_id"] = "target-2"
+            second = svc.set_analysis_aoi_snapshot(**common)
+            assert second["revision"] == 2
+            svc.stop_task(task_id="same-task", system_time=1_700_000_000_500_000)
+        finally:
+            svc.shutdown()
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            revisions = conn.execute(
+                "SELECT revision FROM gaze_aoi_snapshots WHERE task_id = ? ORDER BY revision",
+                ("same-task",),
+            ).fetchall()
+            task_count = conn.execute(
+                "SELECT COUNT(*) FROM gaze_tasks WHERE task_id = ?", ("same-task",)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert revisions == [(1,), (2,)]
+        assert task_count == 1
