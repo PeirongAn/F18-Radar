@@ -7,6 +7,7 @@ interface JoystickData {
   sub_y: number;       // 副轴Y坐标 (-1 到 1)
   button1: boolean;    // 按钮1状态
   button2: boolean;    // 按钮2状态
+  button3: boolean;    // 按钮3状态（人工复核）
   button7: boolean;    // 按钮7状态
 }
 
@@ -31,6 +32,7 @@ const JoystickInitializationPanel: React.FC = () => {
     sub_y: 0.0,
     button1: false,
     button2: false,
+    button3: false,
     button7: false
   });
   const [rawData, setRawData] = useState<RawData>({
@@ -104,8 +106,9 @@ const JoystickInitializationPanel: React.FC = () => {
               main_x: message.data.main_x,
               main_y: message.data.main_y,
               sub_y: message.data.sub_y,
-              button1: message.data.buttons.button1,
-              button2: message.data.buttons.button2,
+              button1: message.data.buttons.button0,
+              button2: message.data.buttons.button1,
+              button3: message.data.buttons.button2,
               button7: message.data.buttons.button7
             });
           }
@@ -464,6 +467,13 @@ const JoystickInitializationPanel: React.FC = () => {
             按钮2
           </div>
           <div className={`px-4 py-2 rounded-lg font-semibold transition-all duration-100 ${
+            joystickData.button3
+              ? 'bg-cyan-600 text-white shadow-lg'
+              : 'bg-gray-700 text-gray-400'
+          }`}>
+            按钮3 · 人工复核
+          </div>
+          <div className={`px-4 py-2 rounded-lg font-semibold transition-all duration-100 ${
             joystickData.button7 
               ? 'bg-green-600 text-white shadow-lg' 
               : 'bg-gray-700 text-gray-400'
@@ -522,4 +532,4 @@ const JoystickInitializationPanel: React.FC = () => {
   );
 };
 
-export default JoystickInitializationPanel; 
+export default JoystickInitializationPanel;

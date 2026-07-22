@@ -21,6 +21,26 @@ export interface TargetDisplayPosition {
   y: number;
 }
 
+export const targetDisplayPositionsEqual = (
+  current: Map<string, TargetDisplayPosition>,
+  next: Map<string, TargetDisplayPosition>,
+): boolean => {
+  if (current.size !== next.size) return false;
+
+  for (const [targetId, nextPosition] of next) {
+    const currentPosition = current.get(targetId);
+    if (
+      !currentPosition ||
+      !Object.is(currentPosition.x, nextPosition.x) ||
+      !Object.is(currentPosition.y, nextPosition.y)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 // 定义任务类型，确保与useRadarData和服务器中使用的类型一致
 export type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
 
@@ -254,6 +274,13 @@ export class RadarStore {
   }
 
   setTargetDisplayPositions(positions: Map<string, TargetDisplayPosition>) {
+    // Avoid waking observer(Radar) when RadarDisplay recalculates identical
+    // coordinates during a render. Mutating the observable map here would
+    // otherwise form an effect -> MobX update -> render loop.
+    if (targetDisplayPositionsEqual(this.targetDisplayPositions, positions)) {
+      return;
+    }
+
     this.targetDisplayPositions.clear();
     positions.forEach((value, key) => {
       this.targetDisplayPositions.set(key, value);

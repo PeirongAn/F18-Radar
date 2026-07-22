@@ -95,7 +95,7 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
   };
 
   return (
-    <div style={{
+    <div data-gaze-aoi="left_candidate_list" style={{
       padding: '10px 14px 12px',
       background: 'rgba(0,8,3,0.9)',
       display: 'grid',

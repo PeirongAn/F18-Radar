@@ -85,6 +85,14 @@ export interface RadarDisplayProps {
   sensorTrustDecision?: SensorTrustDecision;
   onIffModeChange?: (enabled: boolean) => void;
   onIffTargetConfirmed?: (targetId?: string) => void;
+  onTrustTdcCandidate?: (targetId: string | null) => void;
+  trustFocusRadius?: number;
+  trustAiRecommendationId?: string;
+  trustGlowActive?: boolean;
+  trustManualReviewActive?: boolean;
+  trustDisplayNumbers?: Map<string, number>;
+  trustFocusedTargetId?: string;
+  getTrustTrialExtra?: () => Record<string, unknown> | null;
 }
 
 const RadarDisplay: React.FC<RadarDisplayProps> = observer(({ 
@@ -121,7 +129,15 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   scanLineResetToken = 0,
   sensorTrustDecision,
   onIffModeChange,
-  onIffTargetConfirmed
+  onIffTargetConfirmed,
+  onTrustTdcCandidate,
+  trustFocusRadius = 30,
+  trustAiRecommendationId,
+  trustGlowActive = false,
+  trustManualReviewActive = false,
+  trustDisplayNumbers,
+  trustFocusedTargetId,
+  getTrustTrialExtra,
 }) => {
   // 使用钩子获取实时雷达数据以及发送消息的函数
   // const { connected, radarData, error } = useRadarData(wsUrl);
@@ -660,6 +676,27 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions, joystickEnabled, calculatedTdcPosition]);
 
+  useEffect(() => {
+    if (!onTrustTdcCandidate || !processedExternalTargets?.length) {
+      onTrustTdcCandidate?.(null);
+      return;
+    }
+    let nearestId: string | null = null;
+    let nearestDistance = trustFocusRadius;
+    processedExternalTargets.forEach(target => {
+      const position = radarStore.targetDisplayPositions.get(target.id) || target.position;
+      const distance = Math.hypot(
+        position.x - calculatedTdcPosition.x,
+        position.y - calculatedTdcPosition.y,
+      );
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestId = target.id;
+      }
+    });
+    onTrustTdcCandidate(nearestId);
+  }, [calculatedTdcPosition, onTrustTdcCandidate, processedExternalTargets, radarStore.targetDisplayPositions, trustFocusRadius]);
+
   const finishMissionAndAdvance = useCallback(() => {
     if (onClearMessages) {
       onClearMessages();
@@ -679,6 +716,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       completedRadarTaskKeysRef.current.add(taskKey);
     }
 
+    const trustTrialExtra = getTrustTrialExtra?.();
     sendMessage?.({
       type: 'task_result_confirmed',
       task_type: 'RADAR_TARGETING',
@@ -686,6 +724,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       timestamp: Date.now(),
       // Result confirmation is always a human action, even in an AI-assisted task.
       event_owner: 'manual',
+      extra: trustTrialExtra ? { trust_trial: trustTrialExtra } : undefined,
     });
 
     if (hasReachedRadarTaskTotal) {
@@ -704,7 +743,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       }
       setShowMissionConfirm(false);
     }
-  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
+  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal, getTrustTrialExtra]);
 
   // 处理确认弹窗的确认操作
   const handleConfirmYes = useCallback(() => {
@@ -1087,6 +1126,11 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               cognitiveLoad={cognitiveLoad}
               range={range}
               sensorTrustDecision={sensorTrustDecision}
+              trustAiRecommendationId={trustAiRecommendationId}
+              trustGlowActive={trustGlowActive}
+              trustManualReviewActive={trustManualReviewActive}
+              trustDisplayNumbers={trustDisplayNumbers}
+              trustFocusedTargetId={trustFocusedTargetId}
             />
           )}
           

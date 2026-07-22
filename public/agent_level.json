@@ -31,6 +31,14 @@
       ]
     }
   ],
+  "trust_control": {
+    "enabled": true,
+    "disclose_ai_reliability": false,
+    "manual_review_button": 3,
+    "sensor_focus_radius_px": 30,
+    "threat_focus_radius_px": 40,
+    "focus_dwell_ms": 150
+  },
   "trust_calibration": {
     "enabled": false,
     "state": {

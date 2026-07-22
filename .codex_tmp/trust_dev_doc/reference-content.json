@@ -1,0 +1,1033 @@
+{
+  "paragraphs": [
+    {
+      "index": 0,
+      "style": "Heading 1",
+      "alignment": "LEFT (0)",
+      "text": "1. 界面设计信任影响因素",
+      "runs": [
+        {
+          "text": "1. 界面设计",
+          "bold": null,
+          "italic": null,
+          "size_pt": 14.0,
+          "font": null
+        },
+        {
+          "text": "信任影响因素",
+          "bold": null,
+          "italic": null,
+          "size_pt": 14.0,
+          "font": null
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "style": "Normal",
+      "alignment": "None",
+      "text": "1.1 内容维度",
+      "runs": [
+        {
+          "text": "1.1 ",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "内容维度",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "style": "Caption",
+      "alignment": "CENTER (1)",
+      "text": "表1 内容维度信任影响因素",
+      "runs": [
+        {
+          "text": "表",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "1 内容维度",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "信任影响因素",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "style": "Normal",
+      "alignment": "None",
+      "text": "1.2形式维度",
+      "runs": [
+        {
+          "text": "1.2",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "形式维度",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "style": "Caption",
+      "alignment": "CENTER (1)",
+      "text": "表2 形式维度信任影响因素",
+      "runs": [
+        {
+          "text": "表",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "2 形式维度",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "信任影响因素",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "style": "Heading 1",
+      "alignment": "LEFT (0)",
+      "text": "分任务实验设计方案",
+      "runs": [
+        {
+          "text": "分",
+          "bold": null,
+          "italic": null,
+          "size_pt": 14.0,
+          "font": null
+        },
+        {
+          "text": "任务实验设计方案",
+          "bold": null,
+          "italic": null,
+          "size_pt": 14.0,
+          "font": null
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "style": "Normal",
+      "alignment": "None",
+      "text": "2.1 传感器控制",
+      "runs": [
+        {
+          "text": "2.1 ",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "传感器控制",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "目标：通过调整天线高度、根据目标在界面显示的位置和朝向，从混合目标中识别敌方（红色）与友方（绿色）。\n2.1.1 界面设计：",
+      "runs": [
+        {
+          "text": "目标：通过调整天线高度、根据目标在界面显示的位置和朝向，从混合目标中识别敌方（红色）与友方（绿色）。",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "\n",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "2.",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "1",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": ".1 ",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "界面设计：",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "内容维度涉及因素：可靠性、置信度、可解释性",
+      "runs": [
+        {
+          "text": "内容维度涉及因素：可靠性、置信度、可解释性",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "形式维度设计因素：颜色编码、图表/图形、动态/动画",
+      "runs": [
+        {
+          "text": "形式维度设计因素：颜色编码、图表/图形、动态/动画",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 12,
+      "style": "Normal (Web)",
+      "alignment": "CENTER (1)",
+      "text": "图4 修改界面1",
+      "runs": [
+        {
+          "text": "图4 修改界面1",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 14,
+      "style": "Normal (Web)",
+      "alignment": "CENTER (1)",
+      "text": "图5 修改界面2",
+      "runs": [
+        {
+          "text": "图5 修改界面2",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 15,
+      "style": "Heading 3",
+      "alignment": "None",
+      "text": "2.1.2 需要收集的数据：",
+      "runs": [
+        {
+          "text": "2.",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "1",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": ".2 需要收集的",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "数据：",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 16,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "行为模式：是否修改AI锁定目标、目标切换个数、适当信任率",
+      "runs": [
+        {
+          "text": "行为模式：是否修改AI锁定目标、目标切换个数、适当信任率",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 17,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "监督行为：是否点击人工复核、点击次数、查看时长",
+      "runs": [
+        {
+          "text": "监督行为：是否点击人工复核、点击次数、查看时长",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 18,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "反应时间：AI给出锁定目标至用户锁定目标犹豫时长",
+      "runs": [
+        {
+          "text": "反应时间：AI给出锁定目标至用户锁定目标犹豫时长",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 19,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "任务绩效：准确率、任务整体完成耗时",
+      "runs": [
+        {
+          "text": "任务绩效：准确率、任务整体完成耗时",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 20,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "生理数据：各区域的注视点、注视时长、注视次数、扫视路径",
+      "runs": [
+        {
+          "text": "生理数据：各区域的注视点、注视时长、注视次数、扫视路径",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 21,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "主观数据：每试次信任量表评分",
+      "runs": [
+        {
+          "text": "主观数据：每试次信任量表评分",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 22,
+      "style": "Heading 3",
+      "alignment": "None",
+      "text": "2.1.3 因变量：",
+      "runs": [
+        {
+          "text": "2.",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "1",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": ".3 ",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "因变量：",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 23,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "适当信任成功率=N适当信任÷N总试次×100%",
+      "runs": [
+        {
+          "text": "适当信任成功率=N适当信任÷N总试次×100% ",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 24,
+      "style": "Caption",
+      "alignment": "CENTER (1)",
+      "text": "表4 信任判定规则",
+      "runs": [
+        {
+          "text": "表",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "4",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": " ",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "信任判定规则",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 26,
+      "style": "Normal",
+      "alignment": "None",
+      "text": "2.2 威胁排序",
+      "runs": [
+        {
+          "text": "2.",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "2 ",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "威胁排序",
+          "bold": null,
+          "italic": null,
+          "size_pt": 12.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 27,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "目标：根据威胁值（正比）与距离（反比）从多目标中选出最具威胁者。",
+      "runs": [
+        {
+          "text": "目标：根据威胁值（正比）与距离（反比）从多目标中选出最具威胁者。",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 29,
+      "style": "Normal (Web)",
+      "alignment": "CENTER (1)",
+      "text": "图6 初始界面",
+      "runs": [
+        {
+          "text": "图6 初始界面",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 30,
+      "style": "Heading 3",
+      "alignment": "None",
+      "text": "2.2.1  界面设计",
+      "runs": [
+        {
+          "text": "2.",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "2",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": ".1  界面设计",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 31,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "内容维度涉及因素：可靠性、置信度、可解释性",
+      "runs": [
+        {
+          "text": "内容维度涉及因素：可靠性、置信度、可解释性",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 32,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "形式维度设计因素：颜色编码、图表/图形、动态/动画",
+      "runs": [
+        {
+          "text": "形式维度设计因素：颜色编码、图表/图形、动态/动画",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 34,
+      "style": "Normal (Web)",
+      "alignment": "CENTER (1)",
+      "text": "图7 修改界面1",
+      "runs": [
+        {
+          "text": "图7 修改界面1",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 36,
+      "style": "Normal (Web)",
+      "alignment": "CENTER (1)",
+      "text": "图8 修改界面2",
+      "runs": [
+        {
+          "text": "图8 修改界面2",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.0,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 38,
+      "style": "Heading 3",
+      "alignment": "None",
+      "text": "2.2.2 需要收集的数据",
+      "runs": [
+        {
+          "text": "2.",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "2",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": ".2 需要收集的数据",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 39,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "行为模式：是否修改AI锁定目标、适当信任率",
+      "runs": [
+        {
+          "text": "行为模式：是否修改AI锁定目标、适当信任率",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 40,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "监督行为：是否点击人工复核、点击次数、查看时长",
+      "runs": [
+        {
+          "text": "监督行为：是否点击人工复核、点击次数、查看时长",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 41,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "反应时间： AI给出锁定目标至用户锁定目标犹豫时长",
+      "runs": [
+        {
+          "text": "反应时间： AI给出锁定目标至用户锁定目标犹豫时长",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 42,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "任务绩效：准确率、任务整体完成耗时",
+      "runs": [
+        {
+          "text": "任务绩效：准确率、任务整体完成耗时",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 43,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "生理数据：各区域的注视点、注视时长、注视次数、扫视路径",
+      "runs": [
+        {
+          "text": "生理数据：各区域的注视点、注视时长、注视次数、扫视路径",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 44,
+      "style": "Normal (Web)",
+      "alignment": "None",
+      "text": "主观数据：每试次信任量表评分",
+      "runs": [
+        {
+          "text": "主观数据：每试次信任量表评分",
+          "bold": null,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 45,
+      "style": "Heading 3",
+      "alignment": "None",
+      "text": "2.2.3 因变量",
+      "runs": [
+        {
+          "text": "2.",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "2",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        },
+        {
+          "text": ".3 因变量",
+          "bold": false,
+          "italic": null,
+          "size_pt": 10.5,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 46,
+      "style": "Normal",
+      "alignment": "None",
+      "text": "适当信任成功率=N适当信任÷N总试次×100%",
+      "runs": [
+        {
+          "text": "适当信任成功率=N适当信任÷N总试次×100% ",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        }
+      ]
+    },
+    {
+      "index": 47,
+      "style": "Caption",
+      "alignment": "CENTER (1)",
+      "text": "表5 信任判定规则",
+      "runs": [
+        {
+          "text": "表",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "5",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": " ",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        },
+        {
+          "text": "信任判定规则",
+          "bold": null,
+          "italic": null,
+          "size_pt": null,
+          "font": "Times New Roman"
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "index": 0,
+      "style": "Table Grid",
+      "rows": [
+        [
+          "具体指标",
+          "定义说明",
+          "支撑文献"
+        ],
+        [
+          "当前意图信息",
+          "系统当前在做什么、计划做什么",
+          "Selkowitz A R, Lakhmani S G, Chen J Y C. Using agent transparency to support situation awareness of the Autonomous Squad Member[J]. Cognitive Systems Research, 2017, 46: 13-25."
+        ],
+        [
+          "可解释性",
+          "系统得出判断所依据的证据与逻辑链",
+          "Selkowitz A R, Lakhmani S G, Chen J Y C. Using agent transparency to support situation awareness of the Autonomous Squad Member[J]. Cognitive Systems Research, 2017, 46: 13-25."
+        ],
+        [
+          "预测性",
+          "若采纳建议，后续会发生什么",
+          "Selkowitz A R, Lakhmani S G, Chen J Y C. Using agent transparency to support situation awareness of the Autonomous Squad Member[J]. Cognitive Systems Research, 2017, 46: 13-25."
+        ],
+        [
+          "可靠性",
+          "系统过去同类任务的成功率统计",
+          "信任三要素（purpose / process/ performance）：Lee, J. D., & See, K. A. (2004). Trust in automation: Designing for appropriate reliance."
+        ],
+        [
+          "置信度",
+          "系统对自身判断的置信度或误差范围",
+          "McGuirl, J. M., & Sarter, N. B. (2006). Supporting trust calibration and the effective use of decision aids by presenting dynamic system confidence information. Human Factors"
+        ],
+        [
+          "失效边界",
+          "系统在何种条件下可能失效",
+          "George, M. W., Hass, Z., & Pitts, B. J. (2026). Do you trust what an automated vehicle shows you? The effects of presenting dynamic system certainty information on driver behavior. Applied Ergonomics, 134, 104719."
+        ],
+        [
+          "环境信息",
+          "当前任务难度、环境复杂度等情境线索",
+          "Gao, Q., Chen, L., Shi, Y., Luo, Y., Shen, M., & Gao, Z. (2024). Trust calibration through perceptual and predictive information of the external context in autonomous vehicle. Transportation Research Part F: Traffic Psychology and Behaviour, 107, 537–548."
+        ]
+      ]
+    },
+    {
+      "index": 1,
+      "style": "Table Grid",
+      "rows": [
+        [
+          "具体指标",
+          "定义说明",
+          "支撑文献"
+        ],
+        [
+          "颜色编码",
+          "用红/黄/绿等颜色表示危险等级、敌我身份",
+          "Song, Hayeong & Cho, Aeree & Xiong, Cindy & Stasko, John. (2025). Visualizing Trust: How Chart Embellishments Influence Perceptions of Credibility. IEEE Transactions on Visualization and Computer Graphics."
+        ],
+        [
+          "形状编码",
+          "用不同的图标/形状代表不同类型的实体或状态",
+          "Machida, M. Murakami, M. Goto, A. Differences in Data Trustworthiness and Risk Perception between Bar Graphs and Pictograms. Int. J. Environ. Res. Public Health 2022, 19, 4690. https://doi.org/10.3390/ijerph19084690"
+        ],
+        [
+          "尺寸编码",
+          "用大小、粗细、线宽表示重要性或数值高低",
+          "Zacks, Jeff & Tversky, Barbara. (1999). Bars and lines: A study of graphic communication. Memory & cognition. 27. 1073-9. 10.3758/BF03201236."
+        ],
+        [
+          "文字/数值",
+          "以精确数字、标签或警告文本呈现",
+          "https://www.tableau.com/blog/exploring-data-uncertainty-through-speech-text-and-visualization"
+        ],
+        [
+          "图表/图形",
+          "以折线、柱状、雷达、空间态势图等呈现",
+          "McKinley O G, Pandey S, Ottley A. Trustworthy by Design: The Viewer's Perspective on Trust in Data Visualization[C]//Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems. 2025: 1-17."
+        ],
+        [
+          "动态/动画",
+          "以脉冲、闪烁、流动等效果强调紧迫性或变化趋势",
+          "Turner S, Wylde J, Langham M, et al. Determining optimum flash patterns for emergency service vehicles: An experimental investigation using high definition film[J]. Applied ergonomics, 2014, 45(5): 1313-1319."
+        ],
+        [
+          "拟人化程度",
+          "系统是否以拟人化形象/语气呈现",
+          "Nissen A, Jahn K. Between anthropomorphism, trust, and the uncanny valley: A dual-processing perspective on perceived trustworthiness and its mediating effects on use intentions of social robots[J]. 2021."
+        ],
+        [
+          "主动/被动推送",
+          "系统主动弹出提示vs 操作员按需查询",
+          "Lu F, Xu Y, Xu X, et al. Exploring the impact of user and system factors on human-AI interactions in head-worn displays[C]//2023 IEEE International Symposium on Mixed and Augmented Reality (ISMAR). IEEE, 2023: 109-118."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "style": "Normal Table",
+      "rows": [
+        [
+          "AI锁定目标是否正确",
+          "适当行为",
+          "被试行为",
+          "判定"
+        ],
+        [
+          "是",
+          "依从",
+          "依从",
+          "适当信任"
+        ],
+        [
+          "是",
+          "依从",
+          "否决",
+          "欠信任"
+        ],
+        [
+          "否",
+          "否决",
+          "否决",
+          "适当信任"
+        ],
+        [
+          "否",
+          "否决",
+          "依从",
+          "过度信任"
+        ]
+      ]
+    },
+    {
+      "index": 3,
+      "style": "Normal Table",
+      "rows": [
+        [
+          "AI锁定目标是否正确",
+          "适当行为",
+          "被试行为",
+          "判定"
+        ],
+        [
+          "是",
+          "依从",
+          "依从",
+          "适当信任"
+        ],
+        [
+          "是",
+          "依从",
+          "否决",
+          "欠信任"
+        ],
+        [
+          "否",
+          "否决",
+          "否决",
+          "适当信任"
+        ],
+        [
+          "否",
+          "否决",
+          "依从",
+          "过度信任"
+        ]
+      ]
+    }
+  ],
+  "styles": {
+    "Normal": {
+      "font": null,
+      "size_pt": 10.5,
+      "bold": null,
+      "color": null
+    },
+    "Heading 1": {
+      "font": "Times New Roman",
+      "size_pt": null,
+      "bold": null,
+      "color": null
+    },
+    "Heading 3": {
+      "font": "宋体",
+      "size_pt": 13.5,
+      "bold": true,
+      "color": null
+    }
+  }
+}

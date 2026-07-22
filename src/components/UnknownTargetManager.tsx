@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Group, Line, Rect, Text } from 'react-konva';
 import UnknownTarget, { UnknownTargetData } from './UnknownTarget';
 import { SensorTrustDecision } from '../types/trustCalibration';
@@ -57,7 +57,48 @@ interface UnknownTargetManagerProps {
    */
   range?: number;
   sensorTrustDecision?: SensorTrustDecision;
+  trustAiRecommendationId?: string;
+  trustGlowActive?: boolean;
+  trustManualReviewActive?: boolean;
+  trustDisplayNumbers?: Map<string, number>;
+  trustFocusedTargetId?: string;
 }
+
+const ManualReviewPulse: React.FC<{ x: number; y: number }> = ({ x, y }) => {
+  const rectRef = useRef<any>(null);
+
+  useEffect(() => {
+    let frameId = 0;
+    const animate = (timestamp: number) => {
+      const opacity = 0.3 + 0.65 * ((Math.sin(timestamp / 115) + 1) / 2);
+      if (rectRef.current) {
+        rectRef.current.opacity(opacity);
+        rectRef.current.getLayer()?.batchDraw();
+      }
+      frameId = window.requestAnimationFrame(animate);
+    };
+    frameId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  return (
+    <Rect
+      ref={rectRef}
+      x={x - 31}
+      y={y - 31}
+      width={62}
+      height={62}
+      stroke="#91e8f5"
+      strokeWidth={2.5}
+      cornerRadius={9}
+      dash={[7, 4]}
+      shadowColor="#69d8ff"
+      shadowBlur={20}
+      opacity={0.9}
+      listening={false}
+    />
+  );
+};
 
 /**
  * 未知目标管理器组件
@@ -75,7 +116,12 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
   onTargetClick,
   cognitiveLoad = 'low',
   range = 20,
-  sensorTrustDecision
+  sensorTrustDecision,
+  trustAiRecommendationId,
+  trustGlowActive = false,
+  trustManualReviewActive = false,
+  trustDisplayNumbers,
+  trustFocusedTargetId,
 }) => {
   // 如果不显示目标或者没有目标数据，但有垂直线需要显示
   if ((!showTargets || !externalTargets || externalTargets.length === 0) && verticalLineX === undefined) {
@@ -121,15 +167,54 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
         const candidateIndex = sensorTrustDecision?.candidates.findIndex(candidate => candidate.id === target.id) ?? -1;
         const isAiRecommendation = sensorTrustDecision?.aiTargetId === target.id;
         const shouldAnnotate = sensorTrustDecision?.enabled && (isAiRecommendation || candidateIndex >= 0);
-	        const stroke = sensorTrustDecision?.controlLevel === 'review'
-	          ? '#ff9a2e'
-	          : isAiRecommendation
-	            ? '#1ca8ff'
-	            : '#d6b84a';
+        const stroke = sensorTrustDecision?.controlLevel === 'review'
+          ? '#ff9a2e'
+          : isAiRecommendation
+            ? '#1ca8ff'
+            : '#d6b84a';
         const isReview = sensorTrustDecision?.controlLevel === 'review';
-	        const displayPosition = target.position;
+        const displayPosition = target.position;
+        const showTrustGlow = trustGlowActive && trustAiRecommendationId === target.id;
+        const showManualReviewPulse = trustManualReviewActive && trustAiRecommendationId === target.id;
+        const displayNumber = trustDisplayNumbers?.get(target.id);
+        const showDisplayNumber = displayNumber !== undefined && (
+          selectedTargetId === target.id ||
+          trustFocusedTargetId === target.id ||
+          showManualReviewPulse
+        );
         return (
           <React.Fragment key={target.id}>
+            {showManualReviewPulse && displayPosition && (
+              <ManualReviewPulse x={displayPosition.x} y={displayPosition.y} />
+            )}
+            {showTrustGlow && displayPosition && (
+              <Rect
+                x={displayPosition.x - 28}
+                y={displayPosition.y - 28}
+                width={56}
+                height={56}
+                stroke="#69d8ff"
+                strokeWidth={2}
+                cornerRadius={8}
+                dash={[8, 4]}
+                shadowColor="#69d8ff"
+                shadowBlur={16}
+                opacity={0.9}
+              />
+            )}
+            {showDisplayNumber && displayPosition && (
+              <Text
+                x={displayPosition.x + 14}
+                y={displayPosition.y + 12}
+                text={`目标${displayNumber}`}
+                fill={showManualReviewPulse ? '#c7f8ff' : '#9ddfac'}
+                fontSize={11}
+                fontFamily="'Share Tech Mono', monospace"
+                shadowColor={showManualReviewPulse ? '#69d8ff' : 'transparent'}
+                shadowBlur={showManualReviewPulse ? 8 : 0}
+                listening={false}
+              />
+            )}
             {shouldAnnotate && displayPosition && (
               <Group>
                 <Rect
@@ -145,11 +230,11 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
                 />
                 <Text
                   x={displayPosition.x + 26}
-	                  y={displayPosition.y - 24}
-	                  text={isAiRecommendation
-	                    ? `${isReview ? 'AI锁定' : 'AI推荐'} ${(sensorTrustDecision.confidence ? sensorTrustDecision.confidence * 100 : 0).toFixed(0)}%`
-	                    : isReview ? '相似候选' : `备选#${candidateIndex + 1}`}
-	                  fill={stroke}
+                  y={displayPosition.y - 24}
+                  text={isAiRecommendation
+                    ? `${isReview ? 'AI锁定' : 'AI推荐'} ${(sensorTrustDecision.confidence ? sensorTrustDecision.confidence * 100 : 0).toFixed(0)}%`
+                    : isReview ? '相似候选' : `备选#${candidateIndex + 1}`}
+                  fill={stroke}
                   fontSize={11}
                   fontFamily="monospace"
                 />

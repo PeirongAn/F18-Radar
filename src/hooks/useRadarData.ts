@@ -4,6 +4,7 @@ import radarStore from '../stores/RadarStore';
 import agentStore, { ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
 import audioManager from '../managers/AudioManager'; // 引入新的全局音频管理器
 import { normalizeTimestampMs } from '../utils/trustCalibration';
+import type { TrustControlState } from '../types/trustControl';
 
 export interface TargetHistory {
   x: number;
@@ -32,6 +33,10 @@ export interface RadarData {
   targets: RadarTarget[];
   externalTargets?: UnknownTargetData[]; // 从服务端接收的未知目标数据
   externalTargetsTimestamp?: number | null; // 添加这个字段，记录接收时间
+  enhancedThreats?: any[];
+  serverRadarConfig?: any;
+  useEnhancedProtocol?: boolean;
+  trustControl?: TrustControlState | null;
   saThreats?: Array<{
     id: string;
     type: string;
@@ -214,6 +219,16 @@ class GlobalWebSocketManager {
       let messageId = rawData.type;
       if (rawData.type === 'SAThreats' && rawData.saThreats) {
         messageId += '_' + JSON.stringify(rawData.saThreats.map((t:any) => t.id).sort());
+      } else if (rawData.type === 'sa_task_updated') {
+        const saCandidates = Array.isArray(rawData.threats)
+          ? rawData.threats
+          : Array.isArray(rawData.saThreats) ? rawData.saThreats : [];
+        messageId += '_' + [
+          rawData.task_id ?? 'pending',
+          rawData.repetition_info?.current ?? 'unknown',
+          rawData.repetition_info?.total ?? 'unknown',
+          saCandidates.map((candidate: any) => candidate?.id).filter(Boolean).sort().join(','),
+        ].join(':');
       } else if (rawData.type === 'init_settings') {
         const rep = rawData.repetition_info;
         messageId += '_' + [
@@ -252,6 +267,8 @@ class GlobalWebSocketManager {
         messageId += '_' + [pid ?? 'unknown', taskKind ?? 'unknown', level ?? 'unknown', difficulty ?? 'unknown', taskNumber ?? 'unknown'].join(':');
       } else if (rawData.type === 'attention_feedback' && rawData.server_time_ms) {
         messageId += '_' + rawData.server_time_ms;
+      } else if (rawData.type === 'tobii_aoi_snapshot_result') {
+        messageId += '_' + (rawData.client_snapshot_id ?? rawData.__message_seq);
       }
       
       // 如果这个消息已经处理过，则跳过
@@ -305,6 +322,13 @@ class GlobalWebSocketManager {
         rawData.type === 'reset_view';
 
       const shouldClearTargets = shouldClearExternalTargets;
+      const isEnhancedSaUpdate =
+        rawData.type === 'sa_task_updated' && Array.isArray(rawData.threats) && !!rawData.radar_config;
+      const isLegacySaUpdate =
+        rawData.type === 'sa_task_updated' && Array.isArray(rawData.saThreats);
+      const enhancedThreatUpdate = Array.isArray(rawData.updated_threats)
+        ? rawData.updated_threats
+        : isEnhancedSaUpdate ? rawData.threats : undefined;
 
       const newData: RadarData = {
         // 对于列表数据，如果新消息中没有，则保留旧值
@@ -326,7 +350,33 @@ class GlobalWebSocketManager {
           : shouldClearExternalTargets
             ? null
             : (this.state.radarData?.externalTargetsTimestamp ?? null),
-        saThreats: rawData.saThreats !== undefined ? rawData.saThreats : (this.state.radarData?.saThreats || []),
+        saThreats: isLegacySaUpdate
+          ? rawData.saThreats
+          : isEnhancedSaUpdate
+            ? []
+            : (this.state.radarData?.saThreats || []),
+        enhancedThreats: enhancedThreatUpdate !== undefined
+          ? enhancedThreatUpdate
+          : isLegacySaUpdate
+            ? []
+            : (this.state.radarData?.enhancedThreats || []),
+        serverRadarConfig: rawData.radar_config !== undefined
+          ? rawData.radar_config
+          : this.state.radarData?.serverRadarConfig,
+        useEnhancedProtocol: isEnhancedSaUpdate || enhancedThreatUpdate !== undefined
+          ? true
+          : isLegacySaUpdate
+            ? false
+            : (this.state.radarData?.useEnhancedProtocol ?? false),
+        // Keep the trial-start history with the persisted task snapshot.  SA can
+        // mount after sa_task_updated has already arrived (for example after a
+        // platform autostart); relying only on the transient raw message leaves
+        // the history chart empty even though the server sent valid history.
+        trustControl: rawData.trust_control !== undefined
+          ? rawData.trust_control
+          : rawData.type === 'all_tasks_completed' || rawData.type === 'reset_view'
+            ? null
+            : (this.state.radarData?.trustControl ?? null),
         
         // 对于数值数据，如果新消息中没有，则保留旧值或使用默认值
         radar_azimuth: rawData.radar_azimuth !== undefined ? rawData.radar_azimuth : (this.state.radarData?.radar_azimuth || 0),
@@ -412,6 +462,29 @@ class GlobalWebSocketManager {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * A new SA trial has been requested but its authoritative task payload has
+   * not arrived yet.  Drop the previous trial snapshot so candidates and AI
+   * history are not reused during this gap.  The next sa_task_updated message
+   * repopulates all of these fields together.
+   */
+  public clearSaTaskSnapshot() {
+    if (!this.state.radarData) return;
+    this.updateState({
+      ...this.state,
+      radarData: {
+        ...this.state.radarData,
+        saThreats: [],
+        enhancedThreats: [],
+        serverRadarConfig: undefined,
+        useEnhancedProtocol: false,
+        trustControl: null,
+        emergency: undefined,
+        timestamp: Date.now(),
+      },
+    });
   }
   
   // 修改sendMessage以优先使用消息中自带的event_owner
@@ -552,7 +625,10 @@ const useRadarData = (
     const [subY, setSubY] = useState<number>(0.0); // 副轴Y坐标
     const [button1, setButton1] = useState<boolean>(false); // 按钮1状态
     const [button2, setButton2] = useState<boolean>(false); // 按钮2状态
+    const [button3, setButton3] = useState<boolean>(false); // 按钮3状态：人工复核
     const [button7, setButton7] = useState<boolean>(false); // 按钮7状态
+    const [joystickConnected, setJoystickConnected] = useState<boolean>(false);
+    const [trustControl, setTrustControl] = useState<TrustControlState | null>(null);
   // 修改：任务重复信息状态，以支持多个任务类型
   const [repetitionInfos, setRepetitionInfos] = useState<AllRepetitionInfos>({
     RADAR_TARGETING: null,
@@ -1091,6 +1167,7 @@ const useRadarData = (
       console.log('[useRadarData] Processing joystick_data:', message.data);
       
       if (message.data) {
+        setJoystickConnected(message.device_status !== 'disconnected');
         // 更新主轴位置
         setMainPos({ 
           x: message.data.main_x || 0.0, 
@@ -1104,9 +1181,40 @@ const useRadarData = (
         if (message.data.buttons) {
           setButton1(message.data.buttons.button0 || false);
           setButton2(message.data.buttons.button1 || false);
+          // pygame/DirectInput uses zero-based indexes: physical key 3 is button2.
+          setButton3(message.data.buttons.button2 || false);
           setButton7(message.data.buttons.button7 || false);
         }
       }
+    }
+
+    const isJoystickLifecycleStatus =
+      message.type === 'joystick_connect_response' ||
+      message.type === 'joystick_disconnect_response' ||
+      message.type === 'joystick_status_response' ||
+      (
+        message.type === 'joystick_status' &&
+        ['device_connected', 'device_disconnected', 'device_connection_failed'].includes(message.event)
+      );
+    if (isJoystickLifecycleStatus) {
+      const statusValue = message.status?.device_status ?? message.status?.status ?? message.device_status;
+      const deviceConnected = message.type === 'joystick_disconnect_response'
+        ? false
+        : message.event === 'device_connected' ||
+          message.connected === true ||
+          statusValue === 'connected' ||
+          (message.type === 'joystick_connect_response' && message.success === true);
+      setJoystickConnected(deviceConnected);
+      if (!deviceConnected) {
+        setButton1(false);
+        setButton2(false);
+        setButton3(false);
+        setButton7(false);
+      }
+    }
+
+    if ((message.type === 'init_settings' || message.type === 'sa_task_updated') && message.trust_control) {
+      setTrustControl(message.trust_control as TrustControlState);
     }
 
     // Handle AI parameter recommendations specifically
@@ -1404,6 +1512,11 @@ const useRadarData = (
       // 处理雷达数据更新
       if (state.radarData) {
         setRadarData(state.radarData);
+        setSaThreats(state.radarData.saThreats || []);
+        setEnhancedThreats(state.radarData.enhancedThreats || []);
+        setServerRadarConfig(state.radarData.serverRadarConfig ?? null);
+        setUseEnhancedProtocol(state.radarData.useEnhancedProtocol ?? false);
+        setTrustControl(state.radarData.trustControl ?? null);
       }
     };
     
@@ -1484,6 +1597,10 @@ const useRadarData = (
   }, [radarData?.externalTargets]);
   
   const sendResetSA = useCallback(() => {
+    // Accuracy/history is authoritative only after the server returns the new
+    // sa_task_updated payload.  Clear the previous trial first so the waiting
+    // interval cannot display or calculate against stale SA state.
+    globalWS.clearSaTaskSnapshot();
     sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice, is_ai_active: agentStore.isAIActive });
   }, [sendMessage]);
 
@@ -1501,7 +1618,9 @@ const useRadarData = (
     setSubY(0.0);
     setButton1(false);
     setButton2(false);
+    setButton3(false);
     setButton7(false);
+    setJoystickConnected(false);
     
     // 重置状态引用
     previousButton1Ref.current = false;
@@ -1548,7 +1667,10 @@ const useRadarData = (
     subY,
     button1,
     button2,
+    button3,
     button7,
+    joystickConnected,
+    trustControl,
     resetJoystickData,
     changeAntennaAdjustmentRequired,
     startSaTobiiRound,

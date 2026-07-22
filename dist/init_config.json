@@ -1,5 +1,5 @@
 {
-  "userId": "ANPEIRONG0705",
+  "userId": "ANPEIRONG0706",
   "includeAI": true,
   "taskType": "radar",
   "isPractice": false,
@@ -8,7 +8,7 @@
   "platformTask": {
     "raw": {
       "TaskName": "传感器任务",
-      "ID": "ANPEIRONG0705",
+      "ID": "ANPEIRONG0706",
       "Gender": "1",
       "DefaultControlMode": "1",
       "AIAutonomyLeve": "1",
@@ -20,7 +20,7 @@
     },
     "normalized": {
       "task_name": "传感器任务",
-      "platform_task_id": "ANPEIRONG0705",
+      "platform_task_id": "ANPEIRONG0706",
       "task_type": "RADAR_TARGETING",
       "task_category": "radar",
       "gender": "1",
@@ -28,8 +28,8 @@
       "ai_autonomy_level": "L1",
       "current_level": "L1",
       "task_mode": "1",
-      "difficulty_key": "high",
-      "difficulty_display": "high",
+      "difficulty_key": "low",
+      "difficulty_display": "low",
       "difficulty_raw": "3",
       "task_number": "3",
       "ai_precision": "1",

@@ -13,6 +13,9 @@ import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils
 import type { ThreatListData } from './ThreatList';
 import { useThreatTrustCalibration } from '../hooks/useThreatTrustCalibration';
 import { ThreatTrustDecision } from '../types/trustCalibration';
+import { useTrustTrial } from '../hooks/useTrustTrial';
+import { useTrustTrialPublisher } from '../hooks/useTrustTrialPublisher';
+import type { TrustCandidate, TrustTrialSnapshot } from '../types/trustControl';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -31,6 +34,7 @@ interface SAPageProps {
     markEvidenceViewed: () => void;
     markManualReviewDone: () => void;
   } | null) => void;
+  onTrustTrialUpdate?: (snapshot: TrustTrialSnapshot | null) => void;
 }
 
 // 添加威胁数据接口
@@ -160,6 +164,48 @@ const SELECTED_FILL_COLOR = '#ffd700';
 const RECOMMENDATION_COLOR = '#00ff66';
 const CORRECT_ANSWER_COLOR = '#ff4136';
 
+const SaManualReviewPulse: React.FC<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  cornerRadius: number;
+}> = ({ x, y, width, height, cornerRadius }) => {
+  const rectRef = useRef<any>(null);
+
+  useEffect(() => {
+    let frameId = 0;
+    const animate = (timestamp: number) => {
+      const opacity = 0.3 + 0.65 * ((Math.sin(timestamp / 115) + 1) / 2);
+      if (rectRef.current) {
+        rectRef.current.opacity(opacity);
+        rectRef.current.getLayer()?.batchDraw();
+      }
+      frameId = window.requestAnimationFrame(animate);
+    };
+    frameId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  return (
+    <Rect
+      ref={rectRef}
+      x={x - width / 2}
+      y={y - height / 2}
+      width={width}
+      height={height}
+      stroke="#91e8f5"
+      strokeWidth={2.5}
+      cornerRadius={cornerRadius}
+      dash={[7, 4]}
+      shadowColor="#69d8ff"
+      shadowBlur={20}
+      opacity={0.9}
+      listening={false}
+    />
+  );
+};
+
 const getThreatStrokeColor = (type?: string, priority?: string): string => {
   if (priority === 'high' || type?.includes('Primary')) return PRIMARY_THREAT_COLOR;
   return SECONDARY_THREAT_COLOR;
@@ -285,7 +331,7 @@ const getStableAttackSource = (threat: any): string => {
   return ATTACK_SOURCES[stableHash(String(threat?.id ?? threat?.label ?? 'attack')) % ATTACK_SOURCES.length];
 };
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed, onTrustDecisionUpdate, onTrustActionsUpdate }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed, onTrustDecisionUpdate, onTrustActionsUpdate, onTrustTrialUpdate }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
   const [userId, setUserId] = useState(originalUserId);
@@ -309,12 +355,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     agentStore.toggleAudioEnabled();
   }, []);
 
-  const { connected, radarData, error, sendMessage, sendResetSA, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
+  const { connected, radarData, error, sendMessage, sendResetSA, taskId, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, button3, joystickConnected, trustControl, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
   const saCanvasRef = useRef<HTMLDivElement | null>(null);
   const endSaTobiiRoundRef = useRef(endSaTobiiRound);// 存储 endSaTobiiRound 函数的引用
   const getHighestThreatPromptPositionRef = useRef<(() => TobiiPromptPosition | null) | null>(null);
   const getSaTobiiPromptPositionRef = useRef<(() => TobiiPromptPosition | null) | null>(null);
   const aiSelectedThreatRef = useRef<any | null>(null);
+  const [aiTrustRecommendation, setAiTrustRecommendation] = useState<TrustCandidate | null>(null);
+  const trustDisplayNumberRef = useRef<{ taskId: string; values: Map<string, number> }>({
+    taskId: '',
+    values: new Map(),
+  });
   const attentionIntervalRef = useRef<number | null>(null);
   const attentionTimeoutRef = useRef<number | null>(null);
   const [highestThreatAttentionVisible, setHighestThreatAttentionVisible] = useState(false);
@@ -674,10 +725,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
-      if (threatTrustDecision.blockedOneClick) {
-        onAddMessage?.('warning', `信任调控：${threatTrustDecision.primaryMessage}，请先查看证据或人工确认`);
-        return;
-      }
       if (isSAAllCompleted) {
         console.log('[SAPage] SA result ignored because task is already ALL_COMPLETED; result confirmation is required.');
         return;
@@ -702,7 +749,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           timestamp: Date.now(),
           user_id: userId,
           event_owner: 'manual',
-          extra: buildThreatTrustLogExtra(),
+          extra: {
+            trust_trial: unifiedTrustTrial.buildTrustTrial(),
+          },
         });
         recordResultConfirmed(userSelection?.threat?.id);
       } else {
@@ -898,6 +947,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setResult(undefined); // 清空已完成威胁
     setUserSelection(null); // 清空用户选择
     aiSelectedThreatRef.current = null;
+    setAiTrustRecommendation(null);
     setDynamicRotation(0); // 重置仪表盘旋转
     // 通知父组件重置详细信息显示状态
     if (onShowDetailedInfoChange) {
@@ -962,6 +1012,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         setResult(undefined); // 清空已完成威胁
         setUserSelection(null); // 清空用户选择
         aiSelectedThreatRef.current = null;
+        setAiTrustRecommendation(null);
         setDynamicRotation(0); // 重置仪表盘旋转
         // 通知父组件重置详细信息显示状态
         if (onShowDetailedInfoChange) {
@@ -1119,9 +1170,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         enhancedThreats.forEach((enhancedThreat, index) => {
           allEnhancedThreats.push({
             threat: {
-              id: enhancedThreat.id,
-              type: enhancedThreat.type,
-              label: enhancedThreat.label,
+              ...enhancedThreat,
               // 如果是导弹，转换为MissileData格式
               ...(enhancedThreat.is_missile ? {
                 x: enhancedThreat.position.x,
@@ -1337,6 +1386,101 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
     return positions;
   }, [enhancedThreats, fanScanGeometry.apexX, fanScanGeometry.apexY, height, missiles, saThreats, threatIdToSortedIndexMap, threatPositions, useEnhancedProtocol, width]);
+  const unifiedTrustCandidates = useMemo<TrustCandidate[]>(() => {
+    const currentTaskKey = String(taskId ?? 'pending-sa');
+    if (trustDisplayNumberRef.current.taskId !== currentTaskKey) {
+      trustDisplayNumberRef.current = { taskId: currentTaskKey, values: new Map() };
+    }
+
+    const observations = threatsWithScore.map(item => {
+      const id = String(item.threat.id);
+      const position = fanThreatPositions.get(id) ?? item.threat.position ?? (
+        typeof item.threat.x === 'number' && typeof item.threat.y === 'number'
+          ? { x: item.threat.x, y: item.threat.y }
+          : undefined
+      );
+      const relativeX = position ? position.x - fanScanGeometry.apexX : 0;
+      const relativeY = position ? position.y - fanScanGeometry.apexY : 0;
+      const azimuth = position
+        ? (Math.atan2(relativeX, -relativeY) * 180 / Math.PI + 360) % 360
+        : 360;
+      const distance = typeof item.threat.distance_from_center === 'number'
+        ? item.threat.distance_from_center
+        : typeof item.threat.distance === 'number'
+          ? item.threat.distance
+          : position ? Math.hypot(relativeX, relativeY) : undefined;
+      return { item, id, position, azimuth, distance };
+    });
+
+    observations
+      .filter(observation => !trustDisplayNumberRef.current.values.has(observation.id))
+      .sort((a, b) => a.azimuth - b.azimuth || (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.id.localeCompare(b.id))
+      .forEach(observation => {
+        trustDisplayNumberRef.current.values.set(
+          observation.id,
+          trustDisplayNumberRef.current.values.size + 1,
+        );
+      });
+
+    return observations.map(({ item, id, position, distance }) => {
+      const displayNumber = trustDisplayNumberRef.current.values.get(id);
+      const rawType = item.threat.missile_type || item.threat.type;
+      return {
+        id,
+        label: `目标${displayNumber ?? '--'}`,
+        displayNumber,
+        type: item.threat.type,
+        sourceLabel: item.threat.label || item.threat.type,
+        categoryLabel: TYPE_MAP[rawType] || item.threat.label || rawType || '未知威胁',
+        distance,
+        score: item.score,
+        positionX: position?.x,
+        positionY: position?.y,
+        isMissile: item.isMissile,
+        observedAtMs: item.threat.creation_timestamp ?? radarData?.timestamp,
+        updatedAt: item.threat.creation_timestamp ?? radarData?.timestamp,
+      };
+    });
+  }, [fanScanGeometry.apexX, fanScanGeometry.apexY, fanThreatPositions, radarData?.timestamp, taskId, threatsWithScore]);
+  const unifiedTrustTrial = useTrustTrial({
+    taskId: taskId ?? null,
+    taskGroupId: trustControl?.condition_key?.task_group_id ?? (
+      saRepetitionInfo && typeof saRepetitionInfo === 'object'
+        ? saRepetitionInfo.task_group_id ?? null
+        : null
+    ),
+    taskType: 'SA_THREAT_RESPONSE',
+    trialSequence: saRepetitionInfo && typeof saRepetitionInfo === 'object'
+      ? Number(saRepetitionInfo.current || 0)
+      : undefined,
+    userId,
+    control: trustControl,
+    aiRecommendation: aiTrustRecommendation,
+    candidates: unifiedTrustCandidates,
+    groundTruthId: highestPriorityThreat?.id ?? null,
+    button3,
+    joystickConnected,
+    sendMessage,
+  });
+  useTrustTrialPublisher(unifiedTrustTrial.snapshot, onTrustTrialUpdate);
+  useEffect(() => {
+    if (!joystickCursorPos) {
+      unifiedTrustTrial.updateTdcCandidate(null);
+      return;
+    }
+    let nearest: TrustCandidate | null = null;
+    let nearestDistance = trustControl?.threat_focus_radius_px ?? 40;
+    unifiedTrustCandidates.forEach(candidate => {
+      const position = fanThreatPositions.get(candidate.id);
+      if (!position) return;
+      const distance = Math.hypot(position.x - joystickCursorPos.x, position.y - joystickCursorPos.y);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = candidate;
+      }
+    });
+    unifiedTrustTrial.updateTdcCandidate(nearest);
+  }, [fanThreatPositions, joystickCursorPos, trustControl?.threat_focus_radius_px, unifiedTrustCandidates, unifiedTrustTrial.updateTdcCandidate]);
   const isPointInFanScan = useCallback((position: { x: number; y: number }) => {
     const dx = position.x - fanScanGeometry.apexX;
     const dy = position.y - fanScanGeometry.apexY;
@@ -1605,6 +1749,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
     if (eventOwner === 'AI') {
       aiSelectedThreatRef.current = threat;
+      setAiTrustRecommendation(
+        unifiedTrustCandidates.find(candidate => candidate.id === threat.id) ?? {
+          id: String(threat.id),
+          label: threat.label || threat.type || threat.id,
+          type: threat.type,
+        }
+      );
       if (agentStore.isAIActive && beginSATobiiServe.current && !stopAutoStartSaTobiiRef.current) {
         const promptPosition = getThreatPromptPosition(threat);
         if (promptPosition) {
@@ -1613,6 +1764,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           console.log('gazerelation:startSaTobiiRound AI selected target', promptPosition);
         }
       }
+    } else {
+      unifiedTrustTrial.recordHumanSelection(
+        unifiedTrustCandidates.find(candidate => candidate.id === threat.id) ?? {
+          id: String(threat.id),
+          label: threat.label || threat.type || threat.id,
+          type: threat.type,
+        }
+      );
     }
 
     // 注意：不在这里启用详细信息显示，只有点击"查看结果"时才显示分数
@@ -1644,7 +1803,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
       onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
-  }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra]);
+  }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra, unifiedTrustCandidates, unifiedTrustTrial.recordHumanSelection]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -1655,7 +1814,16 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const shouldAttentionBlink = missile.id === eyeFeedbackThreatId && highestThreatAttentionVisible;
       const position = fanThreatPositions.get(missile.id) || { x: missile.x, y: missile.y };
       const isScanned = isPointInFanScan(position);
-      const showRecommendationFrame = !showTaskComplete && shouldAttentionBlink;
+      const showManualReviewPulse = !showTaskComplete && (
+        unifiedTrustTrial.snapshot.manualReviewActive &&
+        missile.id === unifiedTrustTrial.snapshot.manualReviewCandidate?.id
+      );
+      const showRecommendationFrame = !showTaskComplete && (
+        shouldAttentionBlink || (
+          unifiedTrustTrial.snapshot.glowActive &&
+          missile.id === unifiedTrustTrial.snapshot.aiRecommendation?.id
+        )
+      );
       const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
       const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
       const isTrustTop = threatTrustDecision.enabled && missile.id === threatTrustDecision.topThreatId;
@@ -1663,7 +1831,16 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const trustStroke = threatTrustDecision.controlLevel === 'review' ? '#ff9a2e' : '#1ca8ff';
 
       return (
-        <Group key={missile.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(missile, 'manual')}>
+        <Group key={missile.id} opacity={isScanned || isSelected || showManualReviewPulse ? 1 : 0.36} onClick={() => handleThreatIconClick(missile, 'manual')}>
+          {showManualReviewPulse && (
+            <SaManualReviewPulse
+              x={position.x}
+              y={position.y}
+              width={62}
+              height={72}
+              cornerRadius={9}
+            />
+          )}
           {(isTrustTop || (threatTrustDecision.rankingUnstable && isTrustSecond)) && (
             <Rect
               x={position.x - 26}
@@ -2231,6 +2408,22 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           
           {/* 雷达显示 - 仅包含雷达相关元素 */}
           <div className="sa-page bg-black relative" style={{ width, height }} ref={saCanvasRef}>
+            {aiTrustRecommendation && fanThreatPositions.get(aiTrustRecommendation.id) && (
+              <div
+                data-gaze-aoi="left_ai_target"
+                data-visible="true"
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  left: (fanThreatPositions.get(aiTrustRecommendation.id)?.x ?? 0) - 28,
+                  top: (fanThreatPositions.get(aiTrustRecommendation.id)?.y ?? 0) - 28,
+                  width: 56,
+                  height: 56,
+                  pointerEvents: 'none',
+                  zIndex: 2,
+                }}
+              />
+            )}
             {isSaTobiiBboxDebugEnabled && saTobiiDebugBbox && (
               <div
                 aria-hidden="true"
@@ -2543,11 +2736,29 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   }
                   
                   const isScanned = isPointInFanScan(position);
-                  const showRecommendationFrame = !showTaskComplete && shouldAttentionBlink;
+                  const showManualReviewPulse = !showTaskComplete && (
+                    unifiedTrustTrial.snapshot.manualReviewActive &&
+                    threat.id === unifiedTrustTrial.snapshot.manualReviewCandidate?.id
+                  );
+                  const showRecommendationFrame = !showTaskComplete && (
+                    shouldAttentionBlink || (
+                      unifiedTrustTrial.snapshot.glowActive &&
+                      threat.id === unifiedTrustTrial.snapshot.aiRecommendation?.id
+                    )
+                  );
                   const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
                   const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
                   return (
-                    <Group key={threat.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(threat, 'manual')}>
+                    <Group key={threat.id} opacity={isScanned || isSelected || showManualReviewPulse ? 1 : 0.36} onClick={() => handleThreatIconClick(threat, 'manual')}>
+                      {showManualReviewPulse && (
+                        <SaManualReviewPulse
+                          x={position.x}
+                          y={position.y}
+                          width={ICON_SIZE + 30}
+                          height={ICON_SIZE + 30}
+                          cornerRadius={10}
+                        />
+                      )}
                       {(isTrustTop || (threatTrustDecision.rankingUnstable && isTrustSecond)) && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 11}

@@ -11,8 +11,10 @@ import agentStore from '../stores/AgentStore'; // Import AgentStore directly
 import radarStore from '../stores/RadarStore';
 import toast from 'react-hot-toast';
 import audioManager from '../managers/AudioManager';
-import { useSensorTrustCalibration } from '../hooks/useSensorTrustCalibration';
-import { SensorTrustDecision } from '../types/trustCalibration';
+import { useTrustTrial } from '../hooks/useTrustTrial';
+import { useTrustTrialPublisher } from '../hooks/useTrustTrialPublisher';
+import type { TrustCandidate, TrustTrialSnapshot } from '../types/trustControl';
+import { normalizeTimestampMs } from '../utils/trustCalibration';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -47,11 +49,7 @@ export interface RadarProps {
   onTaskCompleted?: () => void;
   suppressJoystickActions?: boolean;
   userId?: string;
-  onTrustDecisionUpdate?: (decision: SensorTrustDecision) => void;
-  onTrustActionsUpdate?: (actions: {
-    markEvidenceViewed: () => void;
-    markManualReviewDone: () => void;
-  } | null) => void;
+  onTrustTrialUpdate?: (snapshot: TrustTrialSnapshot | null) => void;
 }
 
 const Radar: React.FC<RadarProps> = (({
@@ -66,8 +64,7 @@ const Radar: React.FC<RadarProps> = (({
   onTaskCompleted,
   suppressJoystickActions = false,
   userId,
-  onTrustDecisionUpdate,
-  onTrustActionsUpdate,
+  onTrustTrialUpdate,
 }) => {
   // 使用自定义hook获取WebSocket连接和发送消息的函数
   const {
@@ -87,37 +84,106 @@ const Radar: React.FC<RadarProps> = (({
     confirmAntennaAdjustmentHandled, // Destructure the new function
     connected,
     error,
+    repetitionInfos,
+    button3,
+    joystickConnected,
+    trustControl,
   } = useRadarData(undefined, { enableAntennaRound: true });
-  const [currentIffMode, setCurrentIffMode] = useState(false);
-
-  const {
-    sensorTrustDecision,
-    recordAIRecommendation,
-    recordManualSelection,
-    recordRecommendationAcceptance,
-    markEvidenceViewed: markSensorEvidenceViewed,
-    markManualReviewDone: markSensorManualReviewDone,
-    buildLogExtra: buildSensorTrustLogExtra,
-  } = useSensorTrustCalibration({
-    config: agentStore.trustCalibrationConfig,
-    externalTargets: radarData?.externalTargets || [],
-    iffMode: currentIffMode,
-    taskKey: taskId,
-    participantKey: userId || null,
-    groundTruth: { correctType: 'army' },
+  const [, setCurrentIffMode] = useState(false);
+  const [aiTrustRecommendation, setAiTrustRecommendation] = useState<TrustCandidate | null>(null);
+  const displayNumberRef = useRef<{ taskId: string; values: Map<string, number> }>({
+    taskId: '',
+    values: new Map(),
+  });
+  const trustCandidates = React.useMemo<TrustCandidate[]>(() => (
+    (() => {
+      const currentTaskKey = String(taskId ?? 'pending');
+      if (displayNumberRef.current.taskId !== currentTaskKey) {
+        displayNumberRef.current = { taskId: currentTaskKey, values: new Map() };
+      }
+      const rawTargets = [...(radarData?.externalTargets || [])];
+      const missingTargets = rawTargets
+        .filter((target: any) => !displayNumberRef.current.values.has(String(target.id)))
+        .sort((a: any, b: any) => {
+          const azimuthDifference = Number(a?.position?.x ?? 0) - Number(b?.position?.x ?? 0);
+          if (azimuthDifference !== 0) return azimuthDifference;
+          const distanceDifference = Number(a?.position?.y ?? 0) - Number(b?.position?.y ?? 0);
+          if (distanceDifference !== 0) return distanceDifference;
+          return String(a.id).localeCompare(String(b.id));
+        });
+      missingTargets.forEach((target: any) => {
+        displayNumberRef.current.values.set(
+          String(target.id),
+          displayNumberRef.current.values.size + 1,
+        );
+      });
+      return rawTargets.map((target: any) => {
+        const displayNumber = displayNumberRef.current.values.get(String(target.id));
+        const observedAtMs = normalizeTimestampMs(
+          target.last_update ?? radarData?.externalTargetsTimestamp ?? radarData?.timestamp,
+        );
+        return {
+          id: String(target.id),
+          label: `目标${displayNumber ?? '--'}`,
+          displayNumber,
+          type: target.type,
+          distance: typeof target.distance_nm === 'number'
+            ? target.distance_nm
+            : typeof target.position?.y === 'number' ? target.position.y : undefined,
+          azimuthDeg: typeof target.position?.x === 'number' ? target.position.x : undefined,
+          distanceNm: typeof target.distance_nm === 'number'
+            ? target.distance_nm
+            : typeof target.position?.y === 'number' ? target.position.y : undefined,
+          speedRaw: typeof target.speed === 'number' ? target.speed : undefined,
+          headingDeg: typeof target.direction_degrees === 'number' ? target.direction_degrees : undefined,
+          relativeHeadingDeg: typeof target.relative_heading === 'number' ? target.relative_heading : undefined,
+          observedAtMs,
+          updatedAt: observedAtMs,
+        };
+      });
+    })()
+  ), [radarData?.externalTargets, radarData?.externalTargetsTimestamp, radarData?.timestamp, taskId]);
+  const radarGroundTruthId = React.useMemo(() => (
+    trustCandidates.find(candidate => candidate.type === 'army' || candidate.id.startsWith('enemy'))?.id ?? null
+  ), [trustCandidates]);
+  const rawRadarRepInfo = repetitionInfos.RADAR_TARGETING;
+  const radarRepInfo = rawRadarRepInfo && rawRadarRepInfo !== 'ALL_COMPLETED'
+    ? rawRadarRepInfo
+    : null;
+  const trustTrial = useTrustTrial({
+    taskId: taskId ?? null,
+    taskGroupId: trustControl?.condition_key?.task_group_id ?? radarRepInfo?.task_group_id ?? null,
+    taskType: 'RADAR_TARGETING',
+    trialSequence: radarRepInfo?.current,
+    userId,
+    control: trustControl,
+    aiRecommendation: aiTrustRecommendation,
+    candidates: trustCandidates,
+    groundTruthId: radarGroundTruthId,
+    button3,
+    joystickConnected,
+    sendMessage,
   });
 
-  useEffect(() => {
-    onTrustDecisionUpdate?.(sensorTrustDecision);
-  }, [onTrustDecisionUpdate, sensorTrustDecision]);
+  useTrustTrialPublisher(trustTrial.snapshot, onTrustTrialUpdate);
 
   useEffect(() => {
-    onTrustActionsUpdate?.({
-      markEvidenceViewed: markSensorEvidenceViewed,
-      markManualReviewDone: markSensorManualReviewDone,
-    });
-    return () => onTrustActionsUpdate?.(null);
-  }, [markSensorEvidenceViewed, markSensorManualReviewDone, onTrustActionsUpdate]);
+    // Do not let the previous trial's recommendation become the first
+    // recommendation event of a newly-started radar trial.
+    setAiTrustRecommendation(null);
+  }, [taskId]);
+
+  const handleTrustTdcCandidate = useCallback((targetId: string | null) => {
+    trustTrial.updateTdcCandidate(
+      trustCandidates.find(candidate => candidate.id === targetId) ?? null
+    );
+  }, [trustCandidates, trustTrial.updateTdcCandidate]);
+
+  const handleIffTargetConfirmed = useCallback((targetId?: string) => {
+    trustTrial.recordHumanSelection(
+      trustCandidates.find(candidate => candidate.id === targetId) ?? null
+    );
+  }, [trustCandidates, trustTrial.recordHumanSelection]);
 
   useEffect(() => {
     if (initSettings) {
@@ -187,7 +253,7 @@ const Radar: React.FC<RadarProps> = (({
   const aiTdcMoveTimeoutRef = useRef<number | null>(null); // Ref for TDC movement timeout
   const previousUserIdRef = useRef<string | undefined>(userId);
 
-  const radarConfig = {
+  const radarConfig = React.useMemo(() => ({
     backgroundColor: '#000000',
     gridColor: '#ffffff',  // 白色线条
     textColor: '#00ff00',  // 绿色文本
@@ -197,15 +263,15 @@ const Radar: React.FC<RadarProps> = (({
     mainBoxHeight: 480,
     buttonSize: 30,
     buttonOffset: 15
-  };
+  }), []);
 
   // 计算主显示区域的边界位置
-  const framePositions = {
+  const framePositions = React.useMemo(() => ({
     startX: (width - radarConfig.mainBoxWidth) / 2,
     startY: (height - radarConfig.mainBoxHeight) / 2,
     endX: (width + radarConfig.mainBoxWidth) / 2,
     endY: (height + radarConfig.mainBoxHeight) / 2
-  };
+  }), [height, radarConfig.mainBoxHeight, radarConfig.mainBoxWidth, width]);
 
   // State for TDC position, managed locally in Radar.tsx
   const [tdcPosition, setTdcPosition] = useState({ x: width / 2, y: height / 2 });
@@ -667,13 +733,12 @@ const Radar: React.FC<RadarProps> = (({
               const lockX = targetDisplayPosition.x;
               
               // 调用目标选择回调，传入锁定线位置
-              const trustExtra = recordAIRecommendation(finalTargetToSelect);
+              setAiTrustRecommendation(trustCandidates.find(candidate => candidate.id === finalTargetToSelect.id) ?? null);
               onTargetSelect({ 
                 targetId: finalTargetToSelect.id, 
                 lockX: lockX,
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
                 event_owner: 'AI', // AI操作
-                extra: trustExtra ?? buildSensorTrustLogExtra(),
               });
 
               console.log(`[AI Engine] Target locked at X: ${lockX}`);
@@ -684,13 +749,12 @@ const Radar: React.FC<RadarProps> = (({
             if (onTargetSelect) {
               // 使用屏幕中心的X坐标作为默认锁定线位置
               const centerX = (framePositions.startX + framePositions.endX) / 2;
-              const trustExtra = recordAIRecommendation(finalTargetToSelect);
+              setAiTrustRecommendation(trustCandidates.find(candidate => candidate.id === finalTargetToSelect.id) ?? null);
               onTargetSelect({ 
                 targetId: finalTargetToSelect.id,
                 lockX: centerX, // 添加默认的lockX值
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
                 event_owner: 'AI', // AI操作
-                extra: trustExtra ?? buildSensorTrustLogExtra(),
               });
               
               console.log(`[AI Engine] Target locked at center X: ${centerX} (fallback)`);
@@ -712,7 +776,8 @@ const Radar: React.FC<RadarProps> = (({
     onTargetSelect,
     isStarted,
     radarStore.targetDisplayPositions,
-    taskId
+    taskId,
+    trustCandidates,
   ]);
 
   // useEffect for AI to automatically adjust antenna when required
@@ -846,21 +911,6 @@ const Radar: React.FC<RadarProps> = (({
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
-    const isBlockedAiLock =
-      sensorTrustDecision.enabled &&
-      sensorTrustDecision.blockedOneClick &&
-      !sensorTrustDecision.manualReviewRequested &&
-      params.targetId === sensorTrustDecision.aiTargetId;
-
-    if (isBlockedAiLock) {
-      onAddMessage?.(
-        'warning',
-        `信任调控：${sensorTrustDecision.primaryMessage || '当前AI建议需要人工复核'}，请先查看证据或人工复核`
-      );
-      console.log(`[Radar] 目标锁定被信任调控拦截: ${params.targetId}`);
-      return;
-    }
-
     // 直接更新radarStore中的lockedTargetId和lockScreenX
     radarStore.setLockedTargetId(params.targetId);
     radarStore.setLockScreenX(params.lockX);
@@ -869,9 +919,11 @@ const Radar: React.FC<RadarProps> = (({
     if (onTargetSelect) {
       const eventOwner = params.event_owner ?? 'manual';
       if (eventOwner !== 'AI') {
-        recordManualSelection(params.targetId);
+        trustTrial.recordHumanSelection(
+          trustCandidates.find(candidate => candidate.id === params.targetId) ?? null
+        );
       }
-      onTargetSelect({ ...params, event_owner: eventOwner, extra: buildSensorTrustLogExtra() });
+      onTargetSelect({ ...params, event_owner: eventOwner });
     }
   };
 
@@ -1126,6 +1178,10 @@ const Radar: React.FC<RadarProps> = (({
     window.location.reload();
   };
 
+  const trustAiTargetPosition = trustTrial.snapshot.aiRecommendation
+    ? radarStore.targetDisplayPositions.get(trustTrial.snapshot.aiRecommendation.id)
+    : undefined;
+
   return (
     <div className="flex flex-col items-center justify-center relative">
       {/* 临时去掉：认知负荷选择按钮 */}
@@ -1171,7 +1227,23 @@ const Radar: React.FC<RadarProps> = (({
         </div>
         
         {/* 雷达显示 */}
-        <div className="relative">
+        <div className="relative" data-gaze-aoi="left_candidate_list">
+          {trustAiTargetPosition && (
+            <div
+              data-gaze-aoi="left_ai_target"
+              data-visible="true"
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                left: trustAiTargetPosition.x - 24,
+                top: trustAiTargetPosition.y - 24,
+                width: 48,
+                height: 48,
+                pointerEvents: 'none',
+                zIndex: 2,
+              }}
+            />
+          )}
           <RadarDisplay
             width={width}
             height={height}
@@ -1205,9 +1277,17 @@ const Radar: React.FC<RadarProps> = (({
             cognitiveLoad={cognitiveLoad}
             suppressJoystickActions={suppressJoystickActions}
             scanLineResetToken={scanLineResetToken}
-            sensorTrustDecision={sensorTrustDecision}
+            sensorTrustDecision={undefined}
             onIffModeChange={setCurrentIffMode}
-            onIffTargetConfirmed={recordRecommendationAcceptance}
+            onIffTargetConfirmed={handleIffTargetConfirmed}
+            onTrustTdcCandidate={handleTrustTdcCandidate}
+            trustFocusRadius={trustControl?.sensor_focus_radius_px ?? 30}
+            trustAiRecommendationId={trustTrial.snapshot.aiRecommendation?.id}
+            trustGlowActive={trustTrial.snapshot.glowActive}
+            trustManualReviewActive={trustTrial.snapshot.manualReviewActive}
+            trustDisplayNumbers={displayNumberRef.current.values}
+            trustFocusedTargetId={trustTrial.snapshot.focusedCandidate?.id}
+            getTrustTrialExtra={trustTrial.buildTrustTrial}
           />
           
           {/* 接管控制按钮 - 位置更靠近操作区域， 临时隐藏 */}

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Radar from './components/Radar';
-import AIAssistant from './components/AIAssistant';
 import SAPage from './components/SAPage';
 import CommunicationLog, { LogMessage, MessageType } from './components/CommunicationLog';
 import ThreatList, { type ThreatListData } from './components/ThreatList';
@@ -13,6 +12,9 @@ import agentStore from './stores/AgentStore';
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
 import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
+import TrustControlPanel from './components/TrustControlPanel';
+import { useTrustAoiSnapshot } from './hooks/useTrustAoiSnapshot';
+import type { TrustTrialSnapshot } from './types/trustControl';
 interface TargetSelectParams {
   targetId: string | undefined;
   lockX?: number;
@@ -468,10 +470,10 @@ const MainApp: React.FC = observer(() => {
   // 威胁列表
   const [threatListData, setThreatListData] = useState<ThreatListData>({ threats: [], attacks: [] });
   const [showDetailedInfo, setShowDetailedInfo] = useState(false);
-  const [sensorTrustDecision, setSensorTrustDecision] = useState<SensorTrustDecision | null>(null);
-  const [sensorTrustActions, setSensorTrustActions] = useState<SensorTrustActions | null>(null);
-  const [saTrustDecision, setSaTrustDecision] = useState<ThreatTrustDecision | null>(null);
-  const [saTrustActions, setSaTrustActions] = useState<ThreatTrustActions | null>(null);
+  const [radarTrustTrial, setRadarTrustTrial] = useState<TrustTrialSnapshot | null>(null);
+  const [saTrustTrial, setSaTrustTrial] = useState<TrustTrialSnapshot | null>(null);
+  const activeTrustTrial = activeDisplay === 'sa' ? saTrustTrial : radarTrustTrial;
+  useTrustAoiSnapshot(activeTrustTrial);
 
   // 问卷弹出控制：外部可通过 WebSocket 消息 { type:'set_questionnaire_popup', enabled:bool } 修改
   const [enableQuestionnairePopup, setEnableQuestionnairePopup] = useState<boolean>(true);
@@ -1278,8 +1280,7 @@ const MainApp: React.FC = observer(() => {
               onTaskCompleted={handleRadarTaskCompleted}
               suppressJoystickActions={suppressRadarJoystickActions}
               userId={userId}
-              onTrustDecisionUpdate={setSensorTrustDecision}
-              onTrustActionsUpdate={setSensorTrustActions}
+              onTrustTrialUpdate={setRadarTrustTrial}
             />
           ) : (
             <div style={{
@@ -1301,8 +1302,7 @@ const MainApp: React.FC = observer(() => {
                 onThreatListUpdate={handleThreatListUpdate}
                 onShowDetailedInfoChange={handleShowDetailedInfoChange}
                 onResultConfirmed={handleSAResultConfirmed}
-                onTrustDecisionUpdate={setSaTrustDecision}
-                onTrustActionsUpdate={setSaTrustActions}
+                onTrustTrialUpdate={setSaTrustTrial}
               />
               {activeDisplay === 'sa' && (
                 <div style={{ width: '800px', alignSelf: 'center', borderTop: '1px solid #0a2010' }}>
@@ -1310,7 +1310,6 @@ const MainApp: React.FC = observer(() => {
                     threats={threatListData.threats}
                     attacks={threatListData.attacks}
                     showDetailedInfo={showDetailedInfo}
-                    trustDecision={saTrustDecision || undefined}
                   />
                 </div>
               )}
@@ -1321,16 +1320,8 @@ const MainApp: React.FC = observer(() => {
         {/* Right — 侧边栏 ────────────────────────────── */}
         <div style={{ flex: '0 0 32%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#030c05' }}>
 
-          {/* AI Assistant */}
           {includeAI && (
-            <div style={{
-              flexShrink: 0, padding: '14px 18px',
-              borderBottom: '1px solid #0a2010',
-              background: 'rgba(0,20,8,0.5)',
-            }}>
-              <div className="panel-label">AI 辅助系统</div>
-              <AIAssistant selectedTarget={selectedTarget} />
-            </div>
+            <TrustControlPanel snapshot={activeTrustTrial} />
           )}
 
           {/* Communication Log */}
@@ -1359,14 +1350,6 @@ const MainApp: React.FC = observer(() => {
               />
             </div>
           </div>
-
-          {activeDisplay === 'sa' && saTrustDecision?.enabled && saTrustDecision.controlLevel !== 'none' && (
-            <SidebarThreatTrustPanel decision={saTrustDecision} actions={saTrustActions} />
-          )}
-          {activeDisplay === 'radar' && sensorTrustDecision?.enabled && sensorTrustDecision.controlLevel !== 'none' && (
-            <SidebarSensorTrustPanel decision={sensorTrustDecision} actions={sensorTrustActions} />
-          )}
-
 
         </div>
       </div>
