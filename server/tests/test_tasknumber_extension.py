@@ -119,3 +119,50 @@ def test_tasknumber_does_not_shrink_below_current_progress():
     assert manager.max_repetitions == 5
     assert manager.current_scenario["repetition_info"]["total"] == 5
     assert manager.current_scenario["max_repetitions_override"] == 5
+
+
+def test_equal_runtime_total_is_persisted_as_scenario_override():
+    manager = make_manager()
+    seed_completed_manual_scenario(manager, current=1, total=1)
+    manager.current_scenario.pop("max_repetitions_override")
+    manager.max_repetitions = 30
+    manager.current_scenario["repetition_info"]["total"] = 30
+
+    manager.apply_repetition_override(30, overwrite=True)
+
+    assert manager.current_scenario["max_repetitions_override"] == 30
+    assert manager.current_scenario["repetition_info"]["total"] == 30
+
+    # ResetSA creates another manager and refreshes the config. The scenario
+    # marker must keep the explicit task count instead of falling back to 1.
+    manager.config["game_settings"]["practice_repetitions"] = 1
+    manager.pending_repetition_override = None
+    manager._refresh_config()
+    assert manager.max_repetitions == 30
+
+
+def test_reset_sa_keeps_explicit_count_after_first_round():
+    manager = make_manager()
+    manager.max_repetitions = 30
+    manager.apply_repetition_override(30, overwrite=True)
+    first_scenario = manager.get_next_task_parameters(False)
+    manager.apply_repetition_override(30, overwrite=True)
+    manager.mark_task_completed()
+
+    assert first_scenario["repetition_info"]["current"] == 1
+    assert first_scenario["repetition_info"]["total"] == 30
+
+    # Mirror _handle_sa_operations on the following ResetSA request: a fresh
+    # manager loads the stored scenario before asking for the next round.
+    reloaded = TaskScenarioManager(
+        make_config(),
+        "tasknumber_user",
+        "SA_THREAT_RESPONSE",
+        is_practice=True,
+        is_ai_active_request=False,
+    )
+    second_scenario = reloaded.get_next_task_parameters(False)
+
+    assert second_scenario["repetition_info"]["current"] == 2
+    assert second_scenario["repetition_info"]["total"] == 30
+    assert second_scenario["max_repetitions_override"] == 30

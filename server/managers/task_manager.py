@@ -441,7 +441,13 @@ class TaskScenarioManager:
             return
         if existing_override is not None and not overwrite:
             return
-        if n_int == current_total:
+        # Even when the numeric total is already correct (for example because
+        # the caller assigned max_repetitions before the first scenario was
+        # created), the override still has to be attached to the scenario.
+        # A ResetSA request constructs a new manager and _refresh_config()
+        # otherwise falls back to max_repetitions/practice_repetitions, making
+        # a requested 30-round SA task collapse to the configured default.
+        if n_int == current_total and existing_override is not None:
             return
         self.current_scenario['max_repetitions_override'] = n_int
         self.max_repetitions = n_int

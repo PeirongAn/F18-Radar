@@ -387,6 +387,27 @@ class MessageHandler:
             except (TypeError, ValueError):
                 continue
         return None
+
+    def _build_difficulty_overlay(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """把启动弹窗传入的难度转换成任务场景覆盖配置。"""
+        difficulty = message.get('difficulty')
+        if difficulty not in ('low', 'medium', 'high'):
+            return None
+        difficulty_config = (
+            config_manager.get_config()
+            .get('game_settings', {})
+            .get('difficulty_levels', {})
+            .get(difficulty)
+        )
+        if not isinstance(difficulty_config, dict):
+            return None
+        config_copy = difficulty_config.copy()
+        config_copy['difficulty_name'] = difficulty
+        return {
+            'difficulty_name': difficulty,
+            'difficulty_display': difficulty,
+            'difficulty_config': config_copy,
+        }
     
     async def handle_client_message(self, message_str: str, session_state: Dict[str, Any], 
                                   websocket=None) -> Union[List[Dict[str, Any]], Tuple[Dict[str, Any], bool], bool]:
@@ -516,6 +537,11 @@ class MessageHandler:
                 "is_ai_active": bool(is_ai_active_request),
                 "is_practice": bool(is_practice),
             }]
+
+        difficulty_overlay = self._build_difficulty_overlay(message)
+        if difficulty_overlay:
+            task_manager.apply_platform_overlay(difficulty_overlay)
+            current_scenario = task_manager.current_scenario
 
         self.logger.info(
             "[REMOTE_TASK_COUNT] radar overlay resolved user=%s task_type=%s progress=%s "
@@ -1086,6 +1112,11 @@ class MessageHandler:
                 "is_ai_active": bool(is_ai_active_request),
                 "is_practice": bool(is_practice),
             }]
+
+        difficulty_overlay = self._build_difficulty_overlay(message)
+        if difficulty_overlay:
+            task_manager.apply_platform_overlay(difficulty_overlay)
+            current_scenario = task_manager.current_scenario
 
         # 与 _handle_task_start 保持一致：消费外部平台 task_start 留下的 overlay，
         # 把 difficulty/AI/audio 以及 TaskNumber→max_repetitions 灌到 scenario 上。
