@@ -926,7 +926,7 @@ const useRadarData = (
   }, []);
   
   // 初始化系统，请求任务ID和初始设置
-  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => {
+  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number, difficulty?: 'low' | 'high') => {
     radarStore.setUserId(userId); // 修正：设置到 radarStore
     agentStore.setAIActive(includeAI);
 
@@ -937,6 +937,7 @@ const useRadarData = (
       is_practice: isPractice, // 添加练习模式参数
       task_number: taskNumber,
       repetition_total_override: taskNumber,
+      difficulty,
     };
     sendMessage(initMessage);
     console.log('System initialization message sent:', initMessage);

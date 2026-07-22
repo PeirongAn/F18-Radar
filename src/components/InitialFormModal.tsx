@@ -2,12 +2,14 @@ import React, { useRef, useEffect, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { globalWS } from '../hooks/useRadarData';
 
+export type Difficulty = 'low' | 'high';
 
 interface InitialFormModalProps {
-  onStart: (userId: string, includeAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean, useJoystick: boolean, taskNumber: number) => void;
+  onStart: (userId: string, includeAI: boolean, taskType: 'radar' | 'sa', isPractice: boolean, useJoystick: boolean, taskNumber: number, difficulty: Difficulty) => void;
   defaultUserId?: string;
   defaultIncludeAI?: boolean;
   defaultTaskNumber?: number;
+  defaultDifficulty?: Difficulty;
   onOpenTrustSettings?: () => void;
 }
 
@@ -16,6 +18,7 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
   defaultUserId = '', 
   defaultIncludeAI = false,
   defaultTaskNumber,
+  defaultDifficulty = 'low',
   onOpenTrustSettings,
 }) => {
   const userIdRef = useRef<HTMLInputElement>(null);
@@ -25,6 +28,8 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
   const [useJoystick, setUseJoystick] = useState(true);
   const [taskNumber, setTaskNumber] = useState(defaultTaskNumber ?? 3);
   const [taskNumberTouched, setTaskNumberTouched] = useState(defaultTaskNumber !== undefined);
+  const [difficulty, setDifficulty] = useState<Difficulty>(defaultDifficulty);
+  const [difficultyTouched, setDifficultyTouched] = useState(false);
 
   useEffect(() => {
     if (userIdRef.current) {
@@ -42,6 +47,10 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
     setTaskNumber(Math.min(100, Math.max(1, Math.floor(defaultTaskNumber))));
     setTaskNumberTouched(true);
   }, [defaultTaskNumber]);
+
+  useEffect(() => {
+    if (!difficultyTouched) setDifficulty(defaultDifficulty);
+  }, [defaultDifficulty, difficultyTouched]);
 
   useEffect(() => {
     if (!taskNumberTouched) {
@@ -88,13 +97,13 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
         }
       }
       
-      onStart(userId, includeAI, taskType, isPractice, useJoystick, normalizedTaskNumber);
+      onStart(userId, includeAI, taskType, isPractice, useJoystick, normalizedTaskNumber, difficulty);
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[9999]">
-      <div className="bg-gray-900 border border-green-500 rounded-lg p-8 w-full max-w-md">
+      <div className="bg-gray-900 border border-green-500 rounded-lg p-8 w-full max-w-md max-h-[95vh] overflow-y-auto">
         <h2 className="text-green-500 font-mono text-2xl mb-6 text-center">飞行任务初始化</h2>
         
         <form onSubmit={handleSubmit}>
@@ -193,6 +202,38 @@ const InitialFormModal: React.FC<InitialFormModalProps> = observer(({
               required
             />
           </div>
+
+          <fieldset className="mb-6">
+            <legend className="block text-green-400 font-mono mb-2">任务难度</legend>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                ['low', '低'],
+                ['high', '高'],
+              ] as const).map(([value, label]) => (
+                <label
+                  key={value}
+                  className={`cursor-pointer rounded-md border px-3 py-2 text-center font-mono transition-colors ${
+                    difficulty === value
+                      ? 'border-green-400 bg-green-500/20 text-green-300'
+                      : 'border-gray-600 bg-gray-800 text-gray-300 hover:border-green-600'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="difficulty"
+                    value={value}
+                    checked={difficulty === value}
+                    onChange={() => {
+                      setDifficultyTouched(true);
+                      setDifficulty(value);
+                    }}
+                    className="sr-only"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
           <div className="mb-6">
             <label className="block text-green-400 font-mono mb-2">

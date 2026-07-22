@@ -10,8 +10,10 @@ import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
+import audioManager from './managers/AudioManager';
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
+import InitialFormModal, { type Difficulty } from './components/InitialFormModal';
 import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
 interface TargetSelectParams {
   targetId: string | undefined;
@@ -446,6 +448,8 @@ const MainApp: React.FC = observer(() => {
   const [selectedTarget] = useState<string | null>(null);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
+  const [defaultTaskNumber, setDefaultTaskNumber] = useState<number | undefined>(undefined);
+  const [defaultDifficulty, setDefaultDifficulty] = useState<Difficulty>('low');
   const [isStarted, setIsStarted] = useState<boolean>(false);
   const [showGazePoint, setShowGazePoint] = useState<boolean>(false);
   const [gazePointDebug, setGazePointDebug] = useState<GazePointDebug | null>(null);
@@ -736,8 +740,9 @@ const MainApp: React.FC = observer(() => {
     practice: boolean,
     _useJoystick: boolean,
     taskNumber?: number,
+    difficulty?: Difficulty,
   ) => {
-    const startKey = `${id}::${taskType}::${withAI ? 'ai' : 'manual'}::${practice ? 'practice' : 'formal'}::${taskNumber ?? 'default'}`;
+    const startKey = `${id}::${taskType}::${withAI ? 'ai' : 'manual'}::${practice ? 'practice' : 'formal'}::${taskNumber ?? 'default'}::${difficulty ?? 'default'}`;
     const now = Date.now();
     const lastStart = lastStartRequestRef.current;
     if (lastStart?.key === startKey && now - lastStart.timestamp < 1000) {
@@ -786,10 +791,11 @@ const MainApp: React.FC = observer(() => {
         is_ai_active: withAI,
         task_number: taskNumber,
         repetition_total_override: taskNumber,
+        difficulty,
       });
     } else {
       setActiveDisplay('radar');
-      initializeSystem(id, withAI, practice, taskNumber);
+      initializeSystem(id, withAI, practice, taskNumber, difficulty);
     }
   }, [sendMessage, initializeSystem, radarStore]);
 
@@ -802,6 +808,38 @@ const MainApp: React.FC = observer(() => {
     globalWS.sendMessage({ type: 'joystick_subscribe', timestamp: Date.now(), user_id: userId });
   }, [isStarted, connected, useJoystick, userId]);
 
+  /* ── 启动弹窗默认任务次数：从 init_config.json 读取 ── */
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/init_config.json', { cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(cfg => {
+        if (cancelled || !cfg) return;
+        const parsed = Number(cfg.taskNumber);
+        if (Number.isFinite(parsed) && parsed > 0) {
+          setDefaultTaskNumber(Math.min(100, Math.max(1, Math.floor(parsed))));
+        }
+      })
+      .catch(() => { /* 读取失败时回退到弹窗内置默认值 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  /* ── 启动弹窗默认难度：沿用服务端当前配置 ── */
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/agent_level.json', { cache: 'no-store' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(cfg => {
+        if (cancelled) return;
+        const value = cfg?.game_settings?.current_difficulty;
+        if (value === 'low' || value === 'high') {
+          setDefaultDifficulty(value);
+        }
+      })
+      .catch(() => { /* 读取失败时使用 low */ });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     if (!platformAutoStart) return;
     handleStartApp(
@@ -813,6 +851,19 @@ const MainApp: React.FC = observer(() => {
       platformAutoStart.taskNumber,
     );
   }, [platformAutoStart, handleStartApp]);
+
+  const handleStartFromModal = useCallback((
+    id: string,
+    withAI: boolean,
+    taskType: 'radar' | 'sa',
+    practice: boolean,
+    modalUseJoystick: boolean,
+    taskNumber: number,
+    difficulty: Difficulty,
+  ) => {
+    audioManager.unlock();
+    handleStartApp(id, withAI, taskType, practice, modalUseJoystick, taskNumber, difficulty);
+  }, [handleStartApp]);
 
   /* ── 雷达参数更新 ─────────────────────────────── */
   const handleRadarParamsUpdate = useCallback((range: number, angle: number) => {
@@ -911,6 +962,17 @@ const MainApp: React.FC = observer(() => {
         }}
       />
       <GazePointOverlay enabled={showGazePoint} onGazePointChange={setGazePointDebug} />
+      {/* ── Startup Modal ──────────────────────────────── */}
+      {!isStarted && (
+        <InitialFormModal
+          onStart={handleStartFromModal}
+          defaultUserId={userId}
+          defaultIncludeAI={includeAI}
+          defaultTaskNumber={defaultTaskNumber}
+          defaultDifficulty={defaultDifficulty}
+        />
+      )}
+
       {/* ── Top Status Bar ─────────────────────────────── */}
       <header style={{
         height: '58px', flexShrink: 0,
