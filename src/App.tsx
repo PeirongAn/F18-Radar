@@ -1255,7 +1255,7 @@ const MainApp: React.FC = observer(() => {
         <div
           className="radar-panel-bg"
           style={{
-            flex: '0 0 68%',
+            flex: '0 0 64%',
             position: 'relative',
             display: 'flex',
             flexDirection: 'column',
@@ -1318,7 +1318,17 @@ const MainApp: React.FC = observer(() => {
         </div>
 
         {/* Right — 侧边栏 ────────────────────────────── */}
-        <div style={{ flex: '0 0 32%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#030c05' }}>
+        <aside
+          aria-label="任务辅助信息"
+          style={{
+            flex: '0 0 36%',
+            minWidth: '440px',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            background: '#030c05',
+          }}
+        >
 
           {includeAI && (
             <TrustControlPanel snapshot={activeTrustTrial} />
@@ -1351,7 +1361,7 @@ const MainApp: React.FC = observer(() => {
             </div>
           </div>
 
-        </div>
+        </aside>
       </div>
 
       {completionNoticeTask && (

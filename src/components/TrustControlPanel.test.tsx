@@ -73,6 +73,9 @@ describe('TrustControlPanel radar evidence', () => {
     expect(markup).toContain('12.5°');
     expect(markup).toContain('18.2 NM');
     expect(markup).toContain('7.4（原始值）');
+    expect(markup).toContain('当前推荐');
+    expect(markup).toContain('高优先级');
+    expect(markup).toContain('data-recommended="true"');
     expect(markup).not.toContain('enemy-1');
     expect(markup).not.toContain('army');
     expect(markup).not.toContain('0.99');

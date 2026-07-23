@@ -1,9 +1,6 @@
 import React from 'react';
 import type { TrustCandidate, TrustControlState, TrustTrialSnapshot } from '../types/trustControl';
-
-const mono: React.CSSProperties = {
-  fontFamily: "'Share Tech Mono', 'Microsoft YaHei', monospace",
-};
+import './TrustControlPanel.css';
 
 const displayName = (candidate: TrustCandidate | null) => {
   if (!candidate) return '--';
@@ -27,39 +24,43 @@ const dataTime = (candidate: TrustCandidate | null) => {
   return `${clock}.${String(date.getMilliseconds()).padStart(3, '0')}`;
 };
 
-const ObservationGrid: React.FC<{ candidate: TrustCandidate | null; compact?: boolean }> = ({ candidate, compact = false }) => (
-  <div style={{
-    display: 'grid',
-    gridTemplateColumns: compact ? '68px 1fr' : '76px 1fr',
-    gap: compact ? '3px 8px' : '5px 10px',
-    color: '#c8e8cf',
-    fontSize: compact ? 11 : 12,
-    lineHeight: 1.45,
-  }}>
-    <span style={{ color: '#619a70' }}>方位</span><span>{numberValue(candidate?.azimuthDeg)}°</span>
-    <span style={{ color: '#619a70' }}>距离</span><span>{numberValue(candidate?.distanceNm ?? candidate?.distance)} NM</span>
-    <span style={{ color: '#619a70' }}>速度</span><span>{numberValue(candidate?.speedRaw)}（原始值）</span>
-    <span style={{ color: '#619a70' }}>航向</span><span>{numberValue(candidate?.headingDeg)}°</span>
-    <span style={{ color: '#619a70' }}>相对航向</span><span>{numberValue(candidate?.relativeHeadingDeg)}°</span>
-    <span style={{ color: '#619a70' }}>数据时间</span><span>{dataTime(candidate)}</span>
-  </div>
-);
+interface ObservationItem {
+  label: string;
+  value: string;
+}
 
-const ThreatObservationGrid: React.FC<{ candidate: TrustCandidate | null; compact?: boolean }> = ({ candidate, compact = false }) => (
-  <div style={{
-    display: 'grid',
-    gridTemplateColumns: compact ? '68px 1fr' : '76px 1fr',
-    gap: compact ? '3px 8px' : '5px 10px',
-    color: '#c8e8cf',
-    fontSize: compact ? 11 : 12,
-    lineHeight: 1.45,
-  }}>
-    <span style={{ color: '#619a70' }}>威胁类别</span><span>{candidate?.categoryLabel ?? '--'}</span>
-    <span style={{ color: '#619a70' }}>目标特征</span><span>{candidate?.sourceLabel ?? '--'}</span>
-    <span style={{ color: '#619a70' }}>中心距离</span><span>{numberValue(candidate?.distance)}</span>
-    <span style={{ color: '#619a70' }}>显示坐标</span><span>{numberValue(candidate?.positionX, 0)}, {numberValue(candidate?.positionY, 0)}</span>
-    <span style={{ color: '#619a70' }}>数据时间</span><span>{dataTime(candidate)}</span>
-  </div>
+const ObservationGrid: React.FC<{ candidate: TrustCandidate | null; compact?: boolean }> = ({ candidate, compact = false }) => {
+  const items: ObservationItem[] = [
+    { label: '方位', value: `${numberValue(candidate?.azimuthDeg)}°` },
+    { label: '距离', value: `${numberValue(candidate?.distanceNm ?? candidate?.distance)} NM` },
+    { label: '速度', value: `${numberValue(candidate?.speedRaw)}（原始值）` },
+    { label: '航向', value: `${numberValue(candidate?.headingDeg)}°` },
+    { label: '相对航向', value: `${numberValue(candidate?.relativeHeadingDeg)}°` },
+    { label: '数据时间', value: dataTime(candidate) },
+  ];
+  return <ObservationItems items={items} compact={compact} />;
+};
+
+const ThreatObservationGrid: React.FC<{ candidate: TrustCandidate | null; compact?: boolean }> = ({ candidate, compact = false }) => {
+  const items: ObservationItem[] = [
+    { label: '威胁类别', value: candidate?.categoryLabel ?? '--' },
+    { label: '目标特征', value: candidate?.sourceLabel ?? '--' },
+    { label: '中心距离', value: numberValue(candidate?.distance) },
+    { label: '显示坐标', value: `${numberValue(candidate?.positionX, 0)}, ${numberValue(candidate?.positionY, 0)}` },
+    { label: '数据时间', value: dataTime(candidate) },
+  ];
+  return <ObservationItems items={items} compact={compact} />;
+};
+
+const ObservationItems: React.FC<{ items: ObservationItem[]; compact: boolean }> = ({ items, compact }) => (
+  <dl className={`trust-observation${compact ? ' trust-observation--compact' : ''}`}>
+    {items.map(item => (
+      <div className="trust-observation__item" key={item.label}>
+        <dt className="trust-observation__label">{item.label}</dt>
+        <dd className="trust-observation__value" title={item.value}>{item.value}</dd>
+      </div>
+    ))}
+  </dl>
 );
 
 const AccuracyTrend: React.FC<{ control: TrustControlState }> = ({ control }) => {
@@ -92,33 +93,11 @@ const AccuracyTrend: React.FC<{ control: TrustControlState }> = ({ control }) =>
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ color: '#9eb9c2', fontSize: 12, letterSpacing: '0.04em' }}>AI历史识别准确率</span>
-        <span style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '3px 8px',
-          border: '1px solid rgba(235,166,45,0.62)',
-          borderRadius: 4,
-          background: 'rgba(126,79,8,0.20)',
-          color: '#d9c695',
-          fontSize: 10,
-          letterSpacing: '0.08em',
-        }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f4b33c', boxShadow: '0 0 7px #f4b33c' }} />
-          当前可靠性
-        </span>
+      <div className="trust-accuracy-header">
+        <span className="trust-accuracy-title">AI 历史识别准确率</span>
+        <span className="trust-accuracy-value">当前可靠性 · {historyText}</span>
       </div>
-      <div style={{
-        position: 'relative',
-        height: 78,
-        overflow: 'hidden',
-        border: '1px solid rgba(32,102,122,0.34)',
-        borderRadius: 6,
-        background: 'linear-gradient(180deg, rgba(0,31,45,0.72), rgba(0,19,31,0.82))',
-        boxShadow: 'inset 0 0 18px rgba(0,130,155,0.05)',
-      }}>
+      <div className="trust-chart">
         {points.length > 0 ? (
           <svg
             viewBox="0 0 460 72"
@@ -143,11 +122,11 @@ const AccuracyTrend: React.FC<{ control: TrustControlState }> = ({ control }) =>
             })}
             <text x={left} y="65" fill="#4f7580" fontSize="9">历史</text>
             <text x={right - 16} y="65" fill="#708e98" fontSize="9">当前</text>
-            <text x="414" y="42" fill="#f4b33c" fontSize="14" fontWeight="700">{currentPercent}%</text>
+            <text x="414" y="42" fill="#f4b33c" fontSize="14" fontWeight="700">{currentPercent ?? '--'}%</text>
             <text x="416" y="56" fill="#806e45" fontSize="8">{control.ai_history_correct_count}/{control.ai_history_valid_count}</text>
           </svg>
         ) : (
-          <div role="img" aria-label="AI历史识别准确率 暂无历史（0次）" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#52727b', fontSize: 11, letterSpacing: '0.08em' }}>
+          <div className="trust-empty" role="img" aria-label="AI历史识别准确率 暂无历史（0次）">
             暂无历史（0次）
           </div>
         )}
@@ -164,11 +143,6 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
   } = snapshot;
   const support = control.ui_mode === 'trust_support';
   const isSaTask = snapshot.taskType === 'SA_THREAT_RESPONSE';
-  const accent = support ? '#7ad7e8' : '#27d97b';
-  const emphasis: React.CSSProperties = support ? {
-    borderColor: 'rgba(122,215,232,0.7)',
-    boxShadow: 'inset 0 0 18px rgba(70,190,215,0.08)',
-  } : {};
   const detailCandidate = manualReviewActive ? manualReviewCandidate : focusedCandidate;
   const renderObservation = (candidate: TrustCandidate | null, compact = false) => (
     isSaTask
@@ -177,71 +151,108 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
   );
 
   return (
-    <div style={{ ...mono, flexShrink: 0, borderBottom: '1px solid #0a2010', background: 'rgba(0,18,8,0.92)' }}>
-      <section data-gaze-aoi="right_ai_history_accuracy" style={{ padding: '10px 16px 12px', borderBottom: '1px solid #0a2010', background: 'linear-gradient(180deg, rgba(0,28,21,0.48), rgba(0,18,8,0.16))' }}>
+    <aside className={`trust-panel${support ? ' trust-panel--support' : ''}`} aria-label="AI 决策辅助面板">
+      <section className="trust-section trust-section--secondary" data-gaze-aoi="right_ai_history_accuracy">
         <AccuracyTrend control={control} />
       </section>
 
-      <section data-gaze-aoi="right_recommendation" style={{ padding: '12px 16px', borderBottom: '1px solid #0a2010', ...emphasis }}>
-        <div className="panel-label" style={{ color: accent }}>AI 推荐观测</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '108px 1fr', gap: '5px 10px', marginBottom: 9, color: '#c8e8cf', fontSize: 12 }}>
-          <span style={{ color: '#619a70' }}>推荐目标</span><span>{displayName(aiRecommendation)}</span>
+      <section className="trust-section" data-gaze-aoi="right_recommendation">
+        <div className="trust-section-heading">
+          <span className="trust-eyebrow">AI 推荐结果</span>
+          <span className="trust-count">实时决策辅助</span>
         </div>
-        {renderObservation(aiRecommendation)}
-      </section>
-
-      <section data-gaze-aoi="right_candidate_list" style={{ padding: '10px 16px', borderBottom: '1px solid #0a2010' }}>
-        <div className="panel-label">候选目标观测</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '76px 1fr 1fr 92px', gap: 8, color: '#4f7f5b', fontSize: 10, paddingBottom: 4 }}>
-          <span>目标</span><span>{isSaTask ? '类别' : '方位'}</span><span>{isSaTask ? '中心距离' : '距离'}</span><span>数据时间</span>
-        </div>
-        {candidates.slice(0, 5).map(candidate => (
-          <div key={candidate.id} style={{ display: 'grid', gridTemplateColumns: '76px 1fr 1fr 92px', gap: 8, padding: '4px 0', color: candidate.id === aiRecommendation?.id ? '#d8ffe4' : '#79ad86', fontSize: 11 }}>
-            <span>{candidate.id === aiRecommendation?.id ? 'AI · ' : ''}{displayName(candidate)}</span>
-            <span>{isSaTask ? candidate.categoryLabel ?? '--' : `${numberValue(candidate.azimuthDeg)}°`}</span>
-            <span>{isSaTask ? numberValue(candidate.distance) : `${numberValue(candidate.distanceNm ?? candidate.distance)} NM`}</span>
-            <span>{dataTime(candidate)}</span>
+        <div className={`trust-hero${snapshot.glowActive ? ' trust-hero--glow' : ''}`}>
+          <div className="trust-hero-topline">
+            <span className="trust-hero-label">{isSaTask ? '建议优先处置目标' : '建议优先锁定目标'}</span>
+            <span className="trust-recommendation-state">当前推荐</span>
           </div>
-        ))}
+          <div className="trust-hero-title-row">
+            <strong className="trust-hero-name">{displayName(aiRecommendation)}</strong>
+            <span className="trust-priority">高优先级</span>
+          </div>
+          {renderObservation(aiRecommendation)}
+        </div>
       </section>
 
-      <section data-gaze-aoi="right_detail" style={{ padding: '10px 16px', minHeight: 116, borderBottom: '1px solid #0a2010', ...emphasis }}>
-        <div className="panel-label">{manualReviewActive ? '人工复核 · AI推荐目标' : 'TDC 聚焦详情'}</div>
+      <section className="trust-section" data-gaze-aoi="right_candidate_list">
+        <div className="trust-section-heading">
+          <span className="trust-eyebrow">候选目标优先级</span>
+          <span className="trust-count">{Math.min(candidates.length, 5)} / {candidates.length}</span>
+        </div>
+        <div className="trust-candidate-table">
+          <div className="trust-candidate-header" aria-hidden="true">
+            <span>序</span>
+            <span>目标</span>
+            <span>{isSaTask ? '威胁类别' : '方位'}</span>
+            <span>{isSaTask ? '中心距离' : '距离'}</span>
+            <span>更新时间</span>
+          </div>
+          {candidates.slice(0, 5).map((candidate, index) => {
+            const recommended = candidate.id === aiRecommendation?.id;
+            return (
+              <div
+                className={`trust-candidate-row${recommended ? ' trust-candidate-row--recommended' : ''}`}
+                data-recommended={recommended ? 'true' : 'false'}
+                key={candidate.id}
+              >
+                <span className="trust-candidate-rank">{String(index + 1).padStart(2, '0')}</span>
+                <span className="trust-candidate-name">
+                  {displayName(candidate)}
+                  {recommended && <span className="trust-candidate-badge">AI 推荐</span>}
+                </span>
+                <span>{isSaTask ? candidate.categoryLabel ?? '--' : `${numberValue(candidate.azimuthDeg)}°`}</span>
+                <span>{isSaTask ? numberValue(candidate.distance) : `${numberValue(candidate.distanceNm ?? candidate.distance)} NM`}</span>
+                <span>{dataTime(candidate)}</span>
+              </div>
+            );
+          })}
+          {candidates.length === 0 && <div className="trust-empty">等待候选目标数据</div>}
+        </div>
+      </section>
+
+      <section className="trust-section trust-section--secondary" data-gaze-aoi="right_detail">
+        <div className="trust-section-heading">
+          <span className="trust-eyebrow">{manualReviewActive ? '人工复核 · AI 推荐目标' : 'TDC 聚焦详情'}</span>
+        </div>
         {detailCandidate ? (
           <>
-            <div style={{ color: manualReviewActive ? '#c7f8ff' : '#c8e8cf', fontSize: 13, marginBottom: 6 }}>
-              {displayName(detailCandidate)}
-            </div>
+            <div className="trust-detail-name">{displayName(detailCandidate)}</div>
             {renderObservation(detailCandidate, true)}
           </>
-        ) : <div style={{ color: '#51745a', fontSize: 12 }}>移动TDC聚焦目标后自动显示</div>}
-        <div style={{
-          marginTop: 8,
-          paddingTop: 7,
-          borderTop: '1px solid rgba(80,170,100,0.18)',
-          color: manualReviewFeedback.status === 'active' ? '#91e8f5' : manualReviewFeedback.status === 'ignored' ? '#e0b566' : '#6ba87a',
-          fontSize: 11,
-        }}>
+        ) : <div className="trust-empty">移动 TDC 聚焦目标后自动显示</div>}
+        <div className={`trust-review-status${
+          manualReviewFeedback.status === 'active'
+            ? ' trust-review-status--active'
+            : manualReviewFeedback.status === 'ignored'
+              ? ' trust-review-status--ignored'
+              : ''
+        }`}>
           第3键人工复核：{manualReviewFeedback.message} · {snapshot.manualReviewCount}次 · 累计{(snapshot.manualReviewDurationMs / 1000).toFixed(1)}秒
         </div>
       </section>
 
-      <section data-gaze-aoi="right_comparison" data-visible={snapshot.comparisonVisible ? 'true' : 'false'} style={{ padding: '10px 16px', minHeight: 96, opacity: snapshot.comparisonVisible ? 1 : 0.45 }}>
-        <div className="panel-label">人机选择观测对比</div>
+      <section
+        className={`trust-section trust-section--secondary${snapshot.comparisonVisible ? '' : ' trust-section--dimmed'}`}
+        data-gaze-aoi="right_comparison"
+        data-visible={snapshot.comparisonVisible ? 'true' : 'false'}
+      >
+        <div className="trust-section-heading">
+          <span className="trust-eyebrow">人机选择观测对比</span>
+        </div>
         {snapshot.comparisonVisible ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 11 }}>
-            <div style={{ border: '1px solid #245337', padding: 7, color: '#bdecca' }}>
-              <div style={{ marginBottom: 5 }}>AI · {displayName(aiRecommendation)}</div>
+          <div className="trust-comparison">
+            <div className="trust-comparison-card">
+              <div className="trust-comparison-card__title">AI · {displayName(aiRecommendation)}</div>
               {renderObservation(aiRecommendation, true)}
             </div>
-            <div style={{ border: '1px solid #245337', padding: 7, color: '#bdecca' }}>
-              <div style={{ marginBottom: 5 }}>人工 · {displayName(humanSelection)}</div>
+            <div className="trust-comparison-card">
+              <div className="trust-comparison-card__title">人工 · {displayName(humanSelection)}</div>
               {renderObservation(humanSelection, true)}
             </div>
           </div>
-        ) : <div style={{ color: '#51745a', fontSize: 12 }}>人机选择一致时无需对比</div>}
+        ) : <div className="trust-empty">人机选择一致时无需对比</div>}
       </section>
-    </div>
+    </aside>
   );
 };
 
