@@ -1626,7 +1626,10 @@ def _handle_external_task(
                     list(_active_external_tasks.keys()),
                 )
                 return [{"type": "platform_task_ack", "status": "ignored",
-                         "task_id": active.get("task_id"), "task_type": task_type,
+                         "task_group_id": active.get("overall_task_id"),
+                         "overall_task_id": active.get("overall_task_id"),
+                         "task_id": active.get("current_subtask_task_id") or active.get("task_id"),
+                         "task_type": task_type,
                          "task_category": category, "entry_mode": "external_lifecycle",
                          "event_type": "overall_start",
                          "diagnostics": _external_task_diagnostics(
@@ -1805,6 +1808,8 @@ def _handle_external_task(
                 raw_message_json=raw,
             )
             return [{"type": "platform_task_ack", "status": "ok",
+                     "task_group_id": active.get("overall_task_id"),
+                     "overall_task_id": active.get("overall_task_id"),
                      "task_id": tid, "task_type": task_type,
                      "task_category": category, "entry_mode": "external_lifecycle",
                      "sub_task_seq": active.get("current_subtask_seq"),
@@ -1880,6 +1885,8 @@ def _handle_external_task(
                 active.get("current_subtask_started_by"),
             )
             return [{"type": "platform_task_ack", "status": "ok",
+                     "task_group_id": active.get("overall_task_id"),
+                     "overall_task_id": active.get("overall_task_id"),
                      "task_id": tid, "task_type": task_type,
                      "task_category": category, "entry_mode": "external_lifecycle",
                      "sub_task_seq": seq,
@@ -1916,6 +1923,8 @@ def _handle_external_task(
             seq,
         )
         return [{"type": "platform_task_ack", "status": "ok",
+                 "task_group_id": active.get("overall_task_id"),
+                 "overall_task_id": active.get("overall_task_id"),
                  "task_id": tid, "task_type": task_type,
                  "task_category": category, "entry_mode": "external_lifecycle",
                  "sub_task_seq": seq,
@@ -2116,6 +2125,7 @@ def _handle_external_task(
             bool(result),
         )
         return [{"type": "platform_task_ack", "status": "ok",
+                 "task_group_id": overall_tid,
                  "task_id": tid, "overall_task_id": overall_tid, "task_type": task_type,
                  "task_category": category, "entry_mode": "external_lifecycle",
                  "sub_task_seq": seq, "completed_subtasks": completed,
@@ -2183,6 +2193,7 @@ def _handle_external_task(
             list(_active_external_tasks.keys()),
         )
         return [{"type": "platform_task_ack", "status": "ok",
+                 "task_group_id": overall_tid,
                  "task_id": tid, "overall_task_id": overall_tid, "task_type": task_type,
                  "task_category": category, "entry_mode": "external_lifecycle",
                  "event_type": "task_end"}]
@@ -2289,6 +2300,7 @@ def handle_platform_task_result_ws(
     logger.info("[REMOTE_TASK_COUNT] platform_task_result stored task_id=%s overall_task_id=%s category=%s active_keys=%s",
                 tid, overall_tid, category, list(_active_external_tasks.keys()))
     return [{"type": "platform_task_ack", "status": "ok",
+             "task_group_id": overall_tid,
              "task_id": tid, "overall_task_id": overall_tid, "task_type": task_type,
              "task_category": category, "entry_mode": "external_lifecycle",
              "event_type": "task_result"}]

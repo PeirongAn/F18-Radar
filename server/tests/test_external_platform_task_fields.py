@@ -355,6 +355,8 @@ def test_overall_task_start_creates_and_starts_first_task_once(monkeypatch):
     replies = bridge._handle_external_task(overall_start("3"), "platform_control")
 
     assert replies[0]["status"] == "ok"
+    assert replies[0]["task_group_id"] == 42
+    assert replies[0]["overall_task_id"] == 42
     assert replies[0]["task_id"] == 42
     assert replies[0]["task_type"] == "PLATFORM_CONTROL"
     assert fake_db.groups[42]["expected_task_count"] == 3
@@ -415,6 +417,9 @@ def test_simple_task_start_after_overall_is_ignored_as_duplicate(monkeypatch):
     replies = bridge._handle_external_task(sub_start(), "platform_control")
 
     assert replies[0]["sub_task_seq"] == 1
+    assert replies[0]["task_group_id"] == 42
+    assert replies[0]["overall_task_id"] == 42
+    assert replies[0]["task_id"] == 42
     assert fake_db.runs[42]["current_subtask_seq"] == 1
     assert len(fake_db.events) == 1
     assert replies[0]["diagnostics"]["event_role"] == "subtask_start_already_active"
@@ -569,9 +574,13 @@ def test_sub_end_prestarts_next_external_collector(monkeypatch):
         external_collectors=external,
     )
 
+    assert first_end[0]["task_group_id"] == 42
+    assert first_end[0]["overall_task_id"] == 42
     assert first_end[0]["task_id"] == 42
     assert first_end[0]["next_subtask_task_id"] == 43
     assert first_end[0]["task_status"] == "active"
+    assert duplicate_start[0]["task_group_id"] == 42
+    assert duplicate_start[0]["overall_task_id"] == 42
     assert duplicate_start[0]["task_id"] == 43
     assert duplicate_start[0]["diagnostics"]["event_role"] == "subtask_start_already_active"
     assert [started[2] for started in external.started] == ["42", "43"]
@@ -593,6 +602,36 @@ def test_simple_task_start_after_completed_overall_is_ignored(monkeypatch):
     assert replies[0]["event_type"] == "need_overall_config"
     assert list(fake_db.runs) == [42]
     assert bridge._active_external_tasks == {}
+
+
+def test_task_end_ack_returns_group_and_current_task_ids(monkeypatch):
+    setup_bridge(monkeypatch)
+    bridge._handle_external_task(overall_start("1"), "platform_control")
+
+    replies = bridge._handle_external_task(
+        {"TaskName": "平台任务", "ID": "DefaultID", "Action": "task_end"},
+        "platform_control",
+    )
+
+    assert replies[0]["task_group_id"] == 42
+    assert replies[0]["overall_task_id"] == 42
+    assert replies[0]["task_id"] == 42
+
+
+def test_task_result_ack_returns_group_and_current_task_ids(monkeypatch):
+    setup_bridge(monkeypatch)
+    bridge._handle_external_task(overall_start("1"), "platform_control")
+
+    replies = bridge.handle_platform_task_result_ws({
+        "type": "platform_task_result",
+        "ID": "DefaultID",
+        "CurrentRedcord": [],
+        "Fire": [],
+    })
+
+    assert replies[0]["task_group_id"] == 42
+    assert replies[0]["overall_task_id"] == 42
+    assert replies[0]["task_id"] == 42
 
 
 def test_sub_end_without_sub_start_infers_external_start(monkeypatch):

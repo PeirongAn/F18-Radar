@@ -17,7 +17,10 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 | Action | string | 是 | 事件类型，见下方各消息定义 |
 | Gender | string | 否 | 性别（"0"=女, "1"=男） |
 
-> **注意：** 客户端无需存储任何会话信息（如 task_id），所有 ID 生成和关联由服务端负责。
+> **注意：** `task_group_id` 和 `task_id` 均由服务端生成。客户端无需在后续
+> 生命周期请求中回传这两个 ID，但可以保存 ACK 中的 ID，用于日志、问卷或结果查询。
+> 下文 ACK 示例列出客户端需要处理的完整业务字段；服务端还可能附带
+> `diagnostics` 调试对象，其内容随运行环境变化，不属于客户端业务协议。
 
 ---
 
@@ -25,7 +28,8 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 
 ### 1) 整体任务开始
 
-当一轮完整任务开始时发送。服务端收到后生成内部 task_id 并开始跟踪。
+当一轮完整任务开始时发送。服务端收到后建立 `task_group`，同时启动第一个
+具体子任务，因此 ACK 中会同时返回 `task_group_id` 和首个 `task_id`。
 
 **请求：**
 
@@ -60,16 +64,29 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 {
   "type": "platform_task_ack",
   "status": "ok",
+  "task_group_id": 42,
+  "overall_task_id": 42,
   "task_id": 42,
-  "task_category": "platform_control"
+  "task_type": "PLATFORM_CONTROL",
+  "task_category": "platform_control",
+  "entry_mode": "external_lifecycle",
+  "sub_task_seq": 1,
+  "expected_subtasks": 3,
+  "completed_subtasks": 0
 }
 ```
+
+`task_group_id` 是整轮任务 ID，`task_id` 是当前具体子任务 ID。
+为兼容已有客户端，响应中暂时同时保留 `overall_task_id`，其值与
+`task_group_id` 相同。当前首个 `task_start` 会同时建立第一条子任务记录，
+因此首包响应中的两个 ID 数值可能相同；后续子任务的 `task_id` 会独立生成。
 
 ---
 
 ### 2) 单个子任务开始
 
-当一轮中的某个子任务开始时发送。服务端自动分配子任务序号（从 1 开始递增）。
+当一轮中的某个子任务开始时发送。`TaskName` 和 `ID` 必须与完整
+`task_start` 一致。
 
 **请求：**
 
@@ -95,7 +112,30 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 {
   "type": "platform_task_ack",
   "status": "ok",
+  "task_group_id": 42,
+  "overall_task_id": 42,
+  "task_id": 43,
+  "task_type": "PLATFORM_CONTROL",
+  "task_category": "platform_control",
+  "entry_mode": "external_lifecycle",
+  "sub_task_seq": 2
+}
+```
+
+上例表示当前活动的是第 2 个子任务。当前实现中，完整 `task_start` 已经启动
+第 1 个子任务；若客户端紧接着发送 `sub_start`，服务端会将其识别为重复启动，
+并返回当前活动子任务，不会再次生成 ID：
+
+```json
+{
+  "type": "platform_task_ack",
+  "status": "ok",
+  "task_group_id": 42,
+  "overall_task_id": 42,
   "task_id": 42,
+  "task_type": "PLATFORM_CONTROL",
+  "task_category": "platform_control",
+  "entry_mode": "external_lifecycle",
   "sub_task_seq": 1
 }
 ```
@@ -157,6 +197,8 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 {
   "type": "platform_task_ack",
   "status": "ok",
+  "task_group_id": 42,
+  "overall_task_id": 42,
   "task_id": 42,
   "sub_task_seq": 1
 }
@@ -184,6 +226,8 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 {
   "type": "platform_task_ack",
   "status": "ok",
+  "task_group_id": 42,
+  "overall_task_id": 42,
   "task_id": 42,
   "event_type": "task_end"
 }
@@ -247,6 +291,8 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 {
   "type": "platform_task_ack",
   "status": "ok",
+  "task_group_id": 42,
+  "overall_task_id": 42,
   "task_id": 42,
   "event_type": "task_result"
 }
@@ -258,7 +304,7 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 
 武器发射任务与平台控制任务使用相同的协议，区别在于 `TaskName` 包含"武器"/"发射"等关键词，结果数据中 `Fire` 有数据而 `CurrentRedcord` 为空。
 
-### 整体任务开始
+### 完整 task_start 请求与 ACK
 
 ```json
 {
@@ -275,18 +321,27 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 }
 ```
 
-响应中 `task_category` 为 `"weapon_launch"`：
+ACK：
 
 ```json
 {
   "type": "platform_task_ack",
   "status": "ok",
-  "task_id": 43,
-  "task_category": "weapon_launch"
+  "task_group_id": 84,
+  "overall_task_id": 84,
+  "task_id": 84,
+  "task_type": "WEAPON_FIRING",
+  "task_category": "weapon_launch",
+  "entry_mode": "external_lifecycle",
+  "sub_task_seq": 1,
+  "expected_subtasks": 5,
+  "completed_subtasks": 0
 }
 ```
 
-### 子任务开始 / 结束
+### 完整 sub_start 请求与 ACK
+
+请求：
 
 ```json
 {
@@ -295,6 +350,28 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
   "Action": "sub_start"
 }
 ```
+
+以下 ACK 示例表示当前活动的是第 2 个武器发射子任务：
+
+```json
+{
+  "type": "platform_task_ack",
+  "status": "ok",
+  "task_group_id": 84,
+  "overall_task_id": 84,
+  "task_id": 85,
+  "task_type": "WEAPON_FIRING",
+  "task_category": "weapon_launch",
+  "entry_mode": "external_lifecycle",
+  "sub_task_seq": 2
+}
+```
+
+如果该 `sub_start` 紧跟在完整 `task_start` 后面，则第 1 个子任务已经活动，
+服务端返回相同的 `task_group_id=84`、`task_id=84` 和 `sub_task_seq=1`，
+不会重复生成子任务 ID。
+
+### 子任务结束
 
 ```json
 {
@@ -380,20 +457,22 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 ```
 客户端                              服务端
   |                                   |
-  |-- task_start (平台任务) --------->|  生成 task_id=42, 开始跟踪
-  |<--------- ack (task_id=42) ------|
+  |-- task_start (平台任务) --------->|  生成 task_group_id=42
+  |                                   |  启动 task_id=42, sub_task_seq=1
+  |<-- ack (group=42, task=42, seq=1)-|
   |                                   |
-  |-- sub_start ---------------------->|  sub_task_seq=1
-  |<--------- ack (seq=1) ------------|
+  |-- sub_start ---------------------->|  第1个子任务已活动，不重复生成
+  |<-- ack (group=42, task=42, seq=1)-|
   |                                   |
-  |-- sub_end (带 result) ----------->|  记录 seq=1 结束 + 结果
-  |<--------- ack (seq=1) ------------|
+  |-- sub_end (带 result) ----------->|  结束 task_id=42
+  |                                   |  预启动 task_id=43, seq=2
+  |<-- ack (task=42, next_task=43) ---|
   |                                   |
-  |-- sub_start ---------------------->|  sub_task_seq=2
-  |<--------- ack (seq=2) ------------|
+  |-- sub_start ---------------------->|  第2个子任务已活动，不重复生成
+  |<-- ack (group=42, task=43, seq=2)-|
   |                                   |
-  |-- sub_end (带 result) ----------->|  记录 seq=2 结束 + 结果
-  |<--------- ack (seq=2) ------------|
+  |-- sub_end (带 result) ----------->|  结束 task_id=43 + 记录结果
+  |<-- ack (group=42, task=43, seq=2)-|
   |                                   |
 ```
 
@@ -402,20 +481,22 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 ```
 客户端                              服务端
   |                                   |
-  |-- task_start (武器发射任务) ----->|  生成 task_id=43, 开始跟踪
-  |<--------- ack (task_id=43) ------|
+  |-- task_start (武器发射任务) ----->|  生成 task_group_id=84
+  |                                   |  启动 task_id=84, sub_task_seq=1
+  |<-- ack (group=84, task=84, seq=1)-|
   |                                   |
-  |-- sub_start ---------------------->|  sub_task_seq=1
-  |<--------- ack (seq=1) ------------|
+  |-- sub_start ---------------------->|  第1个子任务已活动，不重复生成
+  |<-- ack (group=84, task=84, seq=1)-|
   |                                   |
-  |-- sub_end (带 result) ----------->|  记录 seq=1 结束 + 开火结果
-  |<--------- ack (seq=1) ------------|
+  |-- sub_end (带 result) ----------->|  结束 task_id=84
+  |                                   |  预启动 task_id=85, seq=2
+  |<-- ack (task=84, next_task=85) ---|
   |                                   |
-  |-- sub_start ---------------------->|  sub_task_seq=2
-  |<--------- ack (seq=2) ------------|
+  |-- sub_start ---------------------->|  第2个子任务已活动，不重复生成
+  |<-- ack (group=84, task=85, seq=2)-|
   |                                   |
-  |-- sub_end (带 result) ----------->|  记录 seq=2 结束 + 开火结果
-  |<--------- ack (seq=2) ------------|
+  |-- sub_end (带 result) ----------->|  结束 task_id=85 + 记录开火结果
+  |<-- ack (group=84, task=85, seq=2)-|
   |                                   |
 ```
 
@@ -423,16 +504,14 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 
 ## 服务端存储
 
-所有事件和结果统一存入 `platform_external_tasks` 表，通过 `task_id` 关联同一轮任务的全部记录。
+整轮任务和具体子任务分层存储：
 
-| event_type | sub_task_seq | 说明 |
+| 表 | ID 字段 | 说明 |
 |---|---|---|
-| task_start | NULL | 整体任务开始 |
-| sub_start | 1 | 第 1 个子任务开始 |
-| sub_end | 1 | 第 1 个子任务结束 |
-| sub_start | 2 | 第 2 个子任务开始 |
-| sub_end | 2 | 第 2 个子任务结束 |
-| task_result | NULL | 结果数据（含提取的关键指标） |
+| `task_groups` | `group_id` | 整轮任务，对应 ACK 的 `task_group_id` / `overall_task_id` |
+| `task_runs` | `task_id`、`group_id` | 每行一个具体子任务，`group_id` 关联所属整轮任务 |
+| `task_events` | `task_id` | 记录 `sub_start`、`sub_end`、`task_end` 等生命周期事件 |
+| `task_subtask_results` | `task_id` | 保存具体子任务结果和提取指标 |
 
 ---
 
@@ -565,7 +644,7 @@ Content-Type: application/json
 外部平台客户端                        服务端                          浏览器
   |                                   |                               |
   |-- task_start (平台任务) --------->|                               |
-  |<--------- ack (task_id=42) ------|                               |
+  |<-- ack (group=42, task=42, seq=1)|                               |
   |                                   |                               |
   |-- sub_start --------------------->|                               |
   |-- sub_end (带 result) ----------->|                               |
