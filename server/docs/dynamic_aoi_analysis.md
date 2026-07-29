@@ -51,7 +51,8 @@ AOI界面标记：src/components/Radar.tsx
 
 ### 2.2 实验分析区域 `analysis_aoi_regions`
 
-七类实验 AOI 使用新增的 `tobii_aoi_snapshot` 协议管理。
+七类信任实验 AOI，以及平台控制/武器发射外部任务的四类 AOI，使用新增的
+`tobii_aoi_snapshot` 协议管理。
 
 它决定原始眼动帧中的：
 
@@ -93,6 +94,20 @@ right_comparison
 ```
 
 所有试次、两类任务和两种信任界面模式都使用相同 ID。`standard` 与 `trust_support` 只改变视觉显著性，不改变 AOI 名称和统计口径。
+
+平台控制和武器发射外部任务使用以下四个稳定 ID：
+
+```text
+TrustHistory
+TrustStatePanel
+SHOOT
+Title
+```
+
+它们分别适用于 `PLATFORM_CONTROL` 和 `WEAPON_FIRING`。外部任务生命周期会先以
+当前具体子任务 `task_id` 启动眼动；AOI 消息中的 `task_id`、`trial_id`、
+`task_group_id` 如果是空字符串，接入层会把它们视为未提供，其中
+`task_id`/`trial_id` 自动绑定当前活动眼动任务，`task_group_id` 保存为 `null`。
 
 ### 3.1 区域总表
 
@@ -616,10 +631,10 @@ tobii_aoi_snapshot
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `type` | string | 固定为 `tobii_aoi_snapshot` |
-| `task_id` | string | 当前 GazeService 活动任务 ID，必须匹配 |
-| `trial_id` | string | 当前信任试次 ID，现阶段与 `task_id` 相同 |
-| `task_group_id` | string/null | 当前任务组 ID |
-| `task_type` | string | `RADAR_TARGETING` 或 `SA_THREAT_RESPONSE` |
+| `task_id` | string/null | 当前 GazeService 活动任务 ID；非空时必须匹配，空字符串或缺省时使用活动任务 ID |
+| `trial_id` | string/null | 当前试次 ID；空字符串或缺省时使用活动任务 ID |
+| `task_group_id` | string/null | 当前任务组 ID；空字符串按 `null` 保存 |
+| `task_type` | string | `RADAR_TARGETING`、`SA_THREAT_RESPONSE`、`PLATFORM_CONTROL` 或 `WEAPON_FIRING` |
 | `client_snapshot_id` | string | 客户端本次请求唯一 ID，用于响应关联 |
 | `captured_at_ms` | integer | 客户端测量完成时间，毫秒 |
 | `change_reasons` | string[] | 本轮累计变化原因 |
@@ -632,7 +647,7 @@ tobii_aoi_snapshot
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | 七类 AOI 之一 |
+| `id` | string | 七类信任实验 AOI 或四类外部任务 AOI 之一 |
 | `shape` | string | 当前前端固定为 `rect` |
 | `visible` | boolean | 是否参与本版本命中计算 |
 | `left/top/right/bottom` | number | `[0,1]` 整屏归一化边界 |

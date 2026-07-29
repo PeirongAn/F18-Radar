@@ -467,19 +467,19 @@ class WebSocketServer:
                 "ok": False,
                 "msg": "gaze service is not available",
             }
+        def optional_identifier(value: Any) -> Optional[str]:
+            if value is None:
+                return None
+            text = str(value).strip()
+            return text or None
+
         try:
             result = self._gaze_svc.set_analysis_aoi_snapshot(
-                task_id=str(data.get("task_id")) if data.get("task_id") is not None else None,
-                trial_id=str(data.get("trial_id")) if data.get("trial_id") is not None else None,
-                task_group_id=(
-                    str(data.get("task_group_id"))
-                    if data.get("task_group_id") is not None else None
-                ),
-                task_type=str(data.get("task_type") or ""),
-                client_snapshot_id=(
-                    str(data.get("client_snapshot_id"))
-                    if data.get("client_snapshot_id") else None
-                ),
+                task_id=optional_identifier(data.get("task_id")),
+                trial_id=optional_identifier(data.get("trial_id")),
+                task_group_id=optional_identifier(data.get("task_group_id")),
+                task_type=str(data.get("task_type") or "").strip(),
+                client_snapshot_id=optional_identifier(data.get("client_snapshot_id")),
                 client_captured_at_ms=(
                     int(data.get("captured_at_ms"))
                     if data.get("captured_at_ms") is not None else None

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import sqlite3
@@ -9,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from tobii import gaze_service as gaze_service_module
 from tobii.gaze_service import GazeService
+from network.websocket_server import WebSocketServer
 
 
 def _rows(db_path: Path):
@@ -752,6 +754,99 @@ def test_invalid_aoi_alignment_records_revision_without_aoi_hits():
         frame = json.loads(raw_file.read_text(encoding="utf-8").strip())
         assert frame["aoi_revision"] == 1
         assert "aoi_hits" not in frame
+
+
+def test_external_aoi_snapshot_accepts_current_fields_for_weapon_and_platform_tasks():
+    with tempfile.TemporaryDirectory() as tmp:
+        svc = GazeService(data_dir=tmp)
+        websocket_server = WebSocketServer()
+        websocket_server.set_gaze_service(svc)
+        task_types = ("WEAPON_FIRING", "PLATFORM_CONTROL")
+        try:
+            for index, task_type in enumerate(task_types, start=1):
+                active_task_id = f"external-aoi-{index}"
+                svc.start_task(
+                    bbox=[],
+                    screen_size=None,
+                    task_id=active_task_id,
+                    user_id="external-user",
+                    task_source="weapon_launch" if task_type == "WEAPON_FIRING" else "platform_control",
+                    task_name=task_type,
+                    system_time=1_785_307_214_699_000 + index,
+                    start_trigger="sub_start",
+                )
+                result = asyncio.run(websocket_server._handle_tobii_aoi_snapshot({
+                    "type": "tobii_aoi_snapshot",
+                    "task_id": "",
+                    "trial_id": "",
+                    "task_group_id": "",
+                    "task_type": task_type,
+                    "client_snapshot_id": f"external-snapshot-{index}",
+                    "captured_at_ms": 1_785_307_214_699 + index,
+                    "layout_signature": "",
+                    "coordinate_space": "display_area_normalized",
+                    "display": {
+                        "fullscreen": True,
+                        "alignment_valid": True,
+                        "viewport_width_css_px": 2560,
+                        "viewport_height_css_px": 1360,
+                        "screen_width_css_px": 2560,
+                        "screen_height_css_px": 1360,
+                        "device_pixel_ratio": 1,
+                        "visual_viewport_scale": 1,
+                    },
+                    "change_reasons": ["geometry_changed"],
+                    "regions": [
+                        {
+                            "id": region_id,
+                            "shape": "rect",
+                            "visible": True,
+                            "left": 1,
+                            "top": top,
+                            "right": 1,
+                            "bottom": bottom,
+                            "binding": {"mode": "manual_review", "target_id": ""},
+                        }
+                        for region_id, top, bottom in (
+                            ("TrustHistory", 0.079, 0.331),
+                            ("TrustStatePanel", 0.343, 0.575),
+                            ("SHOOT", 0.829, 0.864),
+                            ("Title", 0.899, 1),
+                        )
+                    ],
+                }))
+                assert result["ok"] is True
+                assert result["changed"] is True
+                assert result["task_id"] == active_task_id
+                assert result["client_snapshot_id"] == f"external-snapshot-{index}"
+                svc.stop_task(
+                    task_id=active_task_id,
+                    system_time=1_785_307_214_799_000 + index,
+                    end_trigger="sub_end",
+                )
+        finally:
+            svc.shutdown()
+
+        conn = sqlite3.connect(Path(tmp) / "gaze_records.db")
+        try:
+            rows = conn.execute(
+                "SELECT task_id, trial_id, task_group_id, task_type, regions_json "
+                "FROM gaze_aoi_snapshots ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        assert [(row[0], row[1], row[2], row[3]) for row in rows] == [
+            ("external-aoi-1", "external-aoi-1", None, "WEAPON_FIRING"),
+            ("external-aoi-2", "external-aoi-2", None, "PLATFORM_CONTROL"),
+        ]
+        for row in rows:
+            assert {region["id"] for region in json.loads(row[4])} == {
+                "TrustHistory",
+                "TrustStatePanel",
+                "SHOOT",
+                "Title",
+            }
 
 def test_duplicate_start_preserves_analysis_aoi_revision():
     with tempfile.TemporaryDirectory() as tmp:

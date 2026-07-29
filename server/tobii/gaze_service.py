@@ -68,6 +68,10 @@ ANALYSIS_AOI_IDS = {
     "right_candidate_list",
     "right_detail",
     "right_comparison",
+    "TrustHistory",
+    "TrustStatePanel",
+    "SHOOT",
+    "Title",
 }
 
 # 写入队列中的事件类型标识
