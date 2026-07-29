@@ -6,20 +6,25 @@ export interface ThreatRow {
   type: string;
   target: string;
   label: string;
-  rank: number;
-  index: number;
+  currentOrder: number;
   distance: number;
   time: string;
   displayType: string;
   priorityColor: string;
+  isSelected?: boolean;
+  isAiRecommended?: boolean;
 }
 
 export interface AttackRow {
   id: string;
   number: string;
+  targetId: string;
+  target: string;
   type: string;
   distance: number;
   source: string;
+  isSelected?: boolean;
+  isAiRecommended?: boolean;
 }
 
 export interface ThreatListData {
@@ -128,6 +133,8 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
             <div style={{ maxHeight: '190px', overflowY: 'auto' }}>
               {threats.map((threat, idx) => {
                 const isFirst = idx === 0;
+                const isSelected = threat.isSelected === true;
+                const isAiRecommended = threat.isAiRecommended === true;
                 return (
                   <div
                     key={threat.id}
@@ -138,12 +145,22 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
                       gap: '4px',
                       padding: '5px 4px',
                       borderBottom: '1px solid #071a0a',
-                      background: isFirst
-                        ? 'rgba(0,30,10,0.7)'
-                        : idx % 2 === 0
-                          ? 'rgba(0,10,4,0.6)'
-                          : 'rgba(0,6,2,0.5)',
-                      borderLeft: isFirst ? `2px solid ${threat.priorityColor}` : '2px solid transparent',
+                      background: isSelected
+                        ? 'rgba(75,58,0,0.78)'
+                        : isAiRecommended
+                          ? 'rgba(0,35,18,0.72)'
+                          : isFirst
+                            ? 'rgba(0,30,10,0.7)'
+                            : idx % 2 === 0
+                              ? 'rgba(0,10,4,0.6)'
+                              : 'rgba(0,6,2,0.5)',
+                      borderLeft: isSelected
+                        ? '2px solid #ffd700'
+                        : isAiRecommended
+                          ? '2px solid #00ff66'
+                          : isFirst
+                            ? `2px solid ${threat.priorityColor}`
+                            : '2px solid transparent',
                     }}
                   >
                     <div style={{
@@ -152,13 +169,15 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
                       textAlign: 'center',
                       fontWeight: isFirst ? 'bold' : 'normal',
                     }}>
-                      {threat.rank}
+                      {threat.currentOrder}
                     </div>
                     <div style={{
                       ...cellBase,
-                      color: isFirst ? '#c8a800' : '#8aaa66',
+                      color: isSelected ? '#ffe66a' : isAiRecommended ? '#73ff9a' : isFirst ? '#c8a800' : '#8aaa66',
                     }} title={threat.target}>
                       {threat.target}
+                      {isAiRecommended && <span style={{ marginLeft: '5px', color: '#00ff66', fontSize: '10px' }}>AI</span>}
+                      {isSelected && <span style={{ marginLeft: '5px', color: '#ffd700', fontSize: '10px' }}>已选</span>}
                     </div>
                     <div style={{
                       ...cellBase,
@@ -199,45 +218,64 @@ const ThreatList: React.FC<ThreatListProps> = ({ threats, attacks, showDetailedI
           }}>
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '58px 1fr 60px 56px',
+              gridTemplateColumns: '58px minmax(78px, 1fr) minmax(78px, 1fr) 60px 56px',
               gap: '4px',
               background: 'rgba(0,20,8,0.8)',
               borderBottom: '1px solid #0d3018',
               padding: '0 4px',
             }}>
               <div style={{ ...headerCellStyle, textAlign: 'center' }}>编号</div>
+              <div style={headerCellStyle}>目标</div>
               <div style={headerCellStyle}>类型</div>
               <div style={{ ...headerCellStyle, textAlign: 'right' }}>距离</div>
               <div style={{ ...headerCellStyle, textAlign: 'center' }}>来源</div>
             </div>
             <div style={{ maxHeight: '190px', overflowY: 'auto' }}>
-              {attacks.map((attack, idx) => (
-                <div
-                  key={attack.id}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '58px 1fr 60px 56px',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '5px 4px',
-                    borderBottom: '1px solid #071a0a',
-                    background: idx % 2 === 0 ? 'rgba(0,10,4,0.6)' : 'rgba(0,6,2,0.5)',
-                  }}
-                >
-                  <div style={{ ...cellBase, color: '#4a9a55', textAlign: 'center' }}>
-                    {attack.number}
+              {attacks.map((attack, idx) => {
+                const isSelected = attack.isSelected === true;
+                const isAiRecommended = attack.isAiRecommended === true;
+                return (
+                  <div
+                    key={attack.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '58px minmax(78px, 1fr) minmax(78px, 1fr) 60px 56px',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '5px 4px',
+                      borderBottom: '1px solid #071a0a',
+                      background: isSelected
+                        ? 'rgba(75,58,0,0.78)'
+                        : isAiRecommended
+                          ? 'rgba(0,35,18,0.72)'
+                          : idx % 2 === 0
+                            ? 'rgba(0,10,4,0.6)'
+                            : 'rgba(0,6,2,0.5)',
+                      borderLeft: isSelected
+                        ? '2px solid #ffd700'
+                        : isAiRecommended
+                          ? '2px solid #00ff66'
+                          : '2px solid transparent',
+                    }}
+                  >
+                    <div style={{ ...cellBase, color: '#4a9a55', textAlign: 'center' }}>
+                      {attack.number}
+                    </div>
+                    <div style={{ ...cellBase, color: '#8aaa66' }} title={attack.target}>
+                      {attack.target}
+                    </div>
+                    <div style={{ ...cellBase, color: '#4db87a' }} title={attack.type}>
+                      {attack.type}
+                    </div>
+                    <div style={{ ...cellBase, color: '#4db87a', textAlign: 'right' }}>
+                      {formatDistance(attack.distance)}
+                    </div>
+                    <div style={{ ...cellBase, color: '#c8a800', textAlign: 'center' }}>
+                      {attack.source}
+                    </div>
                   </div>
-                  <div style={{ ...cellBase, color: '#4db87a' }} title={attack.type}>
-                    {attack.type}
-                  </div>
-                  <div style={{ ...cellBase, color: '#4db87a', textAlign: 'right' }}>
-                    {formatDistance(attack.distance)}
-                  </div>
-                  <div style={{ ...cellBase, color: '#c8a800', textAlign: 'center' }}>
-                    {attack.source}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

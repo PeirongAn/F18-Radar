@@ -176,6 +176,7 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
   // 监听外部触发的提醒事件（如 flash_mode），让提示框额外高亮3秒
   useEffect(() => {
     const handleAntennaPromptAttention = (event: Event) => {
+      if (isAIActive) return;
       const customEvent = event as CustomEvent<{ mode?: string; durationMs?: number }>;
       const durationMs = customEvent.detail?.durationMs ?? 3000;
 
@@ -194,9 +195,20 @@ const CommunicationLog: React.FC<CommunicationLogProps> = ({
       window.removeEventListener('antenna-prompt-attention', handleAntennaPromptAttention as EventListener);
       if (attentionTimerRef.current) {
         window.clearTimeout(attentionTimerRef.current);
+        attentionTimerRef.current = null;
       }
     };
-  }, []);
+  }, [isAIActive]);
+
+  // AI 激活时立即撤销已经显示的人工眼动提醒。
+  useEffect(() => {
+    if (!isAIActive) return;
+    setAntennaPromptAttentionActive(false);
+    if (attentionTimerRef.current) {
+      window.clearTimeout(attentionTimerRef.current);
+      attentionTimerRef.current = null;
+    }
+  }, [isAIActive]);
   
   useEffect(() => {
     if (!isStarted || !onAddMessageProp) return;

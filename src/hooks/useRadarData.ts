@@ -877,7 +877,7 @@ const useRadarData = (
     const startPayload = buildTobiiStatusPayload(
       true,
       lastSaTobiiPromptPositionRef.current,
-      agentStore.isAIActive ? 'sa_highest_priority_threat_withAI' : 'sa_highest_priority_threat_noAI'
+      'sa_highest_priority_threat_noAI'
     );
     sendTobiiHandMessage(startPayload, 'sa tobii start');
     console.log('[gazerelation] SA Tobii round sent start message through global WS:', startPayload);
@@ -885,7 +885,7 @@ const useRadarData = (
 
   // gazerelation: 结束SA最高优先级目标的Tobii回合
   const endSaTobiiRound = useCallback((promptPosition?: any) => {
-    if (saTobiiRoundEndedRef.current) return;
+    if (!saTobiiRoundStartedRef.current || saTobiiRoundEndedRef.current) return;
     saTobiiRoundEndedRef.current = true;
     saTobiiRoundActiveRef.current = false;
 
@@ -896,7 +896,7 @@ const useRadarData = (
     const endPayload = buildTobiiStatusPayload(
       false,
       lastSaTobiiPromptPositionRef.current,
-      agentStore.isAIActive ? 'sa_highest_priority_threat_withAI' : 'sa_highest_priority_threat_noAI'
+      'sa_highest_priority_threat_noAI'
     );
     sendTobiiHandMessage(
       saTobiiTaskIdRef.current ? { ...endPayload, task_id: saTobiiTaskIdRef.current } : endPayload,
@@ -1141,7 +1141,9 @@ const useRadarData = (
 
     if (message.type === 'attention_feedback') {
       console.log('[useRadarData] Processing gaze attention feedback:', message);
-      handleAntennaStatusResponse(message);
+      if (enableAntennaRound && antennaRoundActiveRef.current) {
+        handleAntennaStatusResponse(message);
+      }
       if (saTobiiRoundActiveRef.current) {
         handleSaTobiiResponse(message);
       }
@@ -1157,8 +1159,12 @@ const useRadarData = (
           saTobiiTaskIdRef.current = String(message.task_id);
         }
       }
-      handleAntennaStatusResponse(message);
-      handleSaTobiiResponse(message);
+      if (enableAntennaRound && antennaRoundActiveRef.current) {
+        handleAntennaStatusResponse(message);
+      }
+      if (saTobiiRoundActiveRef.current) {
+        handleSaTobiiResponse(message);
+      }
       return;
     }
 
@@ -1453,7 +1459,7 @@ const useRadarData = (
     }
     // SAThreats and SAEmergency are typically part of the general radarData update, no specific handling here needed for AgentStore
 
-  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled, handleAntennaStatusResponse, handleSaTobiiResponse]);
+  }, [recordOperation, targetAntennaElevation, antennaAdjustmentRequired, joystickEnabled, enableAntennaRound, handleAntennaStatusResponse, handleSaTobiiResponse]);
   
   const confirmAntennaAdjustmentHandled = useCallback(() => {
     console.log('Confirming to backend that antenna adjustment has been handled.');

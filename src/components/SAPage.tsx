@@ -16,6 +16,11 @@ import { ThreatTrustDecision } from '../types/trustCalibration';
 import { useTrustTrial } from '../hooks/useTrustTrial';
 import { useTrustTrialPublisher } from '../hooks/useTrustTrialPublisher';
 import type { TrustCandidate, TrustTrialSnapshot } from '../types/trustControl';
+import {
+  buildSaThreatDisplayLabels,
+  createSaThreatLabelOrderState,
+  getSaThreatBaseLabel,
+} from '../utils/saThreatLabels';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -35,17 +40,6 @@ interface SAPageProps {
     markManualReviewDone: () => void;
   } | null) => void;
   onTrustTrialUpdate?: (snapshot: TrustTrialSnapshot | null) => void;
-}
-
-// 添加威胁数据接口
-interface ThreatData {
-  id: string;
-  type: string;
-  source: string;
-  distance: number;
-  heading: number;
-  priority: 'high' | 'medium' | 'low';
-  label: string;
 }
 
 // 添加导弹数据接口
@@ -206,6 +200,50 @@ const SaManualReviewPulse: React.FC<{
   );
 };
 
+const SaRecommendationBreathingFrame: React.FC<{
+  x: number;
+  y: number;
+  radius: number;
+}> = ({ x, y, radius }) => {
+  const circleRef = useRef<any>(null);
+
+  useEffect(() => {
+    let frameId = 0;
+    let startedAt: number | null = null;
+    const animate = (timestamp: number) => {
+      if (startedAt === null) startedAt = timestamp;
+      const elapsed = timestamp - startedAt;
+      // 每次出现都从最亮状态开始，避免首次挂载正好落在暗谷。
+      const intensity = (Math.cos(elapsed / 420) + 1) / 2;
+      if (circleRef.current) {
+        circleRef.current.opacity(0.35 + intensity * 0.65);
+        circleRef.current.shadowBlur(8 + intensity * 20);
+        circleRef.current.strokeWidth(2.4 + intensity * 0.8);
+        circleRef.current.getLayer()?.batchDraw();
+      }
+      frameId = window.requestAnimationFrame(animate);
+    };
+    frameId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  return (
+    <Circle
+      ref={circleRef}
+      x={x}
+      y={y}
+      radius={radius}
+      stroke={RECOMMENDATION_COLOR}
+      strokeWidth={3.2}
+      dash={[4, 4]}
+      shadowColor={RECOMMENDATION_COLOR}
+      shadowBlur={28}
+      opacity={1}
+      listening={false}
+    />
+  );
+};
+
 const getThreatStrokeColor = (type?: string, priority?: string): string => {
   if (priority === 'high' || type?.includes('Primary')) return PRIMARY_THREAT_COLOR;
   return SECONDARY_THREAT_COLOR;
@@ -276,7 +314,6 @@ const StandardThreatIcon: React.FC<StandardThreatIconProps> = ({ x, y, size = IC
 interface FanThreatPosition {
   x: number;
   y: number;
-  rank: number;
   angle: number;
   radius: number;
 }
@@ -355,7 +392,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     agentStore.toggleAudioEnabled();
   }, []);
 
-  const { connected, radarData, error, sendMessage, sendResetSA, taskId, repetitionInfos, setEnhancedThreats, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, button3, joystickConnected, trustControl, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
+  const { connected, radarData, error, sendMessage, sendResetSA, taskId, repetitionInfos, enhancedThreats, serverRadarConfig, useEnhancedProtocol, mainPos, button1, button2, button3, joystickConnected, trustControl, joystickEnabled, startSaTobiiRound, endSaTobiiRound } = useRadarData();
   const saCanvasRef = useRef<HTMLDivElement | null>(null);
   const endSaTobiiRoundRef = useRef(endSaTobiiRound);// 存储 endSaTobiiRound 函数的引用
   const getHighestThreatPromptPositionRef = useRef<(() => TobiiPromptPosition | null) | null>(null);
@@ -366,10 +403,15 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     taskId: '',
     values: new Map(),
   });
+  const saThreatLabelOrderRef = useRef({
+    taskKey: '',
+    orderState: createSaThreatLabelOrderState(),
+  });
   const attentionIntervalRef = useRef<number | null>(null);
   const attentionTimeoutRef = useRef<number | null>(null);
   const [highestThreatAttentionVisible, setHighestThreatAttentionVisible] = useState(false);
   const [saTobiiDebugBbox, setSaTobiiDebugBbox] = useState<SaTobiiDebugBbox | null>(null);
+  const manualSaFeedbackActiveRef = useRef(false);
   const stopAutoStartSaTobiiRef = useRef<boolean>(false);
   const lastHighestThreatIdRef = useRef<string | null>(null);
   const isSaTobiiBboxDebugEnabled = useMemo(() => {
@@ -742,6 +784,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           completedSATaskKeysRef.current.add(taskKey);
         }
         const currentTaskId = getCurrentSATaskId();
+        const confirmedTrustSelection = unifiedTrustCandidates.find(
+          candidate => candidate.id === String(userSelection.threat.id),
+        ) ?? {
+          id: String(userSelection.threat.id),
+          label: userSelection.threat.label || userSelection.threat.type || String(userSelection.threat.id),
+          type: userSelection.threat.type,
+        };
         sendMessage?.({
           type: 'task_result_confirmed',
           task_type: 'SA_THREAT_RESPONSE',
@@ -750,7 +799,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           user_id: userId,
           event_owner: 'manual',
           extra: {
-            trust_trial: unifiedTrustTrial.buildTrustTrial(),
+            trust_trial: unifiedTrustTrial.buildTrustTrial(confirmedTrustSelection),
           },
         });
         recordResultConfirmed(userSelection?.threat?.id);
@@ -761,8 +810,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       stopAutoStartSaTobiiRef.current = true;
       const promptPosition = getSaTobiiPromptPositionRef.current?.();
       console.log('gazerelation:查看结果按钮点击了,发送结束Tobii请求', promptPosition);
-      beginSATobiiServe.current = false;
+      setBeginSATobiiServe(false);
       endSaTobiiRound(promptPosition || undefined);
+      manualSaFeedbackActiveRef.current = false;
       
       // 启用威胁列表详细信息显示（分数和距离）
       if (onShowDetailedInfoChange) {
@@ -803,43 +853,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       } else {
         setResult(undefined);
       }
-      
-   
-      
-    
-      // 将正确答案也添加到威胁列表中，确保显示红色边框
-      const highestPriorityThreat = getCurrentHighestPriorityThreat();
-      if (highestPriorityThreat) {
-        const getOriginalPriority = (threat: any): 'high' | 'medium' | 'low' => {
-          if (threat.type?.toLowerCase().includes('missile')) return 'high';
-          if (threat.type?.includes('Primary') || threat.id?.includes('Primary')) return 'high';
-          return 'medium';
-        };
-        if (useEnhancedProtocol) {
-          setEnhancedThreats(prev => {
-            const newList = [...prev.filter(t => t.id !== highestPriorityThreat.id)];
-            const one = prev.find(t => t.id === highestPriorityThreat.id);
-            newList.unshift({...one});
-            return newList;
-          })
-        } else {
-          setThreatList(prev => {
-            const newList = [...prev.filter(t => t.id !== highestPriorityThreat.id)];
-            // 将正确答案添加到列表第一位
-            newList.unshift({
-              id: highestPriorityThreat.id,
-              type: highestPriorityThreat.type,
-              label: highestPriorityThreat.label,
-              source: highestPriorityThreat.label,
-              distance: 0,
-              heading: 0,
-              priority: getOriginalPriority(highestPriorityThreat),
-            });
-            return newList;
-          });
-        }
-      }
-   
       // 清除用户选择状态
       // Keep the selected target solid while the result dialog is visible.
     }
@@ -855,7 +868,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 威胁数据状态
   const [saThreats, setSaThreats] = useState(radarData?.saThreats ?? []);
   const [missiles, setMissiles] = useState<MissileData[]>([]);
-  const [threatList, setThreatList] = useState<ThreatData[]>([]);
   
   // 增强威胁数据状态现在从useRadarData获取
   
@@ -941,7 +953,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
     // 清除所有本地状态
     setMissiles([]);
-    setThreatList([]);
+    saThreatLabelOrderRef.current = {
+      taskKey: '',
+      orderState: createSaThreatLabelOrderState(),
+    };
     setSaThreats([]);
     setShowTaskComplete(false); // 关闭任务完成弹窗
     setResult(undefined); // 清空已完成威胁
@@ -995,9 +1010,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         hasInitLogRef.current = true;
       }
     } else {
-      // 当威胁列表从服务器清空时（例如任务重置），本地也清空
-      setThreatList([]);
-      
       // 检测到服务器重置信号，重置内部ref变量
       if (hasInitLogRef.current) {
         console.log('【SAPage】检测到服务器重置，重置内部ref变量');
@@ -1108,7 +1120,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             onAddMessage('sa_emergency', '收到临机事件：威胁升级，已有威胁提升为一级');
           }
         }
-        beginSATobiiServe.current = true;
+        setBeginSATobiiServe(true);
         console.log(`[gazerelation] isAIActive: ${agentStore.isAIActive}`);
         lastEmergencyRef.current = eventId;
       }
@@ -1269,11 +1281,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
   }, [useEnhancedProtocol, enhancedThreats, missiles, saThreats, threatPositions]);
 
-  // 创建一个从威胁ID到其排序后索引的映射，方便快速查找
-  const threatIdToSortedIndexMap = useMemo(() => 
-    new Map(threatsWithScore.map((item, index) => [item.threat.id, index]))
-  , [threatsWithScore]);
-
   // 获取当前最高优先级威胁的函数
   const getCurrentHighestPriorityThreat = useCallback(() => {
     if (threatsWithScore.length === 0) {
@@ -1345,7 +1352,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     return () => onTrustActionsUpdate?.(null);
   }, [markThreatEvidenceViewed, markThreatManualReviewDone, onTrustActionsUpdate]);
 
-  const eyeFeedbackThreatId = agentStore.isAIActive ? aiSelectedThreatRef.current?.id : null;
+  const gazeFeedbackEnabled = !agentStore.isAIActive;
+  const eyeFeedbackThreatId = gazeFeedbackEnabled ? highestPriorityThreat?.id : null;
   const fanThreatPositions = useMemo(() => {
     const positions = new Map<string, FanThreatPosition>();
     const clampPosition = (id: string, rawX: number, rawY: number) => {
@@ -1359,7 +1367,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       positions.set(id, {
         x,
         y,
-        rank: threatIdToSortedIndexMap.get(id) ?? 0,
         angle,
         radius,
       });
@@ -1385,7 +1392,38 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     });
 
     return positions;
-  }, [enhancedThreats, fanScanGeometry.apexX, fanScanGeometry.apexY, height, missiles, saThreats, threatIdToSortedIndexMap, threatPositions, useEnhancedProtocol, width]);
+  }, [enhancedThreats, fanScanGeometry.apexX, fanScanGeometry.apexY, height, missiles, saThreats, threatPositions, useEnhancedProtocol, width]);
+
+  const saThreatDisplayLabels = useMemo(() => {
+    const currentTaskKey = String(taskId ?? 'pending-sa');
+    if (saThreatLabelOrderRef.current.taskKey !== currentTaskKey) {
+      saThreatLabelOrderRef.current = {
+        taskKey: currentTaskKey,
+        orderState: createSaThreatLabelOrderState(),
+      };
+    }
+
+    const regularThreats = useEnhancedProtocol && enhancedThreats.length > 0
+      ? enhancedThreats.filter(threat => !threat.is_missile)
+      : saThreats;
+
+    return buildSaThreatDisplayLabels(
+      [...regularThreats, ...missiles].map(threat => ({
+        id: String(threat.id),
+        label: threat.label,
+        type: threat.type,
+      })),
+      saThreatLabelOrderRef.current.orderState,
+    );
+  }, [enhancedThreats, missiles, saThreats, taskId, useEnhancedProtocol]);
+
+  const getSaThreatDisplayLabel = useCallback((threat: any): string => (
+    saThreatDisplayLabels.get(String(threat?.id)) ?? getSaThreatBaseLabel({
+      id: String(threat?.id ?? ''),
+      label: threat?.label,
+      type: threat?.type,
+    })
+  ), [saThreatDisplayLabels]);
   const unifiedTrustCandidates = useMemo<TrustCandidate[]>(() => {
     const currentTaskKey = String(taskId ?? 'pending-sa');
     if (trustDisplayNumberRef.current.taskId !== currentTaskKey) {
@@ -1464,7 +1502,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   });
   useTrustTrialPublisher(unifiedTrustTrial.snapshot, onTrustTrialUpdate);
   useEffect(() => {
-    if (!joystickCursorPos) {
+    // 未连接摇杆时 mainPos 的默认 (0, 0) 只是占位值，不能据此结束首次推荐光环。
+    if (!joystickConnected || !joystickCursorPos) {
       unifiedTrustTrial.updateTdcCandidate(null);
       return;
     }
@@ -1480,7 +1519,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     });
     unifiedTrustTrial.updateTdcCandidate(nearest);
-  }, [fanThreatPositions, joystickCursorPos, trustControl?.threat_focus_radius_px, unifiedTrustCandidates, unifiedTrustTrial.updateTdcCandidate]);
+  }, [fanThreatPositions, joystickConnected, joystickCursorPos, trustControl?.threat_focus_radius_px, unifiedTrustCandidates, unifiedTrustTrial.updateTdcCandidate]);
   const isPointInFanScan = useCallback((position: { x: number; y: number }) => {
     const dx = position.x - fanScanGeometry.apexX;
     const dy = position.y - fanScanGeometry.apexY;
@@ -1493,7 +1532,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     return delta <= FAN_ANGLE_SPAN;
   }, [fanScanGeometry.apexX, fanScanGeometry.apexY, fanScanGeometry.outerRadius, fanScanGeometry.startAngle]);
   //gazerelation: 判断是否在增强逻辑后发送
-  const beginSATobiiServe = useRef(false);
+  const [beginSATobiiServe, setBeginSATobiiServe] = useState(false);
 
   const triggerHighestThreatAttention = useCallback((durationMs: number = 3000) => {
     setHighestThreatAttentionVisible(true);
@@ -1516,6 +1555,18 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       setHighestThreatAttentionVisible(false);
       attentionTimeoutRef.current = null;
     }, durationMs);
+  }, []);
+
+  const stopHighestThreatAttention = useCallback(() => {
+    if (attentionIntervalRef.current) {
+      window.clearInterval(attentionIntervalRef.current);
+      attentionIntervalRef.current = null;
+    }
+    if (attentionTimeoutRef.current) {
+      window.clearTimeout(attentionTimeoutRef.current);
+      attentionTimeoutRef.current = null;
+    }
+    setHighestThreatAttentionVisible(false);
   }, []);
 
   const getThreatPromptPosition = useCallback((threat: any): TobiiPromptPosition | null => {
@@ -1621,15 +1672,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   }, [getThreatPromptPosition, highestPriorityThreat]);
 
   const getSaTobiiPromptPosition = useCallback((): TobiiPromptPosition | null => {
-    if (agentStore.isAIActive && aiSelectedThreatRef.current) {
-      return getThreatPromptPosition(aiSelectedThreatRef.current);
-    }
     return getHighestThreatPromptPosition();
-  }, [getHighestThreatPromptPosition, getThreatPromptPosition]);
+  }, [getHighestThreatPromptPosition]);
 
   useEffect(() => {
     const handleSaAttentionEvent = (event: Event) => {
-      if (!agentStore.isAIActive || !aiSelectedThreatRef.current) return;
+      if (!gazeFeedbackEnabled || !highestPriorityThreat) return;
       const customEvent = event as CustomEvent<{ durationMs?: number }>;
       const durationMs = Number(customEvent?.detail?.durationMs) || 3000;
       triggerHighestThreatAttention(durationMs);
@@ -1639,7 +1687,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     return () => {
       window.removeEventListener('sa-highest-threat-attention', handleSaAttentionEvent as EventListener);
     };
-  }, [triggerHighestThreatAttention]);
+  }, [gazeFeedbackEnabled, highestPriorityThreat, triggerHighestThreatAttention]);
 
   useEffect(() => {
     const currentHighestThreatId = highestPriorityThreat?.id || null;
@@ -1662,6 +1710,34 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     getHighestThreatPromptPositionRef.current = getHighestThreatPromptPosition;
     getSaTobiiPromptPositionRef.current = getSaTobiiPromptPosition;
   }, [getHighestThreatPromptPosition, getSaTobiiPromptPosition]);
+
+  // 仅人工任务启动最高优先级威胁的注意力反馈回合。
+  useEffect(() => {
+    if (!gazeFeedbackEnabled) return;
+    if (!beginSATobiiServe || stopAutoStartSaTobiiRef.current) return;
+    const promptPosition = getHighestThreatPromptPosition();
+    if (!promptPosition) return;
+
+    // 新临机事件可能改变最高优先级目标，先结束旧区域再注册新区域。
+    endSaTobiiRound();
+    manualSaFeedbackActiveRef.current = false;
+    startSaTobiiRound(promptPosition);
+    manualSaFeedbackActiveRef.current = true;
+    setBeginSATobiiServe(false);
+    console.log('gazerelation:startSaTobiiRound manual highest-priority target', promptPosition);
+  }, [beginSATobiiServe, gazeFeedbackEnabled, highestPriorityThreat?.id, getHighestThreatPromptPosition, endSaTobiiRound, startSaTobiiRound]);
+
+  // AI 激活时立即清除正在显示的提醒，并撤销反馈目标区域；眼动任务采集本身不停止。
+  useEffect(() => {
+    if (gazeFeedbackEnabled) return;
+    const shouldResumeManualFeedback = manualSaFeedbackActiveRef.current;
+    stopHighestThreatAttention();
+    endSaTobiiRound();
+    manualSaFeedbackActiveRef.current = false;
+    if (shouldResumeManualFeedback) {
+      setBeginSATobiiServe(true);
+    }
+  }, [gazeFeedbackEnabled, endSaTobiiRound, stopHighestThreatAttention]);
 
 
   // gazerelation: 监听页面卸载事件刷新，尝试结束 SA Tobii 回合
@@ -1694,7 +1770,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   }, []);
 
 
-  // 点击icon将其加入威胁列表首位但保持原优先级
+  // 选择只更新选中状态，不改变服务端下发的初始威胁顺序
   const handleThreatIconClick = useCallback((threat: any, eventOwner: string) => {
     console.log('[AI Agent] handleThreatIconClick', threat, eventOwner)
     const highestPriorityThreat = getCurrentHighestPriorityThreat();
@@ -1715,30 +1791,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
     const originalPriority = getOriginalPriority(threat);
     const threatLabel = getThreatLabel(threat);
-    if (useEnhancedProtocol) {
-      setEnhancedThreats(prev => {
-        const newList = [...prev.filter(t => t.id !== threat.id)];
-        const one = prev.find(t => t.id === threat.id);
-        if (one) {
-          newList.unshift({...one});
-        }
-        return newList;
-      })
-    } else {
-      setThreatList(prev => {
-        const newList = [...prev.filter(t => t.id !== threat.id)];
-        newList.unshift({
-          id: threat.id,
-          type: threat.type,
-          label: threatLabel,
-          source: threatLabel,
-          distance: 0,
-          heading: 0,
-          priority: originalPriority,
-        });
-        return newList;
-      });
-    }
+    const displayThreatLabel = getSaThreatDisplayLabel(threat);
 
     // 存储用户选择，但不立即显示弹窗
     setUserSelection({
@@ -1756,14 +1809,6 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           type: threat.type,
         }
       );
-      if (agentStore.isAIActive && beginSATobiiServe.current && !stopAutoStartSaTobiiRef.current) {
-        const promptPosition = getThreatPromptPosition(threat);
-        if (promptPosition) {
-          startSaTobiiRound(promptPosition);
-          beginSATobiiServe.current = false;
-          console.log('gazerelation:startSaTobiiRound AI selected target', promptPosition);
-        }
-      }
     } else {
       unifiedTrustTrial.recordHumanSelection(
         unifiedTrustCandidates.find(candidate => candidate.id === threat.id) ?? {
@@ -1801,9 +1846,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     if (onAddMessage) {
       const actor = eventOwner === 'AI' ? '[AI]' : '[用户]';
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
-      onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
+      onAddMessage('sa_threat', `${actor} 选择威胁：${displayThreatLabel}，优先级：${priorityText}，等待确认`);
     }
-  }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra, unifiedTrustCandidates, unifiedTrustTrial.recordHumanSelection]);
+  }, [getCurrentHighestPriorityThreat, getSaThreatDisplayLabel, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra, unifiedTrustCandidates, unifiedTrustTrial.recordHumanSelection]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -1818,11 +1863,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         unifiedTrustTrial.snapshot.manualReviewActive &&
         missile.id === unifiedTrustTrial.snapshot.manualReviewCandidate?.id
       );
-      const showRecommendationFrame = !showTaskComplete && (
-        shouldAttentionBlink || (
-          unifiedTrustTrial.snapshot.glowActive &&
-          missile.id === unifiedTrustTrial.snapshot.aiRecommendation?.id
-        )
+      const showGazeAttentionFrame = !showTaskComplete && shouldAttentionBlink;
+      const showTrustRecommendationBreathing = !showTaskComplete && (
+        unifiedTrustTrial.snapshot.glowActive &&
+        missile.id === unifiedTrustTrial.snapshot.aiRecommendation?.id
       );
       const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
       const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
@@ -1863,7 +1907,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               fontFamily="monospace"
             />
           )}
-          {showRecommendationFrame && (
+          {showGazeAttentionFrame && (
             <Rect
               x={position.x - 26}
               y={position.y - 31}
@@ -1873,6 +1917,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               strokeWidth={3}
               dash={[4, 4]}
               cornerRadius={6}
+            />
+          )}
+          {showTrustRecommendationBreathing && (
+            <SaRecommendationBreathingFrame
+              x={position.x}
+              y={position.y}
+              radius={36}
             />
           )}
           {/* 用户选择的答案边框（黄色） */}
@@ -1936,17 +1987,16 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       return;
     }
 
-    // 如果没有提供threat，则作为后备方案重新查找威胁
-    const bestThreat = threatList.find(threat => 
-      (threat.type && threat.type.toLowerCase().includes('missile')) || 
-      (threat.id && threat.id.includes('Primary'))
-    ) || threatList[0];
+    // 如果没有提供 threat，则从原始威胁数据中选择后备项，不依赖交互排序
+    const bestThreat = threatsWithScore.find(item =>
+      item.isMissile || item.threat.type?.includes('Primary')
+    )?.threat ?? threatsWithScore[0]?.threat;
 
     if (bestThreat) {
       console.log(`[AI Agent] Handling emergency with fallback threat: ${bestThreat.id}, type: ${bestThreat.type}`);
       handleThreatIconClick(bestThreat, 'AI');
     }
-  }, [handleThreatIconClick, threatList]);
+  }, [handleThreatIconClick, threatsWithScore]);
 
   const getBestThreat = useCallback(() => {
     if (threatsWithScore.length === 0) return null;
@@ -2301,7 +2351,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     // 重要修复：威胁值计算基于原始数据，不受用户交互影响
     console.log('【威胁计算】基于原始数据计算，saThreats:', saThreats.length, 'missiles:', missiles.length, 'enhancedThreats:', enhancedThreats.length);
     
-    // 所有威胁基于原始数据源，不包含用户交互产生的threatList
+    // 所有威胁基于原始数据源，用户和 AI 选择不改变顺序
     const allBaseThreats = [
       ...saThreatsToUse,
       ...missiles.map((missile: any) => {
@@ -2319,24 +2369,19 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }),
     ];
     
-    // 合并用户选择的威胁（仅用于显示顺序，不影响计算）
-    const allThreats = [
-      ...threatList, // 用户选择的威胁在前
-      ...allBaseThreats.filter((baseThreat: any) => !threatList.some(t => t.id === baseThreat.id)) // 剩余威胁在后
-    ].map((threat, index) => {
+    const allThreats = allBaseThreats.map((threat, index) => {
       const { distance, score } = calculateThreatInfo(threat, index);
       const displayType = TYPE_MAP[threat.type] || threat.type || '未知威胁';
-      const target = threat.target || threat.label || threat.source || '未知目标';
+      const target = getSaThreatDisplayLabel(threat);
       const creationTimestamp = Number(threat.creation_timestamp ?? threat._enhanced?.creation_timestamp);
       
-      // 创建符合 ThreatData 接口的干净对象
+      // 创建传递给 SA 威胁列表的干净对象
       const cleanThreatData = {
         id: threat.id,
         type: threat.type,
         label: target,
         target,
-        rank: index + 1,
-        index: index + 1,
+        currentOrder: index + 1,
         distance: distance || 0,
         score: score || 0,
         displayType,
@@ -2344,7 +2389,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         priorityLevel: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '高' : 
                       (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '中' : '低',
         priorityColor: (threat.priority === 'high' || threat.type?.includes('Primary')) ? '#ff0000' : 
-                      (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff'
+                      (threat.priority === 'medium' || threat.type?.includes('Secondary')) ? '#ffff00' : '#00ffff',
+        isSelected: threat.id === selectedThreatId,
+        isAiRecommended: threat.id === aiTrustRecommendation?.id,
       };
       
       return cleanThreatData;
@@ -2352,16 +2399,20 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     const attackRows = allThreats.map((threat, index) => ({
       id: `attack-${threat.id}`,
       number: `A-${String(index + 1).padStart(2, '0')}`,
+      targetId: threat.id,
+      target: threat.target,
       type: threat.displayType || threat.type || '未知类型',
       distance: threat.distance,
       source: getStableAttackSource(threat),
+      isSelected: threat.isSelected,
+      isAiRecommended: threat.isAiRecommended,
     }));
     
     console.log('【威胁列表】最终威胁列表数量:', allThreats.length);
     if (allThreats.length > 0) {
       console.log('【威胁列表】威胁详情:', allThreats.map(t => ({
         id: t.id, 
-        rank: t.rank,
+        currentOrder: t.currentOrder,
         displayType: t.displayType,
         distance: t.distance, 
         time: t.time,
@@ -2371,8 +2422,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     }
     
     onThreatListUpdate({ threats: allThreats, attacks: attackRows });
-  }, [saThreats, missiles, threatPositions, config.centerX, config.centerY, onThreatListUpdate, 
-      useEnhancedProtocol, enhancedThreats, threatList]); // 保持threatList以确保显示顺序更新
+  }, [saThreats, missiles, threatPositions, config.centerX, config.centerY, getSaThreatDisplayLabel, onThreatListUpdate,
+      useEnhancedProtocol, enhancedThreats, selectedThreatId, aiTrustRecommendation?.id]);
 
   return (
     <div className="font-mono flex flex-col items-center relative" style={{ width: totalDisplayWidth, minWidth: totalDisplayWidth, padding: '8px 0 0' }}>
@@ -2740,11 +2791,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                     unifiedTrustTrial.snapshot.manualReviewActive &&
                     threat.id === unifiedTrustTrial.snapshot.manualReviewCandidate?.id
                   );
-                  const showRecommendationFrame = !showTaskComplete && (
-                    shouldAttentionBlink || (
-                      unifiedTrustTrial.snapshot.glowActive &&
-                      threat.id === unifiedTrustTrial.snapshot.aiRecommendation?.id
-                    )
+                  const showGazeAttentionFrame = !showTaskComplete && shouldAttentionBlink;
+                  const showTrustRecommendationBreathing = !showTaskComplete && (
+                    unifiedTrustTrial.snapshot.glowActive &&
+                    threat.id === unifiedTrustTrial.snapshot.aiRecommendation?.id
                   );
                   const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
                   const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
@@ -2781,7 +2831,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                           fontFamily="monospace"
                         />
                       )}
-                      {showRecommendationFrame && (
+                      {showGazeAttentionFrame && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 12}
                           y={position.y  - ICON_SIZE / 2 - 12}
@@ -2791,6 +2841,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                           strokeWidth={3}
                           dash={[4, 4]}
                           cornerRadius={8}
+                        />
+                      )}
+                      {showTrustRecommendationBreathing && (
+                        <SaRecommendationBreathingFrame
+                          x={position.x}
+                          y={position.y}
+                          radius={ICON_SIZE / 2 + 12}
                         />
                       )}
                       {/* 用户选择的答案边框（黄色/绿色） */}
@@ -2837,7 +2894,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                       <Text
                         x={position.x  - ICON_SIZE / 2 + ICON_SIZE + 5}
                         y={position.y  - ICON_SIZE / 2 + ICON_SIZE / 2 - 8}
-                        text={`${threat.label} [${threatIdToSortedIndexMap.get(threat.id)}]`}
+                        text={getSaThreatDisplayLabel(threat)}
                         fontSize={14}
                         fill="#00ff00"
                         fontFamily="monospace"

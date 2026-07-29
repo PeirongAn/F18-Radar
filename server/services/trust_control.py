@@ -18,6 +18,19 @@ STANDARD = "standard"
 TRUST_SUPPORT = "trust_support"
 
 
+def resolve_human_final_selection(
+    task_type: Any,
+    ai_recommendation: Any,
+    human_final_selection: Any,
+) -> Any:
+    """Resolve an implicit SA acceptance without requiring a second selection."""
+    if human_final_selection not in (None, ""):
+        return human_final_selection
+    if str(task_type or "") == "SA_THREAT_RESPONSE":
+        return ai_recommendation
+    return human_final_selection
+
+
 def _identity(value: Any) -> str:
     if isinstance(value, dict):
         for key in ("id", "target_id", "targetId", "value"):
@@ -101,9 +114,11 @@ def build_condition_key(
     task_type: Any,
     difficulty: Any,
     ai_level: Any,
+    user_id: Any = None,
 ) -> Dict[str, Any]:
     return {
         "task_group_id": task_group_id,
+        "user_id": str(user_id or ""),
         "task_type": str(task_type or ""),
         "difficulty": str(difficulty or ""),
         "ai_level": str(ai_level or ""),
@@ -119,9 +134,12 @@ def build_trust_control_state(
     outcomes: Iterable[str],
     ai_correct_history: Optional[Iterable[Any]] = None,
     disclose_ai_reliability: bool = False,
+    user_id: Any = None,
 ) -> Dict[str, Any]:
     return {
-        "condition_key": build_condition_key(task_group_id, task_type, difficulty, ai_level),
+        "condition_key": build_condition_key(
+            task_group_id, task_type, difficulty, ai_level, user_id
+        ),
         **summarize_outcomes(outcomes, ai_correct_history),
         "disclose_ai_reliability": bool(disclose_ai_reliability),
     }

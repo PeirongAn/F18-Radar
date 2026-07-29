@@ -16,6 +16,7 @@ from services.trust_control import (
     UNDER_TRUST,
     build_trust_control_state,
     classify_trust_outcome,
+    resolve_human_final_selection,
 )
 
 
@@ -31,6 +32,12 @@ def test_radar_truth_can_contain_multiple_correct_targets():
     assert classify_trust_outcome("enemy-2", "friend-1", truth)["trust_outcome"] == UNDER_TRUST
     assert classify_trust_outcome("friend-1", "enemy-2", truth)["trust_outcome"] == APPROPRIATE
     assert classify_trust_outcome("friend-1", "friend-1", truth)["trust_outcome"] == OVER_TRUST
+
+
+def test_sa_direct_accept_uses_ai_recommendation_as_final_selection():
+    assert resolve_human_final_selection("SA_THREAT_RESPONSE", "threat-2", None) == "threat-2"
+    assert resolve_human_final_selection("SA_THREAT_RESPONSE", "threat-2", "threat-1") == "threat-1"
+    assert resolve_human_final_selection("RADAR_TARGETING", "target-2", None) is None
 
 
 def test_ui_mode_uses_any_non_appropriate_history():
@@ -81,7 +88,7 @@ def test_ai_history_accuracy_uses_prior_settled_trials():
     assert history["ai_history_correctness_series"] == [True, False]
 
 
-def test_history_isolated_by_full_condition_key():
+def test_history_isolated_by_subject_difficulty_and_ai_level_across_groups():
     with tempfile.TemporaryDirectory() as temp_dir:
         db = DatabaseManager(os.path.join(temp_dir, "trust.sqlite3"))
         # Keep this persistence test synchronous so schema creation cannot
@@ -100,12 +107,25 @@ def test_history_isolated_by_full_condition_key():
         }
         assert db.record_trust_trial_outcome(common) is True
         assert db.record_trust_trial_outcome(common) is False
-        assert db.get_trust_outcomes(7, "RADAR_TARGETING", "low", "L1") == [APPROPRIATE]
-        assert db.get_trust_history(7, "RADAR_TARGETING", "low", "L1") == [
-            {"trust_outcome": APPROPRIATE, "ai_correct": True}
+        second_group = {
+            **common,
+            "trial_id": "trial-2",
+            "task_id": 12,
+            "task_group_id": 8,
+            "ai_correct": False,
+        }
+        assert db.record_trust_trial_outcome(second_group) is True
+        assert db.get_trust_outcomes("pilot", "RADAR_TARGETING", "low", "L1") == [
+            APPROPRIATE,
+            APPROPRIATE,
         ]
-        assert db.get_trust_outcomes(7, "RADAR_TARGETING", "high", "L1") == []
-        assert db.get_trust_outcomes(8, "RADAR_TARGETING", "low", "L1") == []
+        assert db.get_trust_history("pilot", "RADAR_TARGETING", "low", "L1") == [
+            {"trust_outcome": APPROPRIATE, "ai_correct": True},
+            {"trust_outcome": APPROPRIATE, "ai_correct": False},
+        ]
+        assert db.get_trust_outcomes("pilot", "RADAR_TARGETING", "high", "L1") == []
+        assert db.get_trust_outcomes("pilot", "RADAR_TARGETING", "low", "L2") == []
+        assert db.get_trust_outcomes("other-pilot", "RADAR_TARGETING", "low", "L1") == []
 
 
 def test_group_performance_uses_settled_trials_and_process_events():

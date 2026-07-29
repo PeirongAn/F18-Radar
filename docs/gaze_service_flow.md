@@ -2,8 +2,8 @@
 
 本文说明当前前端任务如何调用眼动服务，以及后端如何记录目标出现、目标消失和注意力反馈。当前涉及两类任务：
 
-- 传感器任务：雷达参数设置完成后进入天线高度调整阶段，前端对天线提示框调用眼动服务。
-- 威胁排序任务：SA 页面中仅在 AI 启用时，对 AI 选中的威胁目标调用眼动服务。
+- 传感器任务：仅人工模式下，雷达参数设置完成后进入天线高度调整阶段，前端对天线提示框调用眼动服务。
+- 威胁排序任务：仅人工模式下，SA 页面对当前最高优先级威胁调用眼动服务。
 
 ## 总体链路
 
@@ -26,7 +26,7 @@
 
 ### 目标出现
 
-传感器任务中，`useRadarData` 只有在 `enableAntennaRound` 为 true 的实例里处理天线眼动回合。天线提示框位置通过浏览器事件 `antenna-prompt-position` 传入。
+传感器任务中，`useRadarData` 只有在 `enableAntennaRound` 为 true 的实例里处理天线眼动回合。Radar 组件仅在 `agentStore.isAIActive === false` 时启用该选项。天线提示框位置通过浏览器事件 `antenna-prompt-position` 传入；AI 激活时，effect 清理函数会结束已有反馈区域。
 
 天线任务当前发送的是 `display_area_normalized` 归一化坐标，不是屏幕原始像素。前端收到提示框的 CSS/viewport 坐标后，会除以 `window.innerWidth` 和 `window.innerHeight`，得到 0 到 1 的 `left/top/right/bottom`。
 
@@ -107,25 +107,17 @@
 
 ## 威胁排序任务
 
-威胁排序任务的眼动反馈现在只在 AI 启用时使用，目标为 AI 选中的威胁，而不是默认最高优先级目标。
+威胁排序任务的眼动反馈只在人工模式使用，目标为当前最高优先级威胁。AI 仍可执行选择，眼动数据也可继续采集，但不会注册 SA 注意力反馈区域或显示闪烁提醒。
 
 ### 目标出现
 
-SA 页面收到临机事件后会设置 `beginSATobiiServe.current = true`，表示本轮允许启动 SA Tobii 回合。
+SA 页面收到临机事件后会设置 `beginSATobiiServe = true`，表示本轮允许启动 SA Tobii 回合。该状态更新会触发下一次渲染，确保新增威胁已经参与最高优先级计算。当前最高优先级威胁及其页面位置就绪后：
 
-AI 启用时，`useAIAgent(...)` 会根据 AI 等级配置延迟选择威胁。AI 选择会进入：
-
-```ts
-handleThreatIconClick(threat, 'AI')
-```
-
-在这个回调中：
-
-1. `aiSelectedThreatRef.current = threat` 记录 AI 选中的目标。
-2. 计算该目标在屏幕上的物理像素 bbox。
-3. bbox 显式标注 `gazeCoordinateSpace: 'physical_pixel'`。
-4. 调用 `startSaTobiiRound(promptPosition)` 打开 SA Tobii WebSocket。
-5. 发送 `tobii_hand` 开始消息。
+1. 确认 `agentStore.isAIActive === false`。
+2. 计算当前最高优先级威胁的归一化 bbox。
+3. 如上一反馈区域仍然存在，先发送结束消息。
+4. 调用 `startSaTobiiRound(promptPosition)` 注册新的反馈区域。
+5. 将 `beginSATobiiServe` 复位，避免同一临机事件重复启动。
 
 发送格式：
 
@@ -143,26 +135,24 @@ handleThreatIconClick(threat, 'AI')
       "bottom": bottom
     }
   ],
-  "coordinate_space": "physical_pixel",
-  "screen_data": [physical_screen_width, physical_screen_height],
+  "coordinate_space": "display_area_normalized",
   "task_source": "web",
-  "task_name": "sa_highest_priority_threat_withAI"
+  "task_name": "sa_highest_priority_threat_noAI"
 }
 ```
 
-虽然 `task_name` 保留为 `sa_highest_priority_threat_withAI`，当前实际目标区域取的是 AI 选中的威胁目标。
-
-非 AI 模式下，SA 页面不会自动启动 SA Tobii 回合；即使用户手动选择目标，也不会对该目标启用 SA 眼动反馈。
+AI 模式下不会调用 `startSaTobiiRound(...)`。如果人工回合进行中途 AI 被激活，前端会立即结束已有反馈区域并清除正在显示的闪烁，但不会停止由主任务驱动的眼动采集。
 
 ### 目标消失
 
 威胁排序任务中以下情况会发送目标消失：
 
 - 点击“查看结果”。
+- AI 被激活。
 - 页面刷新或关闭。
 - SAPage 组件卸载。
 
-结束时优先使用 AI 选中目标的位置作为 bbox。如果 AI 没有选中目标，则回退到最高优先级目标位置。
+结束时使用本轮最高优先级目标的位置；如果未曾成功启动反馈回合，则不会发送多余的结束消息。
 
 发送格式：
 
@@ -181,9 +171,8 @@ handleThreatIconClick(threat, 'AI')
       "bottom": bottom
     }
   ],
-  "coordinate_space": "physical_pixel",
-  "screen_data": [physical_screen_width, physical_screen_height],
-  "task_name": "sa_highest_priority_threat_withAI"
+  "coordinate_space": "display_area_normalized",
+  "task_name": "sa_highest_priority_threat_noAI"
 }
 ```
 
@@ -191,10 +180,12 @@ handleThreatIconClick(threat, 'AI')
 
 SA 页面监听 `sa-highest-threat-attention` 事件。当前实现增加了两道限制：
 
-- 必须 `agentStore.isAIActive === true`。
-- 必须已经存在 `aiSelectedThreatRef.current`。
+- 必须 `agentStore.isAIActive === false`。
+- 必须已经存在当前最高优先级威胁。
 
-满足条件时，前端只让 AI 选中的目标闪烁。普通最高优先级目标不会因为眼动反馈而闪烁，除非它正好就是 AI 选中的目标。
+满足条件时，前端只让当前最高优先级威胁闪烁。AI 激活时，即使收到延迟到达的 `attention_feedback`，也不会显示闪烁。
+
+视觉上需要与信任调控提示区分：人工眼动反馈沿用约 260 ms 一次的矩形显隐闪烁；信任调控的 AI 推荐目标使用绿色虚线圆形呼吸光环，出现时从最亮状态开始，再平滑改变透明度、光晕和线宽。后者不是眼动反馈。
 
 ## 后端处理
 

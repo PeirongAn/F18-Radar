@@ -175,7 +175,8 @@ class ThreatManager:
             增强紧急事件消息
         """
         # 随机选择事件类型
-        event_type = random.choice(['upgrade', 'missile'])
+        # Every SA trial is evaluated from the post-upgrade threat list.
+        event_type = 'upgrade'
         
         # 重新生成所有现有威胁的位置（增加动态效果）
         print(f"[SA增强事件] 开始重新生成所有威胁位置，原威胁数量: {len(threats)}")
@@ -390,7 +391,10 @@ class ThreatManager:
                         }
                         for candidate in scored_candidates
                     ],
+                    "ground_truth": str(ground_truth["id"]),
                     "ground_truth_id": str(ground_truth["id"]),
+                    "source": "updated_threats",
+                    "emergency_event": emergency_msg.get("event"),
                     "updated_at_ms": int(time.time() * 1000),
                 }
         else:
@@ -442,7 +446,8 @@ class ThreatManager:
     def generate_sa_emergency(self, threats: List[Dict[str, Any]]) -> Dict[str, Any]:
         """生成SA紧急事件"""
         # 随机选择事件类型
-        event_type = random.choice(['upgrade', 'missile'])
+        # Every SA trial is evaluated from the post-upgrade threat list.
+        event_type = 'upgrade'
         
         if event_type == 'upgrade':
             # 随机决定是否进行类型升级 (50%概率升级类型，50%概率保持原类型)
@@ -481,6 +486,39 @@ class ThreatManager:
         """自动发送SA紧急事件"""
         await asyncio.sleep(random.uniform(2, 3))
         emergency_msg = self.generate_sa_emergency(threats)
+        updated_threats = [
+            threat for threat in (emergency_msg.get('saThreats') or [])
+            if isinstance(threat, dict) and threat.get('id') is not None
+        ]
+        if updated_threats:
+            def legacy_weight(threat: Dict[str, Any]) -> int:
+                threat_type = str(threat.get('type') or '')
+                if threat_type.startswith('Primary'):
+                    return 240
+                if threat_type.startswith('Secondary'):
+                    return 200
+                return 80
+
+            ground_truth = max(updated_threats, key=legacy_weight)
+            task_id = session_state.get('current_task_id')
+            if task_id is not None:
+                session_state.setdefault('trust_task_snapshots', {})[str(task_id)] = {
+                    'task_type': 'SA_THREAT_RESPONSE',
+                    'candidate_ids': [str(threat['id']) for threat in updated_threats],
+                    'candidates': [
+                        {
+                            'id': str(threat['id']),
+                            'type': threat.get('type'),
+                            'score': legacy_weight(threat),
+                        }
+                        for threat in updated_threats
+                    ],
+                    'ground_truth': str(ground_truth['id']),
+                    'ground_truth_id': str(ground_truth['id']),
+                    'source': 'updated_threats',
+                    'emergency_event': emergency_msg.get('event'),
+                    'updated_at_ms': int(time.time() * 1000),
+                }
         
         # 发送消息
         try:

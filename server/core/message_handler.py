@@ -18,7 +18,11 @@ from network.platform_task_bridge import (
 )
 from models.threat_models import RadarConfig
 from network.message_protocol import message_protocol
-from services.trust_control import build_trust_control_state, classify_trust_outcome
+from services.trust_control import (
+    build_trust_control_state,
+    classify_trust_outcome,
+    resolve_human_final_selection,
+)
 
 class MessageHandler:
     """消息处理器，负责处理客户端消息和业务逻辑"""
@@ -326,10 +330,17 @@ class MessageHandler:
         return state if isinstance(state, str) else ''
 
     def _build_trust_control_state(self, task_group_id: Any, task_type: str,
-                                   current_scenario: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+                                   current_scenario: Optional[Dict[str, Any]],
+                                   user_id: str = "") -> Dict[str, Any]:
         scenario = current_scenario or {}
         difficulty = scenario.get("external_difficulty_display") or scenario.get("difficulty_name") or ""
         ai_level = scenario.get("autonomy_level") or scenario.get("ai_level_name") or ""
+        resolved_user_id = str(
+            user_id
+            or self.current_session.get("user_id")
+            or scenario.get("user_id")
+            or ""
+        )
         config = config_manager.get_trust_control_config()
         manual_review_button = int(config.get("manual_review_button", 3))
         if manual_review_button in {1, 2, 7}:
@@ -340,15 +351,19 @@ class MessageHandler:
             manual_review_button = 3
         outcomes: List[str] = []
         ai_correct_history: List[bool] = []
-        if task_group_id is not None:
+        if resolved_user_id:
             try:
                 history = db_manager.get_trust_history(
-                    int(task_group_id), task_type, str(difficulty), str(ai_level)
+                    resolved_user_id, task_type, str(difficulty), str(ai_level)
                 )
                 outcomes = [item["trust_outcome"] for item in history]
                 ai_correct_history = [bool(item["ai_correct"]) for item in history]
             except Exception as exc:
-                self.logger.warning("load trust history failed: group=%s error=%s", task_group_id, exc)
+                self.logger.warning(
+                    "load trust history failed: user=%s error=%s",
+                    resolved_user_id,
+                    exc,
+                )
         return {
             "enabled": bool(config.get("enabled", True)),
             **build_trust_control_state(
@@ -359,6 +374,7 @@ class MessageHandler:
                 outcomes=outcomes,
                 ai_correct_history=ai_correct_history,
                 disclose_ai_reliability=bool(config.get("disclose_ai_reliability", False)),
+                user_id=resolved_user_id,
             ),
             "manual_review_button": manual_review_button,
             "sensor_focus_radius_px": int(config.get("sensor_focus_radius_px", 30)),
@@ -389,6 +405,7 @@ class MessageHandler:
             "ground_truth": ground_truth,
             # Retain the legacy scalar field for older sessions and SA tasks.
             "ground_truth_id": str(ground_truth) if ground_truth is not None and not isinstance(ground_truth, (list, tuple, set)) else None,
+            "source": "task_start",
             "updated_at_ms": int(time.time() * 1000),
         }
 
@@ -457,7 +474,11 @@ class MessageHandler:
         ground_truth = server_truth
         candidate_ids = {str(value) for value in snapshot.get("candidate_ids") or []}
         ai_recommendation = trial.get("ai_recommendation")
-        human_selection = trial.get("human_final_selection")
+        human_selection = resolve_human_final_selection(
+            task_type,
+            ai_recommendation,
+            trial.get("human_final_selection"),
+        )
         ground_truth_ids = (
             {str(value) for value in ground_truth}
             if isinstance(ground_truth, (list, tuple, set))
@@ -465,6 +486,16 @@ class MessageHandler:
         )
         if not ground_truth:
             self.logger.warning("skip trust trial without server ground truth: task_id=%s", task_id)
+            return None
+        if (
+            task_type == "SA_THREAT_RESPONSE"
+            and snapshot.get("source") != "updated_threats"
+        ):
+            self.logger.warning(
+                "skip SA trust trial without post-upgrade threat snapshot: task_id=%s source=%s",
+                task_id,
+                snapshot.get("source"),
+            )
             return None
         if candidate_ids and (
             str(ai_recommendation) not in candidate_ids
@@ -481,7 +512,9 @@ class MessageHandler:
             self.logger.warning("skip incomplete trust trial: task_id=%s error=%s", task_id, exc)
             return None
 
-        state = self._build_trust_control_state(task_group_id, task_type, scenario)
+        state = self._build_trust_control_state(
+            task_group_id, task_type, scenario, user_id
+        )
         completed_at = int(message.get("timestamp") or time.time() * 1000)
         settled = {
             "trial_id": str(trial.get("trial_id") or task_id),
@@ -493,7 +526,7 @@ class MessageHandler:
             "difficulty": str(difficulty),
             "ai_level": str(ai_level),
             "ai_recommendation": trial.get("ai_recommendation"),
-            "human_final_selection": trial.get("human_final_selection"),
+            "human_final_selection": human_selection,
             "ground_truth": ground_truth,
             **classification,
             "ui_mode": state["ui_mode"],
@@ -1011,7 +1044,7 @@ class MessageHandler:
             "task_type": task_type
         }
         init_response["trust_control"] = self._build_trust_control_state(
-            task_group_id, task_type, current_scenario
+            task_group_id, task_type, current_scenario, user_id
         )
         if platform_meta:
             init_response["platform_task"] = platform_meta
@@ -1692,7 +1725,7 @@ class MessageHandler:
                 trust_calibration=config_manager.get_trust_calibration_config()
             )
             enhanced_response["trust_control"] = self._build_trust_control_state(
-                task_group_id, task_type, current_scenario
+                task_group_id, task_type, current_scenario, user_id
             )
             
             if websocket:
@@ -1758,7 +1791,7 @@ class MessageHandler:
                 'trust_calibration': config_manager.get_trust_calibration_config()
             }
             response["trust_control"] = self._build_trust_control_state(
-                task_group_id, task_type, current_scenario
+                task_group_id, task_type, current_scenario, user_id
             )
 
             if websocket:

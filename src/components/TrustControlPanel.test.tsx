@@ -25,7 +25,7 @@ const snapshot: TrustTrialSnapshot = {
   trialSequence: 2,
   control: {
     enabled: true,
-    condition_key: { task_group_id: 3, task_type: 'RADAR_TARGETING', difficulty: 'low', ai_level: 'L1' },
+    condition_key: { task_group_id: 3, user_id: 'pilot', task_type: 'RADAR_TARGETING', difficulty: 'low', ai_level: 'L1' },
     history_count: 4,
     ui_mode: 'standard',
     appropriate_rate: 0.75,

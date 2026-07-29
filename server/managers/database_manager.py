@@ -1145,6 +1145,10 @@ class DatabaseManager:
             CREATE INDEX idx_trust_trial_condition
             ON trust_trial_outcomes(task_group_id, task_type, difficulty, ai_level, trial_completed_at_ms)
         """)
+        cursor.execute("""
+            CREATE INDEX idx_trust_trial_subject_condition
+            ON trust_trial_outcomes(user_id, task_type, difficulty, ai_level, trial_completed_at_ms)
+        """)
         conn.commit()
 
     def _update_trust_trial_outcomes_table(self, cursor, conn) -> None:
@@ -1162,8 +1166,13 @@ class DatabaseManager:
                 changed = True
         if changed:
             conn.commit()
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trust_trial_subject_condition
+            ON trust_trial_outcomes(user_id, task_type, difficulty, ai_level, trial_completed_at_ms)
+        """)
+        conn.commit()
 
-    def get_trust_outcomes(self, task_group_id: int, task_type: str,
+    def get_trust_outcomes(self, user_id: str, task_type: str,
                            difficulty: str, ai_level: str) -> List[str]:
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -1171,14 +1180,14 @@ class DatabaseManager:
                 """
                 SELECT trust_outcome
                 FROM trust_trial_outcomes
-                WHERE task_group_id = ? AND task_type = ? AND difficulty = ? AND ai_level = ?
+                WHERE user_id = ? AND task_type = ? AND difficulty = ? AND ai_level = ?
                 ORDER BY trial_completed_at_ms, id
                 """,
-                (task_group_id, task_type, difficulty or "", ai_level or ""),
+                (str(user_id or ""), task_type, difficulty or "", ai_level or ""),
             )
             return [str(row[0]) for row in cursor.fetchall()]
 
-    def get_trust_history(self, task_group_id: int, task_type: str,
+    def get_trust_history(self, user_id: str, task_type: str,
                           difficulty: str, ai_level: str) -> List[Dict[str, Any]]:
         """Return settled history used for both trust state and observed AI accuracy."""
         with self.get_connection() as conn:
@@ -1187,10 +1196,10 @@ class DatabaseManager:
                 """
                 SELECT trust_outcome, ai_correct
                 FROM trust_trial_outcomes
-                WHERE task_group_id = ? AND task_type = ? AND difficulty = ? AND ai_level = ?
+                WHERE user_id = ? AND task_type = ? AND difficulty = ? AND ai_level = ?
                 ORDER BY trial_completed_at_ms, id
                 """,
-                (task_group_id, task_type, difficulty or "", ai_level or ""),
+                (str(user_id or ""), task_type, difficulty or "", ai_level or ""),
             )
             return [
                 {"trust_outcome": str(row[0]), "ai_correct": bool(row[1])}

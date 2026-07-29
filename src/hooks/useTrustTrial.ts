@@ -363,10 +363,20 @@ export function useTrustTrial(input: UseTrustTrialInput) {
     }
   }, [aiRecommendation?.id, comparisonVisible, emit, humanSelection?.id]);
 
-  const buildTrustTrial = useCallback(() => {
-    const finalHumanSelection = humanSelectionRef.current;
+  const buildTrustTrial = useCallback((confirmedSelection?: TrustCandidate | null) => {
+    const finalHumanSelection = confirmedSelection ?? humanSelectionRef.current ?? (
+      taskType === 'SA_THREAT_RESPONSE' ? aiRecommendation : null
+    );
     if (!taskId || !aiRecommendation || !finalHumanSelection || !groundTruthId) return null;
     const confirmedAt = Date.now();
+    if (candidateKey(humanSelectionRef.current) !== finalHumanSelection.id) {
+      humanSelectionRef.current = finalHumanSelection;
+      setHumanSelection(finalHumanSelection);
+      emit('human_selection_changed', finalHumanSelection.id, {
+        display_target_number: finalHumanSelection.displayNumber,
+        source: 'result_confirmation',
+      });
+    }
     endManualReview('trial_completed', confirmedAt);
     if (!completedEventRef.current) {
       emit('final_selection_confirmed', finalHumanSelection.id);
@@ -397,7 +407,7 @@ export function useTrustTrial(input: UseTrustTrialInput) {
       manual_review_duration_ms: manualReviewDurationRef.current,
       invalid_review_count: invalidReviewCountRef.current,
     };
-  }, [aiRecommendation, aiRecommendationShownAt, comparisonVisible, emit, endManualReview, glowActive, groundTruthId, taskId, trialSequence]);
+  }, [aiRecommendation, aiRecommendationShownAt, comparisonVisible, emit, endManualReview, glowActive, groundTruthId, taskId, taskType, trialSequence]);
 
   const snapshot = useMemo<TrustTrialSnapshot>(() => ({
     taskId, taskGroupId, taskType, trialSequence, control, aiRecommendation, candidates,

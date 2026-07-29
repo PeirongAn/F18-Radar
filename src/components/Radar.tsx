@@ -88,7 +88,7 @@ const Radar: React.FC<RadarProps> = (({
     button3,
     joystickConnected,
     trustControl,
-  } = useRadarData(undefined, { enableAntennaRound: true });
+  } = useRadarData(undefined, { enableAntennaRound: !agentStore.isAIActive });
   const [, setCurrentIffMode] = useState(false);
   const [aiTrustRecommendation, setAiTrustRecommendation] = useState<TrustCandidate | null>(null);
   const displayNumberRef = useRef<{ taskId: string; values: Map<string, number> }>({

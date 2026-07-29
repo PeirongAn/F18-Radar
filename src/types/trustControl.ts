@@ -4,6 +4,7 @@ export type TrustTaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE';
 
 export interface TrustConditionKey {
   task_group_id: number | string | null;
+  user_id: string;
   task_type: TrustTaskType | string;
   difficulty: string;
   ai_level: string;
