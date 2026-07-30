@@ -164,28 +164,28 @@ aiohttp>=3.8.0          # HTTP服务器 🆕
 
 ```json
 {
-  "current_level": "L2",
+  "current_level": "L3",
   "levels": [
     {
-      "level": "L0",
+      "level": "L1",
       "desc": "低级智能体，延时最长，自动处理最慢",
       "threat_select_delay_ms": 1000,
       "tdc_select_delay_ms": 1000,
       "decision_probabilities": [0.3, 0.5]
     },
     {
-      "level": "L1", 
+      "level": "L2",
       "desc": "中级智能体，延时适中",
       "threat_select_delay_ms": 500,
       "tdc_select_delay_ms": 500,
       "decision_probabilities": [0.7, 0.9]
     },
     {
-      "level": "L2",
+      "level": "L3",
       "desc": "高级智能体，延时最短，自动处理最快",
       "threat_select_delay_ms": 100,
       "tdc_select_delay_ms": 100,
-      "decision_probabilities": [1.0]
+      "decision_probabilities": [0.95, 1.0]
     }
   ]
 }
@@ -195,12 +195,17 @@ aiohttp>=3.8.0          # HTTP服务器 🆕
 
 | 参数 | 说明 | 单位 |
 |------|------|------|
-| `current_level` | 当前激活的智能体级别 | L0/L1/L2 |
+| `current_level` | 当前激活的智能体级别 | L1/L2/L3 |
 | `level` | 智能体级别标识 | 字符串 |
 | `desc` | 智能体描述信息 | 字符串 |
 | `threat_select_delay_ms` | 威胁选择响应延时 | 毫秒 |
 | `tdc_select_delay_ms` | TDC选择响应延时 | 毫秒 |
 | `decision_probabilities` | 决策成功概率数组 | 0-1之间 |
+
+服务启动时会根据各等级的 `decision_probabilities` 生成一条固定的12点统计曲线。
+曲线种子可通过 `--ai-accuracy-curve-seed <整数>` 或环境变量
+`AI_ACCURACY_CURVE_SEED` 指定，优先级为命令行参数、环境变量、默认值
+`20260730`。更换种子后需要重启服务。
 
 #### 🎮 游戏设置配置
 

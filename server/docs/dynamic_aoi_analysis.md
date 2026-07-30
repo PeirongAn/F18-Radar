@@ -115,7 +115,7 @@ Title
 | --- | --- | --- | --- | --- |
 | `left_ai_target` | 左侧 AI 推荐目标 | AI 推荐目标中心的 48×48 像素透明矩形 | AI 推荐威胁中心的 56×56 像素透明矩形 | 是 |
 | `left_candidate_list` | 左侧任务候选区 | 整个雷达候选目标显示区域 | SA 下方完整威胁/来袭列表 | 是，仅 RADAR 通常与推荐目标重叠 |
-| `right_ai_history_accuracy` | 右侧 AI 历史准确率 | 右侧顶部独立的 AI 历史识别准确率曲线 | 同左 | 否 |
+| `right_ai_history_accuracy` | 右侧 AI 等级统计准确率 | 右侧顶部独立的 AI 等级准确率波动曲线 | 同左 | 否 |
 | `right_recommendation` | 右侧 AI 推荐摘要 | AI 推荐目标编号及推荐目标原始观测 | 同左 | 否 |
 | `right_candidate_list` | 右侧候选摘要 | 右侧最多前5个候选目标摘要 | 右侧最多前5个候选威胁摘要 | 否 |
 | `right_detail` | 右侧详情区 | TDC 聚焦详情或 Button3 人工复核详情 | 同左 | 否 |
@@ -180,13 +180,13 @@ Title
 
 ### 3.4 `right_ai_history_accuracy`
 
-对应右侧信任调控面板最上方的独立 AI 历史识别准确率曲线区域。该区域与当前推荐观测分开统计。
+对应右侧信任调控面板最上方的独立 AI 等级统计准确率曲线区域。曲线在服务启动时根据 AI 等级的 `decision_probabilities` 和固定种子生成，同一次服务运行期间不随任务结果变化。
 
-- 语义绑定固定为 `{"metric": "ai_history_accuracy"}`。
-- 曲线数值和历史次数由信任度量数据提供，不复制到 AOI 快照。
+- 语义绑定包含 `metric = ai_statistical_accuracy`、当前 `ai_level` 和启动曲线 `curve_seed`。
+- 曲线平均值、上下界和完整点列由服务端 `trust_control` 提供，不复制到 AOI 快照。
 - 离线分析独立输出该区域的注视点、注视时长、注视次数和扫视路径。
 
-曲线增加数据点或准确率数值改变时，只要边界、可见性和固定语义未变，就不会新增 AOI 快照。
+同一 AI 等级和种子下曲线保持稳定；AI 等级或服务启动种子变化时，语义绑定变化并产生新的 AOI 快照。任务难度不参与该曲线。
 
 ### 3.5 `right_recommendation`
 
@@ -487,7 +487,7 @@ display
 - 闪烁透明度变化。
 - 边框、阴影等不改变测量边界的动画。
 - 相同数据导致的 React 重渲染。
-- AI 历史准确率曲线增加数据点或数值更新，但区域边界未变化。
+- 同一 AI 等级、概率范围和曲线种子下重复渲染统计曲线，但区域边界与语义绑定未变化。
 - 小于1个物理像素的坐标抖动。
 - 收到重复请求但服务端规范化结果不变。
 
@@ -568,7 +568,9 @@ tobii_aoi_snapshot
       "right": 0.995,
       "bottom": 0.205,
       "binding": {
-        "metric": "ai_history_accuracy"
+        "metric": "ai_statistical_accuracy",
+        "ai_level": "L1",
+        "curve_seed": 20260730
       }
     },
     {

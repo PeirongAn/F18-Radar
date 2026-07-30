@@ -88,6 +88,35 @@ def test_ai_history_accuracy_uses_prior_settled_trials():
     assert history["ai_history_correctness_series"] == [True, False]
 
 
+def test_statistical_curve_is_exposed_without_replacing_observed_history():
+    curve = {
+        "accuracy": 0.8,
+        "series": [0.76, 0.84],
+        "lower_bound": 0.7,
+        "upper_bound": 0.9,
+        "source": "ai_level_probability_range",
+        "seed": 20260730,
+    }
+    state = build_trust_control_state(
+        task_group_id=1,
+        task_type="RADAR_TARGETING",
+        difficulty="high",
+        ai_level="L2",
+        outcomes=[APPROPRIATE, OVER_TRUST],
+        ai_correct_history=[True, False],
+        ai_accuracy_curve=curve,
+    )
+
+    assert state["ai_statistical_accuracy"] == 0.8
+    assert state["ai_statistical_accuracy_series"] == [0.76, 0.84]
+    assert state["ai_statistical_accuracy_lower_bound"] == 0.7
+    assert state["ai_statistical_accuracy_upper_bound"] == 0.9
+    assert state["ai_statistical_accuracy_source"] == "ai_level_probability_range"
+    assert state["ai_statistical_accuracy_curve_seed"] == 20260730
+    assert state["ai_history_accuracy"] == 0.5
+    assert state["ai_history_accuracy_series"] == [1.0, 0.5]
+
+
 def test_history_isolated_by_subject_difficulty_and_ai_level_across_groups():
     with tempfile.TemporaryDirectory() as temp_dir:
         db = DatabaseManager(os.path.join(temp_dir, "trust.sqlite3"))

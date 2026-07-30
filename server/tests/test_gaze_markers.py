@@ -661,7 +661,11 @@ def test_analysis_aoi_snapshots_are_versioned_and_do_not_change_attention_hits()
                         "top": 0.3,
                         "right": 0.5,
                         "bottom": 0.4,
-                        "binding": {"metric": "ai_history_accuracy"},
+                        "binding": {
+                            "metric": "ai_statistical_accuracy",
+                            "ai_level": "L2",
+                            "curve_seed": 20260730,
+                        },
                     },
                 ],
             )

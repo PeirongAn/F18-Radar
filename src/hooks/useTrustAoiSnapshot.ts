@@ -58,7 +58,11 @@ const bindingFor = (name: AoiName, snapshot: TrustTrialSnapshot) => {
     : snapshot.focusedCandidate;
   switch (name) {
     case 'right_ai_history_accuracy':
-      return { metric: 'ai_history_accuracy' };
+      return {
+        metric: 'ai_statistical_accuracy',
+        ai_level: snapshot.control?.condition_key.ai_level ?? null,
+        curve_seed: snapshot.control?.ai_statistical_accuracy_curve_seed ?? null,
+      };
     case 'left_ai_target':
     case 'right_recommendation':
       return { target_id: snapshot.aiRecommendation?.id ?? null };

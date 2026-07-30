@@ -27,6 +27,7 @@
       "threat_select_delay_ms": 100,
       "tdc_select_delay_ms": 100,
       "decision_probabilities": [
+        0.95,
         1.0
       ]
     }

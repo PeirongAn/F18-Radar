@@ -26,6 +26,11 @@ from managers import config_manager, db_manager, info, warning, error
 from network import websocket_server
 from joystick.joystick_event_handler import JoystickEventHandler
 from network.http_server import http_server
+from services.ai_accuracy_curve import (
+    AccuracyCurveConfigError,
+    initialize_curves,
+    resolve_curve_seed,
+)
 
 _initialized = False
 _joystick_handler = None
@@ -289,9 +294,31 @@ async def main():
     parser.add_argument('--static-dir', type=str, help='静态文件目录路径 (默认: ../dist)')
     parser.add_argument('--http-port', type=int, default=8080, help='HTTP服务器端口 (默认: 8080)')
     parser.add_argument('--ws-only', action='store_true', help='仅启动WebSocket服务器（不提供静态文件服务）')
+    parser.add_argument(
+        '--ai-accuracy-curve-seed',
+        type=int,
+        help='AI准确率统计曲线随机种子（优先于 AI_ACCURACY_CURVE_SEED）',
+    )
     args = parser.parse_args()
     
     try:
+        curve_seed = resolve_curve_seed(
+            args.ai_accuracy_curve_seed,
+            os.getenv("AI_ACCURACY_CURVE_SEED"),
+        )
+        current_config = config_manager.get_config()
+        curves = initialize_curves(current_config.get("levels", []), curve_seed)
+        info(f"AI accuracy curve seed: {curve_seed}", "main")
+        for ai_level in ("L1", "L2", "L3"):
+            curve = curves[ai_level]
+            info(
+                f"{ai_level}: range={curve['lower_bound'] * 100:g}%-"
+                f"{curve['upper_bound'] * 100:g}%, "
+                f"mean={curve['accuracy'] * 100:g}%, "
+                f"points={len(curve['series'])}",
+                "main",
+            )
+
         _cleanup_known_sqlite_wal_files()
 
         if args.ws_only:
@@ -314,6 +341,9 @@ async def main():
         
     except KeyboardInterrupt:
         info("收到中断信号，正在关闭服务器...", "main")
+    except AccuracyCurveConfigError as e:
+        error(f"AI准确率曲线配置无效，服务拒绝启动: {e}", "main", exc_info=True)
+        sys.exit(1)
     except Exception as e:
         error(f"服务器启动失败: {e}", "main", exc_info=True)
         sys.exit(1)

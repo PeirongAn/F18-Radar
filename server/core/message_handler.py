@@ -23,6 +23,7 @@ from services.trust_control import (
     classify_trust_outcome,
     resolve_human_final_selection,
 )
+from services.ai_accuracy_curve import resolve_curve
 
 class MessageHandler:
     """消息处理器，负责处理客户端消息和业务逻辑"""
@@ -335,6 +336,7 @@ class MessageHandler:
         scenario = current_scenario or {}
         difficulty = scenario.get("external_difficulty_display") or scenario.get("difficulty_name") or ""
         ai_level = scenario.get("autonomy_level") or scenario.get("ai_level_name") or ""
+        ai_accuracy_curve = resolve_curve(ai_level)
         resolved_user_id = str(
             user_id
             or self.current_session.get("user_id")
@@ -373,6 +375,7 @@ class MessageHandler:
                 ai_level=ai_level,
                 outcomes=outcomes,
                 ai_correct_history=ai_correct_history,
+                ai_accuracy_curve=ai_accuracy_curve,
                 disclose_ai_reliability=bool(config.get("disclose_ai_reliability", False)),
                 user_id=resolved_user_id,
             ),

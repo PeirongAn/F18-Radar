@@ -98,7 +98,7 @@ def test_analyze_task_caps_dwell_gap_and_reports_invalid_alignment():
     assert result["fixations"] == []
 
 
-def test_analyze_task_reports_ai_history_accuracy_as_independent_aoi():
+def test_analyze_task_reports_ai_statistical_accuracy_as_independent_aoi():
     snapshots = {
         1: {
             "revision": 1,
@@ -111,7 +111,11 @@ def test_analyze_task_reports_ai_history_accuracy_as_independent_aoi():
                 "top": 0.05,
                 "right": 1.0,
                 "bottom": 0.20,
-                "binding": {"metric": "ai_history_accuracy"},
+                "binding": {
+                    "metric": "ai_statistical_accuracy",
+                    "ai_level": "L2",
+                    "curve_seed": 20260730,
+                },
             }],
         }
     }

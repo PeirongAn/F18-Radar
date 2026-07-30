@@ -24,6 +24,12 @@ export interface TrustControlState {
   ai_history_valid_count: number;
   ai_history_accuracy_series: number[];
   ai_history_correctness_series: boolean[];
+  ai_statistical_accuracy: number | null;
+  ai_statistical_accuracy_series: number[];
+  ai_statistical_accuracy_lower_bound: number | null;
+  ai_statistical_accuracy_upper_bound: number | null;
+  ai_statistical_accuracy_source: 'ai_level_probability_range' | null;
+  ai_statistical_accuracy_curve_seed: number | null;
   disclose_ai_reliability: boolean;
   manual_review_button: number;
   sensor_focus_radius_px: number;

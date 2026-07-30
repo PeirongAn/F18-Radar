@@ -8,7 +8,7 @@ is stored separately and never changes the outcome.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 
 APPROPRIATE = "appropriate"
@@ -133,13 +133,21 @@ def build_trust_control_state(
     ai_level: Any,
     outcomes: Iterable[str],
     ai_correct_history: Optional[Iterable[Any]] = None,
+    ai_accuracy_curve: Optional[Mapping[str, Any]] = None,
     disclose_ai_reliability: bool = False,
     user_id: Any = None,
 ) -> Dict[str, Any]:
+    accuracy_curve = ai_accuracy_curve or {}
     return {
         "condition_key": build_condition_key(
             task_group_id, task_type, difficulty, ai_level, user_id
         ),
         **summarize_outcomes(outcomes, ai_correct_history),
+        "ai_statistical_accuracy": accuracy_curve.get("accuracy"),
+        "ai_statistical_accuracy_series": list(accuracy_curve.get("series") or []),
+        "ai_statistical_accuracy_lower_bound": accuracy_curve.get("lower_bound"),
+        "ai_statistical_accuracy_upper_bound": accuracy_curve.get("upper_bound"),
+        "ai_statistical_accuracy_source": accuracy_curve.get("source"),
+        "ai_statistical_accuracy_curve_seed": accuracy_curve.get("seed"),
         "disclose_ai_reliability": bool(disclose_ai_reliability),
     }

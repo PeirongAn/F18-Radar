@@ -64,38 +64,53 @@ const ObservationItems: React.FC<{ items: ObservationItem[]; compact: boolean }>
 );
 
 const AccuracyTrend: React.FC<{ control: TrustControlState }> = ({ control }) => {
-  const fullSeries = control.ai_history_accuracy_series ?? [];
-  const fullCorrectness = control.ai_history_correctness_series ?? [];
-  const firstVisibleIndex = Math.max(0, fullSeries.length - 12);
-  const series = fullSeries.slice(firstVisibleIndex);
-  const correctness = fullCorrectness.slice(firstVisibleIndex);
-  const currentPercent = control.ai_history_accuracy === null
+  const series = control.ai_statistical_accuracy_series ?? [];
+  const currentPercent = control.ai_statistical_accuracy === null
     ? null
-    : Math.round(control.ai_history_accuracy * 100);
+    : Math.round(control.ai_statistical_accuracy * 100);
+  const lowerBound = control.ai_statistical_accuracy_lower_bound;
+  const upperBound = control.ai_statistical_accuracy_upper_bound;
+  const lowerPercent = lowerBound === null ? null : Math.round(lowerBound * 100);
+  const upperPercent = upperBound === null ? null : Math.round(upperBound * 100);
+  const aiLevel = control.condition_key.ai_level || '--';
+  const rangeText = lowerPercent === null || upperPercent === null
+    ? '范围未知'
+    : `${lowerPercent}%～${upperPercent}%`;
+  const conditionText = `${aiLevel} · 波动范围 ${rangeText}`;
   const left = 18;
   const right = 388;
   const top = 12;
   const bottom = 48;
+  const verticalSpan = lowerBound !== null && upperBound !== null
+    ? upperBound - lowerBound
+    : 0;
+  const verticalMin = verticalSpan > 0 && lowerBound !== null
+    ? Math.max(0, lowerBound - verticalSpan * 0.15)
+    : 0;
+  const verticalMax = verticalSpan > 0 && upperBound !== null
+    ? Math.min(1, upperBound + verticalSpan * 0.15)
+    : 1;
   const points = series.map((value, index) => {
     const x = series.length === 1
       ? right
       : left + ((right - left) * index) / (series.length - 1);
     const bounded = Math.max(0, Math.min(1, value));
-    const y = bottom - bounded * (bottom - top);
-    return { x, y, value, sourceIndex: firstVisibleIndex + index };
+    const displayRatio = verticalMax === verticalMin
+      ? bounded
+      : (bounded - verticalMin) / (verticalMax - verticalMin);
+    const y = bottom - Math.max(0, Math.min(1, displayRatio)) * (bottom - top);
+    return { x, y, value, sourceIndex: index };
   });
   const path = points.map((point, index) => (
     `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`
   )).join(' ');
-  const historyText = currentPercent === null
-    ? '暂无历史（0次）'
-    : `${currentPercent}%（${control.ai_history_correct_count}/${control.ai_history_valid_count}）`;
+  const statisticText = currentPercent === null ? '暂无统计值' : `${currentPercent}%`;
 
   return (
     <div>
       <div className="trust-accuracy-header">
-        <span className="trust-accuracy-title">AI 历史识别准确率</span>
-        <span className="trust-accuracy-value">当前可靠性 · {historyText}</span>
+        <span className="trust-accuracy-title">AI 统计识别准确率</span>
+        <span className="trust-accuracy-value">等级统计值 · {statisticText}</span>
       </div>
       <div className="trust-chart">
         {points.length > 0 ? (
@@ -103,31 +118,30 @@ const AccuracyTrend: React.FC<{ control: TrustControlState }> = ({ control }) =>
             viewBox="0 0 460 72"
             preserveAspectRatio="none"
             role="img"
-            aria-label={`AI历史识别准确率 ${historyText}`}
+            aria-label={`AI统计识别准确率 ${statisticText} ${conditionText}`}
             style={{ display: 'block', width: '100%', height: '100%' }}
           >
             <line x1={left} y1={bottom} x2={right} y2={bottom} stroke="rgba(71,142,152,0.16)" strokeWidth="1" />
             <path d={path} fill="none" stroke="#39d8b2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 3px rgba(57,216,178,0.45))' }} />
             {points.map((point, index) => {
               const isCurrent = index === points.length - 1;
-              const isCorrect = correctness[index] !== false;
-              const color = isCurrent || !isCorrect ? '#f4aa32' : '#7af7d5';
+              const color = isCurrent ? '#f4aa32' : '#7af7d5';
               return (
                 <g key={point.sourceIndex}>
-                  <title>{`历史试次${point.sourceIndex + 1}：累计准确率${Math.round(point.value * 100)}%${isCorrect ? '，AI识别正确' : '，AI识别错误'}`}</title>
+                  <title>{`参考点${point.sourceIndex + 1}：${Math.round(point.value * 100)}%`}</title>
                   {isCurrent && <circle cx={point.x} cy={point.y} r="8" fill="rgba(244,170,50,0.12)" stroke="rgba(244,170,50,0.32)" />}
                   <circle cx={point.x} cy={point.y} r={isCurrent ? 5 : 3.6} fill="#eafff9" stroke={color} strokeWidth={isCurrent ? 2.2 : 1.5} style={{ filter: `drop-shadow(0 0 3px ${color})` }} />
                 </g>
               );
             })}
-            <text x={left} y="65" fill="#4f7580" fontSize="9">历史</text>
-            <text x={right - 16} y="65" fill="#708e98" fontSize="9">当前</text>
+            <text x={left} y="65" fill="#4f7580" fontSize="9">能力波动</text>
+            <text x={right - 26} y="65" fill="#708e98" fontSize="9">统计水平</text>
             <text x="414" y="42" fill="#f4b33c" fontSize="14" fontWeight="700">{currentPercent ?? '--'}%</text>
-            <text x="416" y="56" fill="#806e45" fontSize="8">{control.ai_history_correct_count}/{control.ai_history_valid_count}</text>
+            <text x="402" y="56" fill="#806e45" fontSize="8">{aiLevel} · {rangeText}</text>
           </svg>
         ) : (
-          <div className="trust-empty" role="img" aria-label="AI历史识别准确率 暂无历史（0次）">
-            暂无历史（0次）
+          <div className="trust-empty" role="img" aria-label={`AI统计识别准确率 暂无统计值 ${aiLevel}`}>
+            暂无统计值
           </div>
         )}
       </div>
