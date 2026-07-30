@@ -414,7 +414,7 @@ def test_simple_task_start_after_overall_is_ignored_as_duplicate(monkeypatch):
     fake_db = setup_bridge(monkeypatch)
     bridge._handle_external_task(overall_start("3"), "platform_control")
 
-    replies = bridge._handle_external_task(sub_start(), "platform_control")
+    replies = bridge._handle_external_task(simple_task_start(), "platform_control")
 
     assert replies[0]["sub_task_seq"] == 1
     assert replies[0]["task_group_id"] == 42
@@ -423,6 +423,9 @@ def test_simple_task_start_after_overall_is_ignored_as_duplicate(monkeypatch):
     assert fake_db.runs[42]["current_subtask_seq"] == 1
     assert len(fake_db.events) == 1
     assert replies[0]["diagnostics"]["event_role"] == "subtask_start_already_active"
+    assert replies[0]["diagnostics"]["raw_action"] == "task_start"
+    assert replies[0]["diagnostics"]["action"] == "sub_start"
+    assert replies[0]["diagnostics"]["action_was_normalized"] is True
 
 
 def test_simple_task_start_without_overall_is_ignored(monkeypatch):
@@ -438,6 +441,9 @@ def test_simple_task_start_without_overall_is_ignored(monkeypatch):
     assert replies[0]["status"] == "ignored"
     assert replies[0]["event_type"] == "need_overall_config"
     assert replies[0]["diagnostics"]["event_role"] == "simple_task_start_without_overall_ignored"
+    assert replies[0]["diagnostics"]["raw_action"] == "task_start"
+    assert replies[0]["diagnostics"]["action"] == "sub_start"
+    assert replies[0]["diagnostics"]["action_was_normalized"] is True
     assert fake_db.runs == {}
     assert fake_db.events == []
     assert external.started == []
@@ -583,6 +589,9 @@ def test_sub_end_prestarts_next_external_collector(monkeypatch):
     assert duplicate_start[0]["overall_task_id"] == 42
     assert duplicate_start[0]["task_id"] == 43
     assert duplicate_start[0]["diagnostics"]["event_role"] == "subtask_start_already_active"
+    assert duplicate_start[0]["diagnostics"]["raw_action"] == "task_start"
+    assert duplicate_start[0]["diagnostics"]["action"] == "sub_start"
+    assert duplicate_start[0]["diagnostics"]["action_was_normalized"] is True
     assert [started[2] for started in external.started] == ["42", "43"]
     assert external.started[1][3]["message"]["Action"] == "sub_start"
     assert external.started[1][3]["message"]["_inferred_from_action"] == "previous_sub_end"

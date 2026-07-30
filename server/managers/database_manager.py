@@ -699,6 +699,8 @@ class DatabaseManager:
                 self._create_task_events_table(cursor, conn)
                 self._create_task_subtask_results_table(cursor, conn)
                 self._create_trust_trial_outcomes_table(cursor, conn)
+                self._create_external_pose_files_table(cursor, conn)
+                self._create_external_behavior_records_table(cursor, conn)
 
                 # 检查并创建 questionnaire_responses 表
                 self._create_questionnaire_responses_table(cursor, conn)
@@ -709,6 +711,86 @@ class DatabaseManager:
             self.logger.info("数据库初始化成功")
         except Exception as e:
             self.logger.error(f"数据库初始化失败: {e}", exc_info=True)
+
+    def _create_external_pose_files_table(self, cursor, conn) -> None:
+        """Create the low-volume index for file-backed external pose samples."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS external_pose_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                task_group_id INTEGER,
+                user_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                file_path TEXT NOT NULL UNIQUE,
+                file_format TEXT NOT NULL DEFAULT 'jsonl',
+                schema_version TEXT NOT NULL DEFAULT '1.0',
+                row_count INTEGER NOT NULL DEFAULT 0,
+                entity_record_count INTEGER NOT NULL DEFAULT 0,
+                first_pose_time_ms INTEGER,
+                last_pose_time_ms INTEGER,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_external_pose_files_task
+            ON external_pose_files(task_id, user_id, task_type)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_external_pose_files_context
+            ON external_pose_files(user_id, task_type, task_id)
+            """
+        )
+        conn.commit()
+
+    def _create_external_behavior_records_table(self, cursor, conn) -> None:
+        """Create the canonical table for discrete external User/AI behaviors."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS external_behavior_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_event_id TEXT NOT NULL UNIQUE,
+                task_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                button TEXT,
+                behavior_type TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                is_active INTEGER NOT NULL,
+                source_timestamp_ms INTEGER,
+                received_at_ms INTEGER NOT NULL,
+                pose_data_json TEXT NOT NULL DEFAULT '[]',
+                schema_version TEXT NOT NULL DEFAULT '1.0',
+                raw_payload_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_external_behavior_task_time
+            ON external_behavior_records(task_id, received_at_ms)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_external_behavior_context
+            ON external_behavior_records(user_id, task_type, task_id)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_external_behavior_type
+            ON external_behavior_records(task_id, behavior_type, received_at_ms)
+            """
+        )
+        conn.commit()
 
     def _normalize_existing_difficulty_values(self, cursor, conn) -> None:
         """把历史数据库中的数字/中文难度统一成 high / medium / low。"""
@@ -1398,6 +1480,244 @@ class DatabaseManager:
                 changed = True
         if changed:
             conn.commit()
+
+    def find_active_task_runs(self, user_id: str, task_type: str) -> List[Dict[str, Any]]:
+        """Return every active concrete task matching one external task context."""
+        normalized_task_type = self._normalize_runtime_task_type(task_type)
+        try:
+            with self.get_connection() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
+                           completed_subtasks, current_subtask_seq, started_at_ms,
+                           completed_at_ms, config_json, last_raw_message_json
+                    FROM task_runs
+                    WHERE user_id = ? AND task_type = ? AND status = 'active'
+                    ORDER BY started_at_ms DESC, task_id DESC
+                    """,
+                    (str(user_id), normalized_task_type),
+                ).fetchall()
+            return [
+                run
+                for run in (self._task_run_from_row(row) for row in rows)
+                if run is not None
+            ]
+        except Exception as exc:
+            self.logger.warning(
+                "find active task_runs failed: user_id=%s task_type=%s error=%s",
+                user_id,
+                normalized_task_type,
+                exc,
+            )
+            return []
+
+    def upsert_external_pose_file(
+        self,
+        *,
+        task_id: int,
+        task_group_id: Optional[int],
+        user_id: str,
+        task_type: str,
+        file_path: str,
+        schema_version: str,
+        now_ms: int,
+    ) -> Dict[str, Any]:
+        """Register one JSONL pose file per concrete task and return its progress."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO external_pose_files (
+                    task_id, task_group_id, user_id, task_type, file_path,
+                    file_format, schema_version, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, 'jsonl', ?, ?, ?)
+                ON CONFLICT(task_id, user_id, task_type) DO UPDATE SET
+                    task_group_id=excluded.task_group_id,
+                    file_path=excluded.file_path,
+                    schema_version=excluded.schema_version,
+                    updated_at_ms=excluded.updated_at_ms,
+                    status='active'
+                """,
+                (
+                    int(task_id),
+                    int(task_group_id) if task_group_id is not None else None,
+                    str(user_id),
+                    self._normalize_runtime_task_type(task_type),
+                    str(file_path),
+                    str(schema_version),
+                    int(now_ms),
+                    int(now_ms),
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                """
+                SELECT row_count, entity_record_count, first_pose_time_ms, last_pose_time_ms
+                FROM external_pose_files
+                WHERE task_id = ? AND user_id = ? AND task_type = ?
+                """,
+                (
+                    int(task_id),
+                    str(user_id),
+                    self._normalize_runtime_task_type(task_type),
+                ),
+            ).fetchone()
+        return {
+            "row_count": int(row[0] or 0),
+            "entity_record_count": int(row[1] or 0),
+            "first_pose_time_ms": row[2],
+            "last_pose_time_ms": row[3],
+        }
+
+    def update_external_pose_file_progress(
+        self,
+        *,
+        file_path: str,
+        row_count: int,
+        entity_record_count: int,
+        first_pose_time_ms: Optional[int],
+        last_pose_time_ms: Optional[int],
+        now_ms: int,
+        status: str = "active",
+    ) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE external_pose_files
+                SET row_count=?,
+                    entity_record_count=?,
+                    first_pose_time_ms=?,
+                    last_pose_time_ms=?,
+                    status=?,
+                    updated_at_ms=?
+                WHERE file_path=?
+                """,
+                (
+                    int(row_count),
+                    int(entity_record_count),
+                    first_pose_time_ms,
+                    last_pose_time_ms,
+                    str(status),
+                    int(now_ms),
+                    str(file_path),
+                ),
+            )
+            conn.commit()
+
+    def insert_external_behavior_record(
+        self,
+        *,
+        client_event_id: str,
+        task_id: int,
+        user_id: str,
+        task_type: str,
+        button: Optional[str],
+        behavior_type: str,
+        owner: str,
+        is_active: bool,
+        source_timestamp_ms: Optional[int],
+        received_at_ms: int,
+        pose_data_json: str,
+        schema_version: str,
+        raw_payload_json: str,
+    ) -> Dict[str, Any]:
+        """Insert one idempotent external behavior and return the stored row."""
+        normalized_task_type = self._normalize_runtime_task_type(task_type)
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO external_behavior_records (
+                    client_event_id, task_id, user_id, task_type, button,
+                    behavior_type, owner, is_active, source_timestamp_ms,
+                    received_at_ms, pose_data_json, schema_version,
+                    raw_payload_json, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(client_event_id),
+                    int(task_id),
+                    str(user_id),
+                    normalized_task_type,
+                    str(button) if button is not None else None,
+                    str(behavior_type),
+                    str(owner),
+                    int(bool(is_active)),
+                    int(source_timestamp_ms) if source_timestamp_ms is not None else None,
+                    int(received_at_ms),
+                    str(pose_data_json),
+                    str(schema_version),
+                    str(raw_payload_json),
+                    int(received_at_ms),
+                ),
+            )
+            duplicate = cursor.rowcount == 0
+            conn.commit()
+            row = conn.execute(
+                """
+                SELECT id, client_event_id, task_id, user_id, task_type,
+                       button, behavior_type, owner, is_active,
+                       source_timestamp_ms, received_at_ms, pose_data_json,
+                       schema_version, raw_payload_json, created_at_ms
+                FROM external_behavior_records
+                WHERE client_event_id = ?
+                """,
+                (str(client_event_id),),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("external behavior insert completed without a stored row")
+        columns = (
+            "id",
+            "client_event_id",
+            "task_id",
+            "user_id",
+            "task_type",
+            "button",
+            "behavior_type",
+            "owner",
+            "is_active",
+            "source_timestamp_ms",
+            "received_at_ms",
+            "pose_data_json",
+            "schema_version",
+            "raw_payload_json",
+            "created_at_ms",
+        )
+        result = dict(zip(columns, row))
+        result["duplicate"] = duplicate
+        return result
+
+    def get_external_behavior_record(self, client_event_id: str) -> Optional[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, client_event_id, task_id, user_id, task_type,
+                       button, behavior_type, owner, is_active,
+                       source_timestamp_ms, received_at_ms, pose_data_json,
+                       schema_version, raw_payload_json, created_at_ms
+                FROM external_behavior_records
+                WHERE client_event_id = ?
+                """,
+                (str(client_event_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        columns = (
+            "id",
+            "client_event_id",
+            "task_id",
+            "user_id",
+            "task_type",
+            "button",
+            "behavior_type",
+            "owner",
+            "is_active",
+            "source_timestamp_ms",
+            "received_at_ms",
+            "pose_data_json",
+            "schema_version",
+            "raw_payload_json",
+            "created_at_ms",
+        )
+        return dict(zip(columns, row))
 
     def find_active_task_run(self, user_id: str, task_type: str, overall_only: bool = False) -> Optional[Dict[str, Any]]:
         try:

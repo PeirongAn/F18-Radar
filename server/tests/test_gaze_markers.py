@@ -768,6 +768,39 @@ def test_external_aoi_snapshot_accepts_current_fields_for_weapon_and_platform_ta
         task_types = ("WEAPON_FIRING", "PLATFORM_CONTROL")
         try:
             for index, task_type in enumerate(task_types, start=1):
+                if task_type == "PLATFORM_CONTROL":
+                    viewport_height = 1440
+                    region_specs = (
+                        (
+                            "AIConfidence",
+                            0.74583327770233154,
+                            0.055555548518896103,
+                            0.99999988079071045,
+                            0.30761623382568359,
+                        ),
+                        (
+                            "HistoricalResultRecord",
+                            0.74583327770233154,
+                            0.31960764527320862,
+                            0.99999988079071045,
+                            0.55108916759490967,
+                        ),
+                        (
+                            "AIFlightTrajectory",
+                            0.78124994039535522,
+                            0.56792622804641724,
+                            0.99999988079071045,
+                            0.79014861583709717,
+                        ),
+                    )
+                else:
+                    viewport_height = 1360
+                    region_specs = (
+                        ("TrustHistory", 1, 0.079, 1, 0.331),
+                        ("TrustStatePanel", 1, 0.343, 1, 0.575),
+                        ("SHOOT", 1, 0.829, 1, 0.864),
+                        ("Title", 1, 0.899, 1, 1),
+                    )
                 active_task_id = f"external-aoi-{index}"
                 svc.start_task(
                     bbox=[],
@@ -793,9 +826,9 @@ def test_external_aoi_snapshot_accepts_current_fields_for_weapon_and_platform_ta
                         "fullscreen": True,
                         "alignment_valid": True,
                         "viewport_width_css_px": 2560,
-                        "viewport_height_css_px": 1360,
+                        "viewport_height_css_px": viewport_height,
                         "screen_width_css_px": 2560,
-                        "screen_height_css_px": 1360,
+                        "screen_height_css_px": viewport_height,
                         "device_pixel_ratio": 1,
                         "visual_viewport_scale": 1,
                     },
@@ -805,18 +838,13 @@ def test_external_aoi_snapshot_accepts_current_fields_for_weapon_and_platform_ta
                             "id": region_id,
                             "shape": "rect",
                             "visible": True,
-                            "left": 1,
+                            "left": left,
                             "top": top,
-                            "right": 1,
+                            "right": right,
                             "bottom": bottom,
                             "binding": {"mode": "manual_review", "target_id": ""},
                         }
-                        for region_id, top, bottom in (
-                            ("TrustHistory", 0.079, 0.331),
-                            ("TrustStatePanel", 0.343, 0.575),
-                            ("SHOOT", 0.829, 0.864),
-                            ("Title", 0.899, 1),
-                        )
+                        for region_id, left, top, right, bottom in region_specs
                     ],
                 }))
                 assert result["ok"] is True
@@ -844,13 +872,17 @@ def test_external_aoi_snapshot_accepts_current_fields_for_weapon_and_platform_ta
             ("external-aoi-1", "external-aoi-1", None, "WEAPON_FIRING"),
             ("external-aoi-2", "external-aoi-2", None, "PLATFORM_CONTROL"),
         ]
-        for row in rows:
-            assert {region["id"] for region in json.loads(row[4])} == {
-                "TrustHistory",
-                "TrustStatePanel",
-                "SHOOT",
-                "Title",
-            }
+        assert {region["id"] for region in json.loads(rows[0][4])} == {
+            "TrustHistory",
+            "TrustStatePanel",
+            "SHOOT",
+            "Title",
+        }
+        assert {region["id"] for region in json.loads(rows[1][4])} == {
+            "AIConfidence",
+            "HistoricalResultRecord",
+            "AIFlightTrajectory",
+        }
 
 def test_duplicate_start_preserves_analysis_aoi_revision():
     with tempfile.TemporaryDirectory() as tmp:

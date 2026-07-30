@@ -810,6 +810,49 @@ def _load_active_external_task(
     return active
 
 
+def get_active_external_task_context(
+    user_id: str,
+    task_type: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the verified in-memory context for one active external subtask."""
+    normalized_task_type = "WEAPON_FIRING" if task_type == "WEAPON_LAUNCH" else str(task_type or "")
+    category = next(
+        (
+            candidate
+            for candidate, candidate_type in _TASK_TYPE_BY_CATEGORY.items()
+            if candidate_type == normalized_task_type
+            and candidate in {"platform_control", "weapon_launch"}
+        ),
+        None,
+    )
+    if category is None:
+        return None
+
+    active = _active_external_tasks.get((category, str(user_id)))
+    if not active:
+        return None
+    task_id = (
+        active.get("current_subtask_task_id")
+        or active.get("gaze_task_id")
+        or active.get("task_id")
+    )
+    run = db_manager.get_task_run(task_id)
+    if (
+        not run
+        or run.get("status") != "active"
+        or str(run.get("user_id") or "") != str(user_id)
+        or str(run.get("task_type") or "") != normalized_task_type
+    ):
+        return None
+
+    context = copy.deepcopy(active)
+    context["task_id"] = int(run["task_id"])
+    context["task_group_id"] = run.get("group_id")
+    context["task_type"] = normalized_task_type
+    context["user_id"] = str(user_id)
+    return context
+
+
 def _find_active_external_task_for_user(
     user_id: str,
     exclude_key: Optional[Tuple[str, str]] = None,
@@ -1577,6 +1620,15 @@ def _handle_external_task(
 
     raw_action = str(message_data.get("Action") or "task_start").strip()
     action = _normalize_external_action(raw_action)
+    simple_task_start_alias = (
+        action == "task_start"
+        and not _is_overall_task_start(message_data)
+    )
+    if simple_task_start_alias:
+        # Some external clients use the short task_start packet for every
+        # concrete subtask. Preserve the full task_start packet as the
+        # aggregate start, but treat the short form as a sub_start alias.
+        action = "sub_start"
     ts = int(_time.time() * 1000)
     raw = _json_dump(message_data)
     key = (category, user_id)
@@ -1828,9 +1880,9 @@ def _handle_external_task(
 
         active = _load_active_external_task(category, user_id, raw_fields, normalized)
         if not active:
-            if action == "task_start":
+            if simple_task_start_alias:
                 logger.warning(
-                    "[REMOTE_TASK_COUNT] ignore simple task_start without active overall task "
+                    "[REMOTE_TASK_COUNT] ignore simple task_start alias without active overall task "
                     "category=%s user=%s; a new task group requires overall configuration",
                     category,
                     user_id,
@@ -1839,7 +1891,7 @@ def _handle_external_task(
                          "task_type": task_type, "task_category": category,
                          "entry_mode": "external_lifecycle",
                          "event_type": "need_overall_config",
-                         "message": "simple task_start ignored: new task group requires overall configuration",
+                         "message": "simple task_start (sub_start alias) ignored: new task group requires overall configuration",
                          "diagnostics": _external_task_diagnostics(
                              message_data,
                              category,

@@ -15,11 +15,11 @@
 
 - 仅在操纵杆或按钮状态发生变化时生成行为事件。
 - 操作开始发送 `*_start`，松开或回中发送 `*_end`；持续保持期间不得重复发送。
-- 行为事件记录操作者、任务类型、按键、行为含义和发生时间。
+- 行为事件记录操作者、任务类型、按键和行为含义；外部发生时间无法提供时可以为空。
 - 行为事件同时携带操作发生时的当前姿态快照。
 - `pose_data` 的实体数量应与当前任务配置中的 `units` 数量一致。
 - 外部客户端可以不提供 `task_id`，由服务端根据当前活动任务解析。
-- 所有客户端业务时间戳统一使用 Unix 毫秒时间戳。
+- 客户端提供业务时间戳时统一使用 Unix 毫秒时间戳。
 
 ## 2. 通信方式
 
@@ -55,9 +55,9 @@ pose_data
 
 ### 3.2 时间单位
 
-客户端发送的以下字段均使用 Unix 毫秒时间戳：
+客户端发送的以下时间字段使用 Unix 毫秒时间戳：
 
-- 行为事件 `timestamp`
+- 行为事件 `timestamp`（可选的外部来源时间）
 - 姿态记录 `timestamp`
 - 姿态快照 `captured_at`
 
@@ -69,7 +69,8 @@ pose_data
 }
 ```
 
-服务端可以另外记录微秒级接收时间，但不得覆盖客户端原始时间。
+服务端必须另外记录接收时间。外部行为没有可靠发生时间时，
+`source_timestamp_ms` 保存为 `null`，只使用服务端 `received_at_ms` 进行接收顺序分析。
 
 ### 3.3 任务类型
 
@@ -111,6 +112,15 @@ status = active
 5. 未找到活动任务时，拒绝写入。
 
 数据库最终保存的必须是具体子任务 `task_runs.task_id`，不得使用 `task_groups.group_id` 代替。
+
+当外部客户端明确提供非空 `task_id` 时，服务端必须校验：
+
+1. 对应 `task_runs` 记录存在。
+2. `task_runs.user_id` 与 `PlayerID` 一致。
+3. `task_runs.task_type` 与消息 `task_type` 一致。
+4. `task_runs.status` 仍为 `active`。
+
+任一条件不满足时返回 `TASK_ID_MISMATCH`，不得写入行为或姿态数据。
 
 ## 4. 行为数据记录接口
 
@@ -177,7 +187,7 @@ status = active
 | `task_id` | string/integer/null | 否 | 具体子任务 ID；为空时由服务端解析 |
 | `button` | string/null | 条件必填 | 当前三轴映射使用 `button2`～`button7`；无物理按钮来源时可为 `null` |
 | `type` | string | 是 | 行为类型，例如 `x_axis_start`、`y_axis_end` |
-| `timestamp` | integer | 是 | 行为发生时间，Unix 毫秒 |
+| `timestamp` | integer/null | 否 | 外部来源时间，Unix 毫秒；无法提供时省略或为 `null` |
 | `owner` | string | 是 | 本次行为的执行方：`User` 或 `AI` |
 | `pose_data` | array | 是 | 行为发生时的当前姿态快照；数量应与当前任务配置的 `units` 数量一致 |
 
@@ -256,7 +266,8 @@ status = active
 
 ### 5.1 接口语义
 
-姿态数据表示某个实体在某一时刻的当前姿态角。
+姿态数据表示某个实体在某一时刻的当前状态。当前外部平台可能发送
+`X/Y/Z` 位置数据，也可能发送 `Pitch/Yaw/Roll` 姿态角数据；服务端按数值对象原样保存。
 
 行为事件中的 `pose_data` 是操作发生时的快照，不是指向后续可变状态的引用。行为记录写入后，对应姿态快照不得被后续位置更新覆盖。
 
@@ -282,12 +293,13 @@ status = active
 | `Side` | string | 是 | 实体所属阵营：`Our` 或 `Enemy`；UE 内部 `side id=1` 映射为 `Our`，`side id=2` 映射为 `Enemy` |
 | `ID` | string | 是 | 实体唯一 ID，对应当前任务配置中的 `units.id` |
 | `timestamp` | integer | 是 | 本条姿态的采集时间，Unix 毫秒 |
-| `posture` | object | 是 | 当前姿态角对象 |
-| `posture.Pitch` | number | 是 | 俯仰角 |
-| `posture.Yaw` | number | 是 | 航向角/偏航角 |
-| `posture.Roll` | number | 是 | 横滚角 |
+| `posture` | object | 是 | 当前状态数值对象 |
+| `posture.X/Y/Z` | number | 条件必填 | 实体位置；位置模式下三项一起提供 |
+| `posture.Pitch/Yaw/Roll` | number | 条件必填 | 实体姿态角；角度模式下三项一起提供 |
 
-`posture` 必须使用结构化数值对象，不得使用 `"Pitch,Yaw,Roll"` 拼接字符串。行为消息中的 `pose_data` 数量必须与当前任务配置中的 `units` 数量一致，每个 `units.id` 应有且仅有一条对应姿态。
+`posture` 必须使用结构化数值对象，不得使用 `"X,Y,Z"` 或
+`"Pitch,Yaw,Roll"` 拼接字符串。行为消息中的 `pose_data` 数量必须与当前任务配置中的
+`units` 数量一致，每个 `units.id` 应有且仅有一条对应状态。
 
 ### 5.4 阵营枚举
 
@@ -357,7 +369,8 @@ status = active
 | `data.captured_at` | integer | 是 | 整组姿态快照采集时间，Unix 毫秒 |
 | `data.pose_data` | array | 是 | 当前姿态对象数组；数量应与当前任务配置的 `units` 数量一致 |
 
-独立姿态接口用于低频状态快照。若需要持续高频记录原始仿真姿态流，应另行定义采样频率、批量格式、压缩和文件存储方案，避免高频逐条写入主 SQLite 数据库。
+独立姿态接口既可用于低频状态快照，也可连续发送原始仿真姿态流。服务端使用
+JSONL 文件保存原始快照，主 SQLite 只保存文件索引，不逐条写入姿态明细。
 
 ## 7. 行为与姿态关联规则
 
@@ -454,9 +467,10 @@ status = active
 | `TASK_ID_MISMATCH` | 客户端 task_id 与当前活动任务不一致 |
 | `ACTIVE_TASK_NOT_FOUND` | 未找到匹配的活动子任务 |
 | `ACTIVE_TASK_AMBIGUOUS` | 找到多条活动子任务且无法消歧 |
+| `CLIENT_EVENT_ID_CONFLICT` | 同一 `client_event_id` 被用于不同的行为内容 |
 | `INTERNAL_ERROR` | 服务端写入失败 |
 
-## 10. 数据库存储建议
+## 10. 数据库存储设计
 
 表职责约定：
 
@@ -467,73 +481,89 @@ status = active
 
 ### 10.1 行为数据
 
-行为事件可以复用现有 `user_operations`：
-
-| 接口字段 | `user_operations` |
-| --- | --- |
-| 服务端解析出的 `task_id` | `task_id` |
-| `data.type` | `operation_type` |
-| `data.timestamp` | `timestamp` |
-| 服务端接收时间 | `receive_timestamp` |
-| `PlayerID` | `user_id` |
-| `owner=User` | `event_owner=manual` |
-| `owner=AI` | `event_owner=AI` |
-| `button`、原始 `owner`、`client_event_id`、原始 `pose_data` 等 | `parameters` JSON |
-
-`is_active` 建议按状态类型映射：`*_start` 写入 `1`，`*_end` 写入 `0`。
-
-为保证 `client_event_id` 幂等，如果复用 `user_operations`，应新增可唯一索引的客户端事件 ID 字段，或新增独立幂等键表。仅将 `client_event_id` 放入 `parameters` JSON 不能由数据库唯一约束阻止重复写入。
-
-如果需要对外部行为做独立统计，也可以新增 `external_behavior_records`，但不得同时把同一事件重复计入两套业务统计。
-
-### 10.2 姿态数据
-
-建议新增独立姿态表 `external_pose_records`，每个实体一行：
+外部行为不复用 `user_operations`，统一写入 `external_behavior_records`：
 
 | 字段 | 说明 |
 | --- | --- |
-| `id` | 自增主键 |
-| `pose_snapshot_id` | 姿态快照 ID |
-| `behavior_operation_id` | 关联 `user_operations.id`，独立快照时可为空 |
-| `client_snapshot_id` | 独立姿态快照客户端 ID |
-| `task_id` | 关联 `task_runs.task_id` |
-| `user_id` | 用户 ID |
+| `id` | 自增主键，同时作为 `behavior_record_id` 返回 |
+| `client_event_id` | 外部事件唯一 ID，数据库唯一约束 |
+| `task_id` | 解析后的具体 `task_runs.task_id` |
+| `user_id` | `PlayerID` |
 | `task_type` | `PLATFORM_CONTROL` 或 `WEAPON_FIRING` |
-| `side` | `Our` 或 `Enemy` |
-| `entity_id` | 实体 ID |
-| `pose_time_ms` | 姿态采集时间 |
-| `pitch`、`yaw`、`roll` | 当前姿态角 |
-| `angle_unit` | 角度单位，可为空；建议明确为 `degree` 或 `radian` |
-| `raw_payload_json` | 原始姿态对象 |
-| `created_at` | 数据库写入时间 |
+| `button` | 外部按钮编号，可以为空 |
+| `behavior_type` | 规范化后的 `data.type` |
+| `owner` | 原始执行方：`User` 或 `AI` |
+| `is_active` | `*_end` 为 `0`，其余行为为 `1` |
+| `source_timestamp_ms` | 外部 `data.timestamp`；无法提供时为 `null` |
+| `received_at_ms` | 服务端实际接收时间，必填 |
+| `pose_data_json` | 行为发生时携带的完整姿态快照副本 |
+| `schema_version` | 接口版本 |
+| `raw_payload_json` | 完整原始请求，用于审计和问题回放 |
+| `created_at_ms` | 数据库创建时间 |
 
-建议索引：
+历史值 `Fire`、`LeftPedal`、`SwitchMode` 等会规范化为
+`fire`、`left_pedal`、`switch_mode`；当前三轴类型
+`x_axis_start`、`y_axis_end` 等保持不变。
+
+### 10.2 姿态数据
+
+独立 `external_pose_record` 按高频原始数据处理，不逐条写入主 SQLite。当前落地方式为：
 
 ```text
-(task_id, pose_time_ms)
-(task_id, side, entity_id, pose_time_ms)
-(behavior_operation_id)
+server/data/external_pose/raw/<PlayerID>/<task_id>/pose_samples.jsonl
 ```
+
+每行保存一个完整姿态快照，包含 `client_snapshot_id`、解析后的具体
+`task_id`、`task_group_id`、`user_id`、`task_type`、`captured_at` 和
+`pose_data`。姿态对象中的数值型 `posture` 原样保存，可承载
+`X/Y/Z` 位置数据或 `Pitch/Yaw/Roll` 姿态角数据。
+
+主 SQLite 只保存低频文件索引表 `external_pose_files`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `task_id` | 关联具体 `task_runs.task_id` |
+| `task_group_id` | 对应任务组 ID |
+| `user_id` | 用户 ID |
+| `task_type` | `PLATFORM_CONTROL` 或 `WEAPON_FIRING` |
+| `file_path` | JSONL 原始文件绝对路径 |
+| `file_format` | 当前固定为 `jsonl` |
+| `schema_version` | 接口版本 |
+| `row_count` | 已保存的快照数 |
+| `entity_record_count` | 所有快照中的实体记录总数 |
+| `first_pose_time_ms`、`last_pose_time_ms` | 文件时间范围 |
+| `status` | 文件写入状态 |
+
+服务端在文件写入并 `flush` 后才返回成功结果；索引进度按批次或时间间隔同步，
+服务关闭时做最终同步。这样既保留原始数据，又避免高频逐行扩张主数据库。
 
 ### 10.3 事务要求
 
-处理 `external_behavior_record` 时，行为事件和其 `pose_data` 必须在同一数据库事务中写入：
+处理 `external_behavior_record` 时，行为字段和随附的 `pose_data` 作为同一行写入：
 
 ```text
-行为写入成功 + 所有姿态写入成功 → 提交
-任一写入失败 → 全部回滚
+完整 external_behavior_records 行写入成功 → 提交并返回 ACK
+字段校验或写入失败 → 不产生记录并返回错误
 ```
 
-不得出现行为记录已保存、对应姿态只保存一部分的状态。
+`pose_data_json` 保存消息到达时的深拷贝，不引用后续持续变化的独立姿态文件。
 
-### 10.4 当前落地前置项
+### 10.4 当前落地状态
 
-截至本文档修订时，正式接入前还需要完成：
+已完成：
 
-- 新增 `external_behavior_record` / `external_pose_record` 的 WebSocket 处理器。
-- 将活动任务回退查询改为“唯一候选才接受”，不得在多条活动记录中直接选择最新一条。
-- 为 `client_event_id` 和 `client_snapshot_id` 建立数据库级幂等约束。
-- 创建 `external_pose_records` 表，并将行为及其全部姿态放入同一事务。
+- `external_behavior_record` WebSocket 处理器和 `external_behavior_records` 持久化。
+- `client_event_id` 数据库唯一约束、重复 ACK 和冲突检测。
+- 外部来源时间可空，服务端接收时间必填。
+- 行为及其 `pose_data` 快照单行原子写入。
+- `external_pose_record` WebSocket 处理器和成功/错误响应。
+- `task_id=null` 时优先使用外部任务内存上下文，回退数据库时只接受唯一活动候选。
+- 独立姿态 JSONL 原始文件和 `external_pose_files` 数据库索引。
+- 当前进程内重复 `client_snapshot_id` 去重；服务重启后会扫描已有任务文件恢复近期 ID。
+
+仍需完成：
+
+- 若要求无限期全局幂等，需为 `client_snapshot_id` 增加持久化唯一索引；当前仅保留近期快照 ID。
 
 ## 11. 联调检查清单
 
@@ -543,14 +573,14 @@ status = active
 - [ ] 操作开始发送一次 `*_start`
 - [ ] 松开或回中发送一次 `*_end`
 - [ ] 持续保持期间不重复发送
-- [ ] `timestamp` 为 Unix 毫秒
+- [ ] 提供 `timestamp` 时使用 Unix 毫秒；无法提供时省略或发送 `null`
 - [ ] `owner` 只使用 `User` 或 `AI`
 - [ ] X/Y/Z 三轴分别按 `button2`～`button7` 映射
 - [ ] `data.type` 使用对应轴的 `*_start` 或 `*_end`
 - [ ] `pose_data` 是数组
 - [ ] `pose_data` 数量与当前任务配置中的 `units` 数量一致
 - [ ] `pose_data[].ID` 对应 `units.id`
-- [ ] `posture` 使用 `Pitch`、`Yaw`、`Roll` 数值对象，不使用字符串
+- [ ] `posture` 使用 `X/Y/Z` 或 `Pitch/Yaw/Roll` 数值对象，不使用字符串
 - [ ] 行为与姿态写入同一个具体子任务
 - [ ] 重复 `client_event_id` 不产生重复数据
 - [ ] 成功响应返回 `resolved_task_id`

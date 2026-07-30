@@ -102,9 +102,14 @@ TrustHistory
 TrustStatePanel
 SHOOT
 Title
+AIConfidence
+HistoricalResultRecord
+AIFlightTrajectory
 ```
 
-它们分别适用于 `PLATFORM_CONTROL` 和 `WEAPON_FIRING`。外部任务生命周期会先以
+其中 `AIConfidence`、`HistoricalResultRecord`、`AIFlightTrajectory` 是
+`PLATFORM_CONTROL` HUD 当前使用的三个区域；其余 ID 继续兼容既有的
+`PLATFORM_CONTROL` 和 `WEAPON_FIRING` 快照。外部任务生命周期会先以
 当前具体子任务 `task_id` 启动眼动；AOI 消息中的 `task_id`、`trial_id`、
 `task_group_id` 如果是空字符串，接入层会把它们视为未提供，其中
 `task_id`/`trial_id` 自动绑定当前活动眼动任务，`task_group_id` 保存为 `null`。

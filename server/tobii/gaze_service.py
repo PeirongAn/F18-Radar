@@ -72,6 +72,9 @@ ANALYSIS_AOI_IDS = {
     "TrustStatePanel",
     "SHOOT",
     "Title",
+    "AIConfidence",
+    "HistoricalResultRecord",
+    "AIFlightTrajectory",
 }
 
 # 写入队列中的事件类型标识

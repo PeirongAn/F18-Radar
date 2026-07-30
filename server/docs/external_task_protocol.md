@@ -98,9 +98,26 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 }
 ```
 
+兼容不能发送 `sub_start` 的客户端：当 `task_start` 消息只包含
+`TaskName`、`ID`、`Action`，且不包含 `Gender`、`DefaultControlMode`、
+`AIAutonomyLeve`、`TaskMode`、`Difficulty`、`TaskNumber` 等整体任务字段时，
+服务端会将其归一化为 `sub_start`：
+
+```json
+{
+  "TaskName": "平台任务",
+  "ID": "12345",
+  "Action": "task_start"
+}
+```
+
+简短 `task_start` 只能在完整整体 `task_start` 已建立任务组后使用；如果当前
+没有对应的活跃任务组，服务端返回 `status: "ignored"` 和
+`event_type: "need_overall_config"`，不会创建无归属的子任务。
+
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| Action | string | 是 | 固定 `"sub_start"` |
+| Action | string | 是 | 推荐 `"sub_start"`；兼容简短 `"task_start"` |
 | TaskName | string | 是 | 需与 task_start 时一致 |
 | ID | string | 是 | 需与 task_start 时一致 |
 
@@ -123,8 +140,8 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 ```
 
 上例表示当前活动的是第 2 个子任务。当前实现中，完整 `task_start` 已经启动
-第 1 个子任务；若客户端紧接着发送 `sub_start`，服务端会将其识别为重复启动，
-并返回当前活动子任务，不会再次生成 ID：
+第 1 个子任务；若客户端紧接着发送 `sub_start` 或简短 `task_start`，服务端
+会将其识别为重复启动，并返回当前活动子任务，不会再次生成 ID：
 
 ```json
 {
@@ -461,14 +478,14 @@ ACK：
   |                                   |  启动 task_id=42, sub_task_seq=1
   |<-- ack (group=42, task=42, seq=1)-|
   |                                   |
-  |-- sub_start ---------------------->|  第1个子任务已活动，不重复生成
+  |-- sub_start / 简短 task_start ---->|  第1个子任务已活动，不重复生成
   |<-- ack (group=42, task=42, seq=1)-|
   |                                   |
   |-- sub_end (带 result) ----------->|  结束 task_id=42
   |                                   |  预启动 task_id=43, seq=2
   |<-- ack (task=42, next_task=43) ---|
   |                                   |
-  |-- sub_start ---------------------->|  第2个子任务已活动，不重复生成
+  |-- sub_start / 简短 task_start ---->|  第2个子任务已活动，不重复生成
   |<-- ack (group=42, task=43, seq=2)-|
   |                                   |
   |-- sub_end (带 result) ----------->|  结束 task_id=43 + 记录结果
@@ -485,14 +502,14 @@ ACK：
   |                                   |  启动 task_id=84, sub_task_seq=1
   |<-- ack (group=84, task=84, seq=1)-|
   |                                   |
-  |-- sub_start ---------------------->|  第1个子任务已活动，不重复生成
+  |-- sub_start / 简短 task_start ---->|  第1个子任务已活动，不重复生成
   |<-- ack (group=84, task=84, seq=1)-|
   |                                   |
   |-- sub_end (带 result) ----------->|  结束 task_id=84
   |                                   |  预启动 task_id=85, seq=2
   |<-- ack (task=84, next_task=85) ---|
   |                                   |
-  |-- sub_start ---------------------->|  第2个子任务已活动，不重复生成
+  |-- sub_start / 简短 task_start ---->|  第2个子任务已活动，不重复生成
   |<-- ack (group=84, task=85, seq=2)-|
   |                                   |
   |-- sub_end (带 result) ----------->|  结束 task_id=85 + 记录开火结果

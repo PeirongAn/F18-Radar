@@ -15,8 +15,10 @@ from network.netlog import (
     log_ws_connect,
     log_ws_disconnect,
     log_ws_message,
+    log_ws_send,
     now_ms,
     remote_from_websocket,
+    should_log_ws_message,
 )
 # 延迟导入 message_handler 以避免循环导入
 
@@ -209,6 +211,22 @@ class WebSocketServer:
         """记录收到的 WebSocket 请求摘要到统一日志。"""
         endpoint = self.client_sessions.get(client_id, {}).get("_endpoint", f"ws://{self.host}:{self.port}")
         log_ws_message(self.logger, client_id, endpoint, message, message_data)
+
+    async def _send_platform_task_reply(self, websocket, client_id: str, reply: dict) -> bool:
+        success = await self.send_message(websocket, reply)
+        endpoint = self.client_sessions.get(client_id, {}).get(
+            "_endpoint",
+            f"ws://{self.host}:{self.port}",
+        )
+        log_ws_send(
+            self.logger,
+            client_id,
+            endpoint,
+            reply,
+            success=success,
+            error=None if success else "websocket send returned false",
+        )
+        return success
     
     async def handle_client(self, websocket) -> None:
         """处理单个客户端连接"""
@@ -229,9 +247,7 @@ class WebSocketServer:
                 try:
                     # 等待消息，但设置超时以保持连接活跃
                     message = await asyncio.wait_for(websocket.recv(), timeout=60)
-                    self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
-                    self.logger.debug(f"接收到消息: {message[:50]}..." if len(message) > 50 else message)
-                    
+
                     # 解析消息
                     try:
                         message_data = json.loads(message)
@@ -239,11 +255,24 @@ class WebSocketServer:
                         self._log_ws_request(client_id, message, None)
                         self.logger.error(f"无效的JSON消息: {message}")
                         continue
-                    
-                    self._log_ws_request(client_id, message, message_data)
 
                     # 检查是否为操纵杆相关消息
                     message_type = message_data.get('type', '')
+                    if should_log_ws_message(message_data):
+                        self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
+                        self.logger.debug(
+                            f"接收到消息: {message[:50]}..."
+                            if len(message) > 50 else message
+                        )
+                        self._log_ws_request(client_id, message, message_data)
+
+                    if message_type == 'ue_ping':
+                        self.client_sessions.setdefault(client_id, {})['client_role'] = 'ue'
+                        await self.send_message(websocket, {
+                            'type': 'ue_pong',
+                            'timestamp': int(time.time() * 1000),
+                        })
+                        continue
 
                     is_platform_packet = (
                         message_type == 'platform_task' or
@@ -261,7 +290,7 @@ class WebSocketServer:
                             physio_svc=self._physio_svc,
                             external_collectors=self._external_collectors,
                         ):
-                            await self.send_message(websocket, reply)
+                            await self._send_platform_task_reply(websocket, client_id, reply)
                         continue
 
                     if message_type == 'platform_task_result':
@@ -272,10 +301,28 @@ class WebSocketServer:
                             physio_svc=self._physio_svc,
                             external_collectors=self._external_collectors,
                         ):
-                            await self.send_message(websocket, reply)
+                            await self._send_platform_task_reply(websocket, client_id, reply)
                         continue
 
                     # tobii_hand：更新眼动注意力区域（等价于 POST /tobii/hand）
+                    if message_type in {'external_pose_record', 'external_pose_data'}:
+                        from network.external_pose_storage import handle_external_pose_record
+                        reply = await asyncio.to_thread(
+                            handle_external_pose_record,
+                            message_data,
+                        )
+                        await self._send_platform_task_reply(websocket, client_id, reply)
+                        continue
+
+                    if message_type == 'external_behavior_record':
+                        from network.external_behavior_storage import handle_external_behavior_record
+                        reply = await asyncio.to_thread(
+                            handle_external_behavior_record,
+                            message_data,
+                        )
+                        await self._send_platform_task_reply(websocket, client_id, reply)
+                        continue
+
                     if message_type == 'tobii_hand':
                         reply = await self._handle_tobii_hand(message_data)
                         await self.send_message(websocket, reply)

@@ -8,12 +8,31 @@ SUMMARY_KEYS = (
     "type",
     "TaskName",
     "task_id",
+    "task_group_id",
+    "overall_task_id",
     "ID",
     "user_id",
     "userId",
     "taskType",
+    "task_type",
     "task_category",
     "category",
+    "status",
+    "event_type",
+    "sub_task_seq",
+    "expected_subtasks",
+    "completed_subtasks",
+    "task_status",
+    "next_subtask_task_id",
+    "ok",
+    "client_event_id",
+    "behavior_record_id",
+    "behavior_type",
+    "client_snapshot_id",
+    "pose_snapshot_id",
+    "resolved_task_id",
+    "pose_record_count",
+    "duplicate",
     "box_visible",
     "name",
     "run_id",
@@ -22,6 +41,7 @@ SUMMARY_KEYS = (
 
 INTERFACE_PREFIXES = ("/api/", "/tobii/", "/physio/")
 NOISY_GET_PATHS = {"/tobii/gaze_point", "/tobii/gaze_data"}
+NOISY_WS_TYPES = {"ue_ping"}
 
 
 def request_id() -> str:
@@ -56,6 +76,12 @@ def should_log_http(path: str, method: str) -> bool:
     if method.upper() == "GET" and path in NOISY_GET_PATHS:
         return False
     return path.startswith(INTERFACE_PREFIXES)
+
+
+def should_log_ws_message(message_data: Any) -> bool:
+    if not isinstance(message_data, dict):
+        return True
+    return message_data.get("type") not in NOISY_WS_TYPES
 
 
 def payload_summary(payload: Any) -> Dict[str, Any]:
@@ -181,6 +207,9 @@ def log_ws_message(
     message: Any,
     message_data: Any = None,
 ) -> None:
+    if not should_log_ws_message(message_data):
+        return
+
     if isinstance(message, str):
         message_bytes = len(message.encode("utf-8"))
     elif isinstance(message, bytes):
@@ -202,3 +231,32 @@ def log_ws_message(
         fields["type"] = "invalid_json"
 
     logger.info("NET WS %s", format_fields(fields))
+
+
+def log_ws_send(
+    logger,
+    client_id: str,
+    endpoint: str,
+    message_data: Any,
+    *,
+    success: bool,
+    error: Optional[str] = None,
+) -> None:
+    fields = {
+        "event": "send" if success else "send_failed",
+        "id": client_id,
+        "endpoint": endpoint,
+    }
+    if isinstance(message_data, dict):
+        summary = payload_summary(message_data)
+        fields["type"] = summary.pop("type", "unknown")
+        fields.update(summary)
+    else:
+        fields["type"] = "unknown"
+    if error:
+        fields["reason"] = error
+
+    if success:
+        logger.info("NET WS %s", format_fields(fields))
+    else:
+        logger.error("NET WS %s", format_fields(fields))

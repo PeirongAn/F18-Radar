@@ -21,9 +21,11 @@ from network.netlog import (
     log_ws_connect,
     log_ws_disconnect,
     log_ws_message,
+    log_ws_send,
     now_ms,
     remote_from_request,
     should_log_http,
+    should_log_ws_message,
 )
 
 class HTTPServer:
@@ -223,6 +225,21 @@ class HTTPServer:
     def _log_ws_request(self, client_id: str, message: str, message_data=None) -> None:
         """记录收到的 WebSocket 请求摘要到统一日志。"""
         log_ws_message(self.logger, client_id, "/ws", message, message_data)
+
+    async def _send_platform_task_reply(self, ws, client_id: str, reply: dict) -> None:
+        try:
+            await ws.send_str(json.dumps(reply, ensure_ascii=False))
+        except Exception as exc:
+            log_ws_send(
+                self.logger,
+                client_id,
+                "/ws",
+                reply,
+                success=False,
+                error=str(exc),
+            )
+            raise
+        log_ws_send(self.logger, client_id, "/ws", reply, success=True)
     
     async def websocket_handler(self, request):
         """处理WebSocket连接"""
@@ -266,12 +283,6 @@ class HTTPServer:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     message = msg.data
-                    self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
-                    self.logger.debug(f"接收到WebSocket消息")
-
-                    
-
-
                   # 检查是否为操纵杆相关消息
                     try:
                         message_data = json.loads(message)
@@ -280,7 +291,10 @@ class HTTPServer:
                         message_data = None
                         message_type = ''
 
-                    self._log_ws_request(client_id, message, message_data)
+                    if should_log_ws_message(message_data):
+                        self.logger.info("RAW WebSocket message client=%s: %s", client_id, message)
+                        self.logger.debug("接收到WebSocket消息")
+                        self._log_ws_request(client_id, message, message_data)
 
                     # UE has an application-level heartbeat too.  Reply on
                     # the same connection rather than via the broadcast path,
@@ -335,7 +349,7 @@ class HTTPServer:
                             physio_svc=self._physio_svc,
                             external_collectors=self._external_collectors,
                         ):
-                            await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                            await self._send_platform_task_reply(ws, client_id, reply)
                         continue
 
                     if message_type == 'platform_task_result':
@@ -346,7 +360,25 @@ class HTTPServer:
                             physio_svc=self._physio_svc,
                             external_collectors=self._external_collectors,
                         ):
-                            await ws.send_str(json.dumps(reply, ensure_ascii=False))
+                            await self._send_platform_task_reply(ws, client_id, reply)
+                        continue
+
+                    if message_type in {'external_pose_record', 'external_pose_data'}:
+                        from network.external_pose_storage import handle_external_pose_record
+                        reply = await asyncio.to_thread(
+                            handle_external_pose_record,
+                            message_data,
+                        )
+                        await self._send_platform_task_reply(ws, client_id, reply)
+                        continue
+
+                    if message_type == 'external_behavior_record':
+                        from network.external_behavior_storage import handle_external_behavior_record
+                        reply = await asyncio.to_thread(
+                            handle_external_behavior_record,
+                            message_data,
+                        )
+                        await self._send_platform_task_reply(ws, client_id, reply)
                         continue
 
                     if message_type == 'questionnaire_submitted':
