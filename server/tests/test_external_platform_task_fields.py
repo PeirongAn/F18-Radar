@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 logging.raiseExceptions = False
 
 from network import platform_task_bridge as bridge
+from core.message_handler import MessageHandler
 from tobii.gaze_service import GazeService
 
 
@@ -259,6 +260,79 @@ def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):
     config["current_level"] = "L2"
 
     assert bridge._normalize_current_level("0", config) == "L2"
+
+
+def test_default_control_mode_two_is_pure_ai(monkeypatch):
+    setup_bridge(monkeypatch)
+    message = radar_overlay("PureAIUser")
+    message["DefaultControlMode"] = "2"
+
+    _, normalized = bridge._normalize_platform_task_fields(message)
+    overlay = bridge._build_overlay(normalized, bridge.config_manager.get_config())
+
+    assert normalized["control_mode"] == "2"
+    assert normalized["include_ai"] is True
+    assert normalized["manual_control_disabled"] is True
+    assert normalized["pure_ai"] is True
+    assert overlay["is_ai_active"] is True
+    assert overlay["control_mode"] == "2"
+    assert overlay["manual_control_disabled"] is True
+
+
+def test_control_mode_two_uses_an_independent_progress_key(monkeypatch):
+    setup_bridge(monkeypatch)
+    user_id = "SameUser"
+
+    mode_one = radar_overlay(user_id)
+    mode_one["DefaultControlMode"] = "1"
+    bridge.apply_platform_task_message(mode_one)
+    mode_one_key = bridge.get_progress_key_for_task(user_id, "RADAR_TARGETING")
+
+    mode_two = radar_overlay(user_id)
+    mode_two["DefaultControlMode"] = "2"
+    bridge.apply_platform_task_message(mode_two)
+    mode_two_key = bridge.get_progress_key_for_task(user_id, "RADAR_TARGETING")
+
+    assert mode_one_key == "RADAR_TARGETING::1-L1-medium"
+    assert mode_two_key == "RADAR_TARGETING::2-L1-medium"
+    assert mode_two_key != mode_one_key
+
+
+def test_existing_control_modes_keep_their_previous_semantics():
+    assert bridge._normalize_control_mode("0") == "0"
+    assert bridge._task_mode_to_include_ai("0") is False
+    assert bridge._normalize_control_mode("1") == "1"
+    assert bridge._task_mode_to_include_ai("1") is True
+
+
+def test_pure_ai_session_rejects_manual_task_operation_but_allows_confirmation():
+    session_state = {"manual_control_disabled": True}
+
+    rejected = MessageHandler._manual_operation_rejection(
+        "target_selected", "manual", session_state
+    )
+    allowed = MessageHandler._manual_operation_rejection(
+        "target_selected", "AI", session_state
+    )
+    manual_completion = MessageHandler._manual_operation_rejection(
+        "task_result_confirmed", "manual", session_state
+    )
+    ai_completion = MessageHandler._manual_operation_rejection(
+        "task_result_confirmed", "AI", session_state
+    )
+    manual_reset = MessageHandler._manual_operation_rejection(
+        "ResetSA", "manual", session_state
+    )
+    confirmed_reset = MessageHandler._manual_operation_rejection(
+        "ResetSA", "confirmation", session_state
+    )
+
+    assert rejected and rejected[0]["reason"] == "pure_ai_mode"
+    assert allowed is None
+    assert manual_completion is None
+    assert ai_completion is None
+    assert manual_reset and manual_reset[0]["reason"] == "pure_ai_mode"
+    assert confirmed_reset is None
 
 
 def overall_start(task_number="3"):

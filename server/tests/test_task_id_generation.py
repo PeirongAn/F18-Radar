@@ -2,9 +2,11 @@ import os
 import sys
 import sqlite3
 import json
+import logging
 from contextlib import contextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+logging.raiseExceptions = False
 
 from managers import task_manager
 from managers.database_manager import DatabaseManager
@@ -29,6 +31,9 @@ class FakeDb:
 
 
 class DummyLogger:
+    def debug(self, *args, **kwargs):
+        pass
+
     def info(self, *args, **kwargs):
         pass
 
@@ -91,6 +96,178 @@ def test_task_setting_key_includes_trust_state():
     assert under_key != over_key
     assert under_key[-1] == "under_trust"
     assert over_key[-1] == "over_trust"
+
+
+def test_task_setting_key_includes_control_mode():
+    manager = object.__new__(DatabaseManager)
+    scenario = {
+        "difficulty_name": "low",
+        "repetition_info": {"current": 1},
+        "is_ai_active": True,
+        "ai_level_name": "L2",
+        "audio_enabled": True,
+    }
+
+    mode_one_key = DatabaseManager.build_task_setting_key(
+        manager,
+        {**scenario, "control_mode": "1"},
+        "user-a",
+        "AI",
+        "RADAR_TARGETING",
+        "normal",
+    )
+    mode_two_key = DatabaseManager.build_task_setting_key(
+        manager,
+        {**scenario, "control_mode": "2"},
+        "user-a",
+        "AI",
+        "RADAR_TARGETING",
+        "normal",
+    )
+
+    assert mode_one_key != mode_two_key
+    assert mode_one_key[3] == "1"
+    assert mode_two_key[3] == "2"
+
+
+def test_task_setting_lookup_does_not_reuse_mode_one_for_mode_two(tmp_path):
+    db_path = tmp_path / "task-setting-control-mode.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO task_settings (
+                task_id, user_id, task_type, event_owner, control_mode,
+                repetition_count, is_ai_active, difficulty_config,
+                audio_enabled, ai_level_name, difficulty_name, trust_state
+            ) VALUES (101, 'user-a', 'RADAR_TARGETING', 'AI', '1', 1, 1, '{}', 1, 'L2', 'low', 'normal')
+            """
+        )
+        conn.commit()
+
+    base_scenario = {
+        "difficulty_name": "low",
+        "difficulty_config": {},
+        "repetition_info": {"current": 1},
+        "is_ai_active": True,
+        "ai_level_name": "L2",
+        "audio_enabled": True,
+    }
+
+    assert manager.find_existing_task_setting_id(
+        {**base_scenario, "control_mode": "1"},
+        "user-a",
+        "AI",
+        "RADAR_TARGETING",
+        "normal",
+    ) == 101
+    assert manager.find_existing_task_setting_id(
+        {**base_scenario, "control_mode": "2"},
+        "user-a",
+        "AI",
+        "RADAR_TARGETING",
+        "normal",
+    ) is None
+
+
+def test_task_settings_migration_backfills_legacy_ai_as_mode_one(tmp_path):
+    db_path = tmp_path / "legacy-task-settings.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE task_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL UNIQUE,
+                user_id TEXT,
+                task_type TEXT,
+                event_owner TEXT,
+                execution_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                repetition_count INTEGER NOT NULL,
+                is_ai_active BOOLEAN NOT NULL,
+                ai_level_config TEXT,
+                difficulty_config TEXT NOT NULL,
+                audio_enabled BOOLEAN NOT NULL,
+                ai_level_name TEXT,
+                difficulty_name TEXT NOT NULL,
+                trust_state TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO task_settings (
+                task_id, user_id, task_type, event_owner, repetition_count,
+                is_ai_active, difficulty_config, audio_enabled,
+                ai_level_name, difficulty_name, trust_state
+            ) VALUES (201, 'legacy-user', 'RADAR_TARGETING', 'AI', 1, 1, '{}', 1, 'L1', 'low', '')
+            """
+        )
+        conn.commit()
+
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+
+    with manager.get_connection() as conn:
+        control_mode = conn.execute(
+            "SELECT control_mode FROM task_settings WHERE task_id = 201"
+        ).fetchone()[0]
+
+    assert control_mode == "1"
+
+
+def test_formal_progress_isolated_between_control_modes(tmp_path, monkeypatch):
+    db_path = tmp_path / "control-mode-progress.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    monkeypatch.setattr(task_manager, "db_manager", manager)
+    config = {
+        "current_level": "L1",
+        "levels": [{"level": "L1", "name": "L1"}],
+        "game_settings": {
+            "practice_repetitions": 1,
+            "max_repetitions": 3,
+            "current_difficulty": "low",
+            "difficulty_levels": {
+                "low": {"name": "low", "threat_count": 1, "target_count": 1}
+            },
+            "audio_enabled": True,
+        },
+    }
+    user_id = "formal-control-mode-user"
+    mode_one_key = "RADAR_TARGETING::1-L1-low"
+    mode_two_key = "RADAR_TARGETING::2-L1-low"
+
+    mode_one = task_manager.TaskScenarioManager(
+        config,
+        user_id,
+        "RADAR_TARGETING",
+        is_practice=False,
+        is_ai_active_request=True,
+        progress_key=mode_one_key,
+    )
+    mode_one_scenario = mode_one.get_next_task_parameters(True)
+    mode_one.repetition_counter = 2
+    mode_one_scenario["repetition_info"]["current"] = 2
+    mode_one._save_to_db()
+
+    mode_two = task_manager.TaskScenarioManager(
+        config,
+        user_id,
+        "RADAR_TARGETING",
+        is_practice=False,
+        is_ai_active_request=True,
+        progress_key=mode_two_key,
+    )
+    mode_two_scenario = mode_two.get_next_task_parameters(True)
+
+    assert mode_two_scenario["repetition_info"]["current"] == 1
+    with manager.get_connection() as conn:
+        progress_rows = conn.execute(
+            "SELECT task_type, ai_repetition_counter FROM user_progress WHERE user_id = ? ORDER BY task_type",
+            (user_id,),
+        ).fetchall()
+    assert progress_rows == [(mode_one_key, 2), (mode_two_key, 1)]
 
 
 def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):

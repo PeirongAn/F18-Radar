@@ -335,7 +335,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 计算校准后的摇杆位置
   const getCalibratedJoystickPos = React.useCallback(() => {
-    if (!joystickEnabled || !mainPos) {
+    if (!joystickEnabled || agentStore.isManualControlDisabled || !mainPos) {
       return { x: 0, y: 0 };
     }
     
@@ -354,7 +354,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       return lockedTdcPosition;
     }
     
-    if (!joystickEnabled) {
+    if (!joystickEnabled || agentStore.isManualControlDisabled) {
       console.log('[TDC计算] 摇杆未启用，使用原始位置:', tdcPosition);
       return tdcPosition; // 摇杆未启用时使用原始位置
     }
@@ -382,7 +382,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 副轴离散增量控制天线高度（边沿检测：0→+1 升1格，0→-1 降1格，回0不动）
   React.useEffect(() => {
-    if (!joystickEnabled || subY === undefined || lockedAntennaElevation !== null) {
+    if (!joystickEnabled || agentStore.isManualControlDisabled || subY === undefined || lockedAntennaElevation !== null) {
       previousSubYRef.current = subY ?? 0;
       return;
     }
@@ -603,6 +603,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   // 处理按下Enter键时的TDC和目标选择逻辑
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (agentStore.isManualControlDisabled) return;
     if (e.key === 'Escape' && onTargetSelect) {
       // 处理Escape键，解锁目标
       console.log('RadarDisplay - Escape键被按下，解锁目标');
@@ -660,7 +661,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions, joystickEnabled, calculatedTdcPosition]);
 
-  const finishMissionAndAdvance = useCallback(() => {
+  const finishMissionAndAdvance = useCallback((eventOwner: 'AI' | 'manual' = 'manual') => {
     if (onClearMessages) {
       onClearMessages();
     }
@@ -684,8 +685,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       task_type: 'RADAR_TARGETING',
       task_id: getCurrentRadarTaskId(),
       timestamp: Date.now(),
-      // Result confirmation is always a human action, even in an AI-assisted task.
-      event_owner: 'manual',
+      event_owner: eventOwner,
     });
 
     if (hasReachedRadarTaskTotal) {
@@ -720,7 +720,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
-    if (button1 && !previousButton1Ref.current && joystickEnabled && !showMissionConfirm) {
+    if (button1 && !previousButton1Ref.current && joystickEnabled && !agentStore.isManualControlDisabled && !showMissionConfirm) {
       console.log('[RadarDisplay] Button1按下，直接触发目标锁定（Enter）');
       const syntheticEvent = new KeyboardEvent('keydown', { key: 'Enter' });
       handleKeyDown(syntheticEvent);
@@ -892,7 +892,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 处理button2(IFF)（上升沿检测，直接调用handleIffButtonClick）
   // 弹窗显示时优先触发确认，否则触发IFF
   React.useEffect(() => {
-    if (button2 && !previousButton2Ref.current && joystickEnabled && !suppressJoystickActions) {
+    if (button2 && !previousButton2Ref.current && joystickEnabled && !agentStore.isManualControlDisabled && !suppressJoystickActions) {
       if (showMissionConfirm) {
         console.log('[RadarDisplay] Button2按下，弹窗显示中，触发确认');
         handleConfirmYes();

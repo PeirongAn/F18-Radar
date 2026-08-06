@@ -1,6 +1,16 @@
 import { makeAutoObservable, runInAction, computed } from "mobx";
 import { TrustCalibrationConfig } from "../types/trustCalibration";
 
+export type ControlMode = '0' | '1' | '2';
+
+export const normalizeControlMode = (value: unknown, includeAI?: boolean): ControlMode => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === '0' || normalized === 'false' || normalized === 'manual') return '0';
+  if (normalized === '2' || normalized === 'pure_ai' || normalized === 'pure-ai' || normalized === 'ai_only' || normalized === 'ai-only') return '2';
+  if (normalized !== '') return '1';
+  return includeAI ? '1' : '0';
+};
+
 // 定义 agent_level.json 中每个配置对象的接口
 export interface AgentLevelConfig {
   level: string;
@@ -25,6 +35,8 @@ export interface ServerAIParameterRecommendation {
 class AgentStore {
   // --- AI 激活状态 ---
   isAIActive: boolean = false; // 由服务器初始化
+  // 0=人工，1=AI（允许人工参与），2=纯AI（禁止人工操作）
+  controlMode: ControlMode = '0';
 
   // --- AI 等级与配置 ---
   aiConfigs: AgentLevelConfig[] = []; // 由服务器初始化
@@ -61,6 +73,14 @@ class AgentStore {
     return config || (this.aiConfigs.length > 0 ? this.aiConfigs[0] : null); 
   }
 
+  get isManualControlDisabled(): boolean {
+    return this.controlMode === '2';
+  }
+
+  get requiresHumanConfirmation(): boolean {
+    return this.controlMode === '2';
+  }
+
   // --- Actions ---
 
   // 新增：由服务器消息来初始化或重置状态
@@ -70,9 +90,17 @@ class AgentStore {
     ai_configs: AgentLevelConfig[];
     audio_enabled: boolean; 
     trust_calibration?: Partial<TrustCalibrationConfig>;
+    control_mode?: unknown;
+    manual_control_disabled?: boolean;
+    platform_task?: { normalized?: { control_mode?: unknown; default_control_mode?: unknown } };
   }) => {
     runInAction(() => {
-      this.isAIActive = data.is_ai_active;
+      const serverMode = data.control_mode
+        ?? data.platform_task?.normalized?.control_mode
+        ?? data.platform_task?.normalized?.default_control_mode
+        ?? (data.manual_control_disabled ? '2' : undefined);
+      this.controlMode = normalizeControlMode(serverMode, data.is_ai_active);
+      this.isAIActive = this.controlMode !== '0';
       this.currentAILevel = data.ai_level;
       this.aiConfigs = data.ai_configs;
       this.audioEnabled = data.audio_enabled;
@@ -83,12 +111,22 @@ class AgentStore {
   }
 
   toggleAIActive = () => {
+    if (this.isManualControlDisabled) {
+      console.warn('[AgentStore] Pure AI mode blocks manual takeover.');
+      return;
+    }
     this.isAIActive = !this.isAIActive;
+    this.controlMode = this.isAIActive ? '1' : '0';
     console.log(`AI Active state: ${this.isAIActive}`);
   }
 
   setAIActive = (isActive: boolean) => {
+    if (this.isManualControlDisabled && !isActive) {
+      console.warn('[AgentStore] Pure AI mode blocks manual takeover.');
+      return;
+    }
     this.isAIActive = isActive;
+    this.controlMode = isActive ? (this.controlMode === '2' ? '2' : '1') : '0';
     // 自动同步 currentOperationOwner
     this.currentOperationOwner = isActive ? 'AI' : 'manual';
     console.log(`AI Active state set to: ${this.isAIActive}, operation owner: ${this.currentOperationOwner}`);
@@ -96,6 +134,16 @@ class AgentStore {
       // 当AI被禁用时，可以考虑是否要重置AI等级和推荐
       this.serverAIRecommendation = null;
     }
+  }
+
+  setControlMode = (mode: unknown, includeAI?: boolean) => {
+    this.controlMode = normalizeControlMode(mode, includeAI);
+    this.isAIActive = this.controlMode !== '0';
+    this.currentOperationOwner = this.isAIActive ? 'AI' : 'manual';
+    if (!this.isAIActive) {
+      this.serverAIRecommendation = null;
+    }
+    console.log(`[AgentStore] Control mode set to ${this.controlMode}. AI Active: ${this.isAIActive}, manual disabled: ${this.isManualControlDisabled}`);
   }
 
   setTrustCalibrationConfig = (config: Partial<TrustCalibrationConfig> | null) => {

@@ -47,12 +47,16 @@ WebSocket，与现有 radar/SA 任务共用同一连接。
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | Action | string | 是 | 固定 `"task_start"` |
-| DefaultControlMode | string | 否 | "0"=人工, "1"=AI |
+| DefaultControlMode | string | 否 | `"0"`=人工，`"1"`=AI（允许人工参与），`"2"`=纯 AI（AI 执行任务操作，人工不能介入操作；每轮结束后仍需人工确认才进入下一轮） |
 | AIAutonomyLeve | string | 否 | AI 自主等级：所有任务统一为 `1`=高（内部 L3）、`2`=中（内部 L2）、`3`=低（内部 L1） |
 | TaskMode | string | 否 | "0"=练习, "1"=正式 |
 | Difficulty | string | 否 | 难度等级：所有任务统一为 `1`=低、`2`=中、`3`=高 |
 | TaskNumber | string | 否 | 任务编号/轮数 |
 | aiprecision | string | 否 | AI 精度 |
+
+任务进度按 `任务类型 + DefaultControlMode + AIAutonomyLeve + Difficulty` 独立计算。因而同一用户在其他字段相同时，从 `DefaultControlMode="1"` 切换到 `"2"` 属于新设置，任务次数从第 1 次重新开始，不继承模式 1 的完成次数。
+
+传感器任务在纯 AI 模式下采用人工验收门控：AI 锁定目标后保持当前任务，不自动弹出评估框；人工点击 IFF 后显示任务评估，再点击确认才提交本轮结果并进入下一轮。
 
 **响应：**
 

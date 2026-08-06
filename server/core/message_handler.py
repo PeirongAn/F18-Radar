@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, db_manager, TaskScenarioManager, generate_task_id, target_manager, threat_manager, get_logger
 from network.platform_task_bridge import (
+    _normalize_control_mode,
     peek_pending_include_ai,
     consume_pending_for_task_start,
     get_active_overlay_for_task,
@@ -426,6 +427,50 @@ class MessageHandler:
             except (TypeError, ValueError):
                 continue
         return None
+
+    @staticmethod
+    def _set_control_mode_session(
+        session_state: Dict[str, Any],
+        message: Dict[str, Any],
+        normalized_meta: Dict[str, Any],
+    ) -> Tuple[str, bool]:
+        raw_mode = normalized_meta.get('control_mode')
+        if raw_mode is None:
+            raw_mode = normalized_meta.get('default_control_mode')
+        if raw_mode is None:
+            raw_mode = message.get('control_mode')
+        if raw_mode is None:
+            raw_mode = '2' if message.get('manual_control_disabled') else ('1' if message.get('include_ai') or message.get('is_ai_active') else '0')
+        control_mode = _normalize_control_mode(raw_mode)
+        manual_control_disabled = control_mode == '2'
+        session_state['control_mode'] = control_mode
+        session_state['manual_control_disabled'] = manual_control_disabled
+        return control_mode, manual_control_disabled
+
+    @staticmethod
+    def _manual_operation_rejection(
+        message_type: str,
+        client_event_owner: str,
+        session_state: Dict[str, Any],
+    ) -> Optional[List[Dict[str, Any]]]:
+        controlled_messages = {
+            'settings_update', 'antenna_adjusted', 'target_selected', 'threat_clicked',
+            'record_operation', 'record_bulk_operations', 'ResetSA',
+            'user_take_control',
+        }
+        if not session_state.get('manual_control_disabled') or message_type not in controlled_messages:
+            return None
+        if message_type == 'ResetSA' and str(client_event_owner or '').strip().lower() == 'confirmation':
+            return None
+        if str(client_event_owner or '').strip().lower() == 'ai':
+            return None
+        return [{
+            'type': 'operation_rejected',
+            'status': 'forbidden',
+            'reason': 'pure_ai_mode',
+            'operation_type': message_type,
+            'message': 'Manual operation is disabled while DefaultControlMode is 2.',
+        }]
     
     async def handle_client_message(self, message_str: str, session_state: Dict[str, Any], 
                                   websocket=None) -> Union[List[Dict[str, Any]], Tuple[Dict[str, Any], bool], bool]:
@@ -439,6 +484,11 @@ class MessageHandler:
             
             message_type = message.get('type', '')
             client_event_owner = message.get('event_owner', '')
+
+            rejection = self._manual_operation_rejection(message_type, client_event_owner, session_state)
+            if rejection is not None:
+                self.logger.warning('Rejected manual operation in pure AI mode: type=%s', message_type)
+                return rejection
 
             # 路由到具体的处理方法
             if message_type == 'task_start':
@@ -525,6 +575,7 @@ class MessageHandler:
             overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
         normalized_meta = (platform_meta or {}).get("normalized") or {}
+        control_mode, manual_control_disabled = self._set_control_mode_session(session_state, message, normalized_meta)
         if overlay and task_manager.current_scenario:
             task_manager.apply_platform_overlay(overlay)
         
@@ -673,6 +724,8 @@ class MessageHandler:
             "timestamp": time.time() * 1000,
             "settings": {"range": 80, "scanAngle": 30},
             "is_ai_active": current_scenario['is_ai_active'],
+            "control_mode": control_mode,
+            "manual_control_disabled": manual_control_disabled,
             "ai_level": current_scenario.get('ai_level_name'),
             "ai_configs": config_manager.get_ai_levels(),
             "audio_enabled": current_scenario['audio_enabled'],
@@ -1139,6 +1192,7 @@ class MessageHandler:
             overlay_source = "active"
             overlay, platform_meta = get_active_overlay_for_task(user_id, task_type)
         normalized_meta = (platform_meta or {}).get("normalized") or {}
+        control_mode, manual_control_disabled = self._set_control_mode_session(session_state, message, normalized_meta)
         if overlay and task_manager.current_scenario:
             task_manager.apply_platform_overlay(overlay)
         
@@ -1310,6 +1364,10 @@ class MessageHandler:
                 audio_enabled=current_scenario['audio_enabled'],
                 trust_calibration=config_manager.get_trust_calibration_config()
             )
+            enhanced_response['control_mode'] = control_mode
+            enhanced_response['manual_control_disabled'] = manual_control_disabled
+            if platform_meta:
+                enhanced_response['platform_task'] = platform_meta
             
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用
@@ -1364,11 +1422,15 @@ class MessageHandler:
                 'repetition_info': current_scenario['repetition_info'],
                 'task_type': task_type,
                 'is_ai_active': current_scenario['is_ai_active'],
+                'control_mode': control_mode,
+                'manual_control_disabled': manual_control_disabled,
                 'ai_level': current_scenario.get('ai_level_name'),
                 'ai_configs': config_manager.get_ai_levels(),
                 'audio_enabled': current_scenario['audio_enabled'],
                 'trust_calibration': config_manager.get_trust_calibration_config()
             }
+            if platform_meta:
+                response['platform_task'] = platform_meta
 
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用

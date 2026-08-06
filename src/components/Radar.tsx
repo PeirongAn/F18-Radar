@@ -314,12 +314,19 @@ const Radar: React.FC<RadarProps> = (({
 
     // Re-initialize the system for the next mission
     console.log('Starting next mission...');
-    initializeSystem(radarStore.userId, agentStore.isAIActive, radarStore.isPractice, radarStore.taskNumber);
+    initializeSystem(
+      radarStore.userId,
+      agentStore.isAIActive,
+      radarStore.isPractice,
+      radarStore.taskNumber,
+      agentStore.controlMode,
+    );
     
   }, [width, height, onTargetSelect, radarStore, clearAndResetView, initializeSystem, clearInitSettings, resetAntennaAdjustment]);
 
   // Handler for TDC key actions from useKeyboardControl
   const handleTdcKeyAction = useCallback((action: 'up' | 'down' | 'left' | 'right') => {
+    if (agentStore.isManualControlDisabled) return;
     // DO NOT resume data stream here. It's managed by the readiness state.
     const moveStep = 5; // Define TDC move step here or pass from somewhere
     setTdcPosition(prev => {
@@ -343,7 +350,7 @@ const Radar: React.FC<RadarProps> = (({
   }, [width, height, radarConfig.padding, radarConfig.mainBoxWidth, radarConfig.mainBoxHeight, framePositions]); // resumeDataStream removed from dependencies
 
   // 条件性启用键盘控制（当没有外部控制活跃时启用）
-  const enableKeyboardControl = !hasRecentWebSocketControl && !externalTDC.isTDCControlActive(2000);
+  const enableKeyboardControl = !agentStore.isManualControlDisabled && !hasRecentWebSocketControl && !externalTDC.isTDCControlActive(2000);
 
   const hybridTdcKeyAction = useCallback((action: 'up' | 'down' | 'left' | 'right') => {
     if (enableKeyboardControl) {
@@ -846,7 +853,12 @@ const Radar: React.FC<RadarProps> = (({
 
   // 添加目标选择处理函数
   const handleTargetSelection = (params: TargetSelectParams) => {
+    if (agentStore.isManualControlDisabled && params.event_owner !== 'AI') {
+      console.warn('[Radar] Manual target selection ignored in pure AI mode.');
+      return;
+    }
     const isBlockedAiLock =
+      params.event_owner !== 'AI' &&
       sensorTrustDecision.enabled &&
       sensorTrustDecision.blockedOneClick &&
       !sensorTrustDecision.manualReviewRequested &&
@@ -877,6 +889,10 @@ const Radar: React.FC<RadarProps> = (({
 
   // 处理按钮点击事件
   const handleButtonClick = (position: string, buttonIndex: number) => {
+    if (agentStore.isManualControlDisabled) {
+      console.warn('[Radar] Manual button operation ignored in pure AI mode.');
+      return;
+    }
     console.log(`${position} button ${buttonIndex} clicked`);
     
     // DO NOT resume data stream here.
@@ -1014,6 +1030,7 @@ const Radar: React.FC<RadarProps> = (({
 
   // 处理TDC位置设置
   const handleTDCPositionSet = (offset: number) => {
+    if (agentStore.isManualControlDisabled) return;
     // DO NOT resume data stream here. It's managed by the readiness state.
     // 更新扫描模式，设置新的中心偏移量
     setScanMode({
@@ -1025,6 +1042,10 @@ const Radar: React.FC<RadarProps> = (({
 
   // 添加接管按钮处理函数
   const handleTakeControl = useCallback(() => {
+    if (agentStore.isManualControlDisabled) {
+      console.warn('[Radar] Manual takeover is disabled in pure AI mode.');
+      return;
+    }
     console.log('用户手动接管控制');
     // 禁用AI控制
     agentStore.setAIActive(!agentStore.isAIActive);
@@ -1044,6 +1065,7 @@ const Radar: React.FC<RadarProps> = (({
 
   // 处理摇杆button2触发的扫描角度切换功能
   const handleJoystickScanAngleSwitch = useCallback(() => {
+    if (agentStore.isManualControlDisabled) return;
     console.log('[摇杆控制] 执行扫描角度切换功能');
     
     // 左侧第3个按钮循环切换扫描角度，在15度、30度和60度之间切换
@@ -1110,6 +1132,10 @@ const Radar: React.FC<RadarProps> = (({
 
   // 优化系统重置功能 - 保留用户信息
   const handleReset = () => {
+    if (agentStore.isManualControlDisabled) {
+      console.warn('[Radar] Manual reset ignored in pure AI mode.');
+      return;
+    }
     console.log('====== 系统重置 (模拟页面重新载入) ======');
     
     // 保存用户名和AI选项到sessionStorage，模拟页面重新载入但保留用户信息

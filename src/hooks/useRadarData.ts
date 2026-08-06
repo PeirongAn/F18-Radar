@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { UnknownTargetData } from '../components/UnknownTarget';
 import radarStore from '../stores/RadarStore';
-import agentStore, { ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
+import agentStore, { type ControlMode, normalizeControlMode, ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
 import audioManager from '../managers/AudioManager'; // 引入新的全局音频管理器
 import { normalizeTimestampMs } from '../utils/trustCalibration';
 
@@ -592,6 +592,7 @@ const useRadarData = (
     userId: string;
     taskType: 'radar' | 'sa';
     includeAI: boolean;
+    controlMode: ControlMode;
     isPractice: boolean;
     useJoystick: boolean;
     taskNumber?: number;
@@ -970,14 +971,17 @@ const useRadarData = (
   }, []);
   
   // 初始化系统，请求任务ID和初始设置
-  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => {
+  const initializeSystem = useCallback((userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number, controlMode?: ControlMode) => {
     radarStore.setUserId(userId); // 修正：设置到 radarStore
-    agentStore.setAIActive(includeAI);
+    const normalizedControlMode = normalizeControlMode(controlMode, includeAI);
+    agentStore.setControlMode(normalizedControlMode, includeAI);
 
     const initMessage = {
       type: 'task_start',
       user_id: userId,
       include_ai: includeAI,
+      control_mode: normalizedControlMode,
+      manual_control_disabled: normalizedControlMode === '2',
       is_practice: isPractice, // 添加练习模式参数
       task_number: taskNumber,
       repetition_total_override: taskNumber,
@@ -1087,7 +1091,7 @@ const useRadarData = (
     }
 
     // 处理操纵杆数据消息
-    if (message.type === 'joystick_data' && joystickEnabled) {
+    if (message.type === 'joystick_data' && joystickEnabled && !agentStore.isManualControlDisabled) {
       console.log('[useRadarData] Processing joystick_data:', message.data);
       
       if (message.data) {
@@ -1133,6 +1137,10 @@ const useRadarData = (
         const autonomyLevel = String(
           message.normalized.current_level ?? message.normalized.ai_autonomy_level ?? ''
         ) || undefined;
+        const controlMode = normalizeControlMode(
+          message.normalized.control_mode ?? message.normalized.default_control_mode,
+          Boolean(message.normalized.include_ai),
+        );
         const requestId = `platform:${[
           message.normalized.platform_task_id ?? message.raw.ID ?? userId,
           message.normalized.web_task_kind ?? message.normalized.task_type ?? taskType,
@@ -1144,6 +1152,7 @@ const useRadarData = (
           userId,
           taskType,
           includeAI: Boolean(message.normalized.include_ai),
+          controlMode,
           isPractice: Boolean(message.normalized.is_practice),
           useJoystick: message.useJoystick !== false,
           taskNumber,
@@ -1483,8 +1492,15 @@ const useRadarData = (
     }
   }, [radarData?.externalTargets]);
   
-  const sendResetSA = useCallback(() => {
-    sendMessage({ type: 'ResetSA', timestamp: Date.now(), is_practice: radarStore.isPractice, is_ai_active: agentStore.isAIActive });
+  const sendResetSA = useCallback((eventOwner: 'AI' | 'manual' | 'confirmation' = 'manual') => {
+    sendMessage({
+      type: 'ResetSA',
+      timestamp: Date.now(),
+      is_practice: radarStore.isPractice,
+      is_ai_active: agentStore.isAIActive,
+      control_mode: agentStore.controlMode,
+      event_owner: eventOwner,
+    });
   }, [sendMessage]);
 
   // 操纵杆按钮状态的前一状态引用

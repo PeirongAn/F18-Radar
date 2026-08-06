@@ -119,3 +119,38 @@ def test_tasknumber_does_not_shrink_below_current_progress():
     assert manager.max_repetitions == 5
     assert manager.current_scenario["repetition_info"]["total"] == 5
     assert manager.current_scenario["max_repetitions_override"] == 5
+
+
+def test_new_control_mode_starts_from_first_repetition():
+    user_id = "control_mode_progress_user"
+    mode_one_key = "RADAR_TARGETING::1-L0-low"
+    mode_two_key = "RADAR_TARGETING::2-L0-low"
+    TaskScenarioManager.clear_practice_cache(user_id)
+
+    mode_one = TaskScenarioManager(
+        make_config(),
+        user_id,
+        "RADAR_TARGETING",
+        is_practice=True,
+        is_ai_active_request=True,
+        progress_key=mode_one_key,
+    )
+    first_mode_one = mode_one.get_next_task_parameters(True)
+    assert first_mode_one["repetition_info"]["current"] == 1
+    mode_one.repetition_counter = 3
+    mode_one.current_scenario["repetition_info"]["current"] = 3
+    mode_one._save_to_memory()
+
+    mode_two = TaskScenarioManager(
+        make_config(),
+        user_id,
+        "RADAR_TARGETING",
+        is_practice=True,
+        is_ai_active_request=True,
+        progress_key=mode_two_key,
+    )
+    first_mode_two = mode_two.get_next_task_parameters(True)
+
+    assert mode_two.repetition_counter == 1
+    assert first_mode_two["repetition_info"]["current"] == 1
+    assert mode_one._practice_memory_cache[(user_id, mode_one_key)]["repetition_counter"] == 3

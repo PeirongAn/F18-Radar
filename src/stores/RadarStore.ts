@@ -1,11 +1,11 @@
 import { makeAutoObservable, observable, action } from 'mobx';
-import agentStore from './AgentStore'; // Restore the import for agentStore
+import agentStore, { type ControlMode } from './AgentStore'; // Restore the import for agentStore
 
 
 interface RadarDataHook {
   sendMessage: (message: any) => void;
   settingsValidationTimestamp: number | null;
-  initializeSystem: (userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => void;
+  initializeSystem: (userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number, controlMode?: ControlMode) => void;
   validateSettings: (settings: { range: number, scanAngle: number }) => boolean;
   submitSettings: (settings: { range: number, scanAngle: number }) => void;
   resetTargets: () => void;
@@ -84,13 +84,13 @@ export class RadarStore {
   
   // 系统启动
 
-  startSystem = (userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number) => {
+  startSystem = (userId: string, includeAI: boolean, isPractice: boolean, taskNumber?: number, controlMode?: ControlMode) => {
     // This action should ONLY update the state.
     this.userId = userId;
     this.isStarted = true;
     this.isPractice = isPractice; // 保存 isPractice 状态
     this.taskNumber = taskNumber;
-    agentStore.setAIActive(includeAI); // It's okay to call another store's action here
+    agentStore.setControlMode(controlMode, includeAI); // It's okay to call another store's action here
     console.log(`[RadarStore] System state started. UserID: ${this.userId}, AI: ${includeAI}, Practice: ${isPractice}, TaskNumber: ${taskNumber ?? 'default'}`);
   }
   

@@ -9,7 +9,7 @@ import GazeCalibrationPage from './components/GazeCalibrationPage';
 import useRadarData, { globalWS } from './hooks/useRadarData';
 import { observer } from 'mobx-react-lite';
 import { useStore } from './stores/StoreProvider';
-import agentStore from './stores/AgentStore';
+import agentStore, { type ControlMode, normalizeControlMode } from './stores/AgentStore';
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
 import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
@@ -813,6 +813,10 @@ const MainApp: React.FC = observer(() => {
 
   /* ── 目标选择 ─────────────────────────────────── */
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
+    if (agentStore.isManualControlDisabled && params.event_owner !== 'AI') {
+      console.warn('[App] Manual target operation ignored in pure AI mode.');
+      return;
+    }
     if (params.event_owner === 'AI') {
       aiSelectedTargetRef.current = params.targetId;
     }
@@ -856,11 +860,14 @@ const MainApp: React.FC = observer(() => {
     taskNumber?: number,
     autonomyLevel?: string,
     groupStartRequestId?: string,
+    requestedControlMode?: ControlMode,
   ) => {
+    const controlMode = normalizeControlMode(requestedControlMode, withAI);
+    const includeAIForMode = controlMode !== '0';
     const startKey = [
       id,
       taskType,
-      withAI ? 'ai' : 'manual',
+      controlMode,
       practice ? 'practice' : 'formal',
       taskNumber ?? 'default',
       autonomyLevel ?? 'default-level',
@@ -898,11 +905,15 @@ const MainApp: React.FC = observer(() => {
     }
 
     setUserId(id);
-    setIncludeAI(withAI);
-    setUseJoystick(_useJoystick);
+    setIncludeAI(includeAIForMode);
+    setUseJoystick(_useJoystick && controlMode !== '2');
     joystickInitedRef.current = false;
-    radarStore.startSystem(id, withAI, practice, taskNumber);
-    agentStore.setAIActive(withAI);
+    radarStore.setLockedTargetId(undefined);
+    radarStore.setLockScreenX(undefined);
+    aiSelectedTargetRef.current = undefined;
+    window.dispatchEvent(new Event('resetIFF'));
+    radarStore.startSystem(id, includeAIForMode, practice, taskNumber, controlMode);
+    agentStore.setControlMode(controlMode, includeAIForMode);
     setIsStarted(true);
 
     if (taskType === 'sa') {
@@ -912,13 +923,15 @@ const MainApp: React.FC = observer(() => {
         timestamp: Date.now(),
         user_id: id,
         is_practice: practice,
-        is_ai_active: withAI,
+        is_ai_active: includeAIForMode,
+        control_mode: controlMode,
+        manual_control_disabled: controlMode === '2',
         task_number: taskNumber,
         repetition_total_override: taskNumber,
       });
     } else {
       setActiveDisplay('radar');
-      initializeSystem(id, withAI, practice, taskNumber);
+      initializeSystem(id, includeAIForMode, practice, taskNumber, controlMode);
     }
   }, [sendMessage, initializeSystem, radarStore]);
 
@@ -942,6 +955,7 @@ const MainApp: React.FC = observer(() => {
       platformAutoStart.taskNumber,
       platformAutoStart.autonomyLevel,
       platformAutoStart.requestId,
+      platformAutoStart.controlMode,
     );
   }, [platformAutoStart, handleStartApp]);
 
@@ -977,13 +991,13 @@ const MainApp: React.FC = observer(() => {
   }, [getTaskGroupId, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── SA 重置 ──────────────────────────────────── */
-  const handleSATaskReset = useCallback(() => {
+  const handleSATaskReset = useCallback((eventOwner: 'AI' | 'manual' | 'confirmation' = 'manual') => {
     setEmergencyReceived(false);
     setLastEmergencyType('');
     setLastEmergencyTime(undefined);
     lastEmergencyIdRef.current = '';
     clearMessages();
-    sendResetSA();
+    sendResetSA(eventOwner);
   }, [sendResetSA, clearMessages]);
 
   /* ── 威胁列表 ─────────────────────────────────── */
@@ -1117,6 +1131,20 @@ const MainApp: React.FC = observer(() => {
                 transition: 'all 0.4s',
               }}>
                 {activeDisplay === 'sa' ? '威胁排序任务' : '传感器任务'}
+              </span>
+            </div>
+          </>
+        )}
+
+        {isStarted && agentStore.isManualControlDisabled && (
+          <>
+            <Sep />
+            <div style={{ padding: '0 14px' }}>
+              <span style={{
+                fontSize: '13px', letterSpacing: '0.1em', padding: '4px 10px',
+                border: '1px solid #9a5d12', background: 'rgba(154,93,18,0.16)', color: '#ffc45c',
+              }}>
+                纯 AI · AI完成后点击 IFF 确认
               </span>
             </div>
           </>
@@ -1361,10 +1389,10 @@ const MainApp: React.FC = observer(() => {
           </div>
 
           {activeDisplay === 'sa' && saTrustDecision?.enabled && saTrustDecision.controlLevel !== 'none' && (
-            <SidebarThreatTrustPanel decision={saTrustDecision} actions={saTrustActions} />
+            <SidebarThreatTrustPanel decision={saTrustDecision} actions={agentStore.isManualControlDisabled ? null : saTrustActions} />
           )}
           {activeDisplay === 'radar' && sensorTrustDecision?.enabled && sensorTrustDecision.controlLevel !== 'none' && (
-            <SidebarSensorTrustPanel decision={sensorTrustDecision} actions={sensorTrustActions} />
+            <SidebarSensorTrustPanel decision={sensorTrustDecision} actions={agentStore.isManualControlDisabled ? null : sensorTrustActions} />
           )}
 
 

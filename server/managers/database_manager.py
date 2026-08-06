@@ -194,10 +194,14 @@ class DatabaseManager:
     ) -> Tuple[Any, ...]:
         """生成任务设置去重键。"""
         difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
+        control_mode = scenario.get('control_mode')
+        if control_mode is None or str(control_mode).strip() == '':
+            control_mode = '1' if scenario.get('is_ai_active') else '0'
         return (
             user_id,
             task_type,
             event_owner,
+            str(control_mode).strip(),
             scenario['repetition_info']['current'],
             int(bool(scenario['is_ai_active'])),
             scenario.get('ai_level_name') or '',
@@ -225,6 +229,7 @@ class DatabaseManager:
                     WHERE user_id = ?
                       AND IFNULL(task_type, '') = ?
                       AND IFNULL(event_owner, '') = ?
+                      AND COALESCE(NULLIF(control_mode, ''), CASE WHEN is_ai_active = 1 THEN '1' ELSE '0' END) = ?
                       AND repetition_count = ?
                       AND is_ai_active = ?
                       AND IFNULL(ai_level_name, '') = ?
@@ -281,6 +286,7 @@ class DatabaseManager:
                         WHERE user_id = ?
                           AND IFNULL(task_type, '') = ?
                           AND IFNULL(event_owner, '') = ?
+                          AND COALESCE(NULLIF(control_mode, ''), CASE WHEN is_ai_active = 1 THEN '1' ELSE '0' END) = ?
                           AND repetition_count = ?
                           AND is_ai_active = ?
                           AND IFNULL(ai_level_name, '') = ?
@@ -304,9 +310,9 @@ class DatabaseManager:
 
         sql = """
             INSERT INTO task_settings (
-                task_id, task_type, user_id, event_owner, repetition_count, is_ai_active, 
+                task_id, task_type, user_id, event_owner, control_mode, repetition_count, is_ai_active,
                 ai_level_config, difficulty_config, audio_enabled, ai_level_name, difficulty_name, trust_state
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         difficulty_name = self.normalize_difficulty_value(scenario['difficulty_name'])
         params = (
@@ -314,6 +320,7 @@ class DatabaseManager:
             task_type,
             user_id,
             event_owner,
+            task_setting_key[3],
             scenario['repetition_info']['current'],
             scenario['is_ai_active'],
             json.dumps(scenario.get('ai_level_config')),
@@ -748,6 +755,7 @@ class DatabaseManager:
                     user_id TEXT,
                     task_type TEXT,
                     event_owner TEXT,
+                    control_mode TEXT,
                     execution_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     repetition_count INTEGER NOT NULL,
                     is_ai_active BOOLEAN NOT NULL,
@@ -779,6 +787,18 @@ class DatabaseManager:
         if 'event_owner' not in columns:
             self.logger.info("正在添加 event_owner 列...")
             cursor.execute("ALTER TABLE task_settings ADD COLUMN event_owner TEXT")
+            conn.commit()
+
+        if 'control_mode' not in columns:
+            self.logger.info("Adding control_mode column to task_settings...")
+            cursor.execute("ALTER TABLE task_settings ADD COLUMN control_mode TEXT")
+            cursor.execute(
+                """
+                UPDATE task_settings
+                SET control_mode = CASE WHEN is_ai_active = 1 THEN '1' ELSE '0' END
+                WHERE control_mode IS NULL OR control_mode = ''
+                """
+            )
             conn.commit()
 
         if 'task_type' not in columns:

@@ -119,13 +119,20 @@ def _normalize_difficulty_key(
     return default if default in diff_levels else (keys[0] if keys else "low")
 
 
-def _task_mode_to_include_ai(raw: Any) -> bool:
+def _normalize_control_mode(raw: Any) -> str:
+    """Normalize DefaultControlMode while preserving the legacy permissive fallback."""
     if raw is None or str(raw).strip() == "":
-        return True
+        return "1"
     s = str(raw).strip().lower()
     if s in ("0", "false", "manual"):
-        return False
-    return True
+        return "0"
+    if s in ("2", "pure_ai", "pure-ai", "ai_only", "ai-only"):
+        return "2"
+    return "1"
+
+
+def _task_mode_to_include_ai(raw: Any) -> bool:
+    return _normalize_control_mode(raw) != "0"
 
 
 def _infer_web_task_kind(message: Dict[str, Any]) -> str:
@@ -207,6 +214,8 @@ def _build_overlay(normalized: Dict[str, Any], config: Dict[str, Any]) -> Dict[s
         "difficulty_display": normalized.get("difficulty_display") or dkey,
         "difficulty_config": diff_conf,
         "is_ai_active": normalized["include_ai"],
+        "control_mode": normalized["control_mode"],
+        "manual_control_disabled": normalized["manual_control_disabled"],
         "autonomy_level": level_name,
         "ai_level_name": level_name,
         "ai_level_config": ai_conf,
@@ -240,8 +249,10 @@ def _normalize_platform_task_fields(
         message.get("Difficulty"),
         difficulty_key,
     )
-    # DefaultControlMode: "0"=人工(manual), "1"=AI
-    include_ai = _task_mode_to_include_ai(message.get("DefaultControlMode"))
+    # DefaultControlMode: "0"=人工, "1"=AI（允许人工参与）, "2"=纯AI（禁止人工操作）
+    control_mode = _normalize_control_mode(message.get("DefaultControlMode"))
+    include_ai = control_mode != "0"
+    manual_control_disabled = control_mode == "2"
     # TaskMode: "0"=练习(practice), "1"=正式(formal)
     is_practice = str(message.get("TaskMode", "1")).strip() == "0"
 
@@ -269,7 +280,10 @@ def _normalize_platform_task_fields(
         "task_type": task_type,
         "task_category": task_category,
         "gender": message.get("Gender"),
-        "default_control_mode": message.get("DefaultControlMode"),
+        # Keep the normalized value as the semantic task dimension. The raw
+        # message is already preserved separately in ``raw``.
+        "default_control_mode": control_mode,
+        "control_mode": control_mode,
         "ai_autonomy_level": current_level,
         "current_level": current_level,
         "task_mode": message.get("TaskMode"),
@@ -279,6 +293,8 @@ def _normalize_platform_task_fields(
         "task_number": message.get("TaskNumber"),
         "ai_precision": message.get("aiprecision"),
         "include_ai": include_ai,
+        "manual_control_disabled": manual_control_disabled,
+        "pure_ai": manual_control_disabled,
         "is_practice": is_practice,
         "repetition_total_override": rep_override,
         "web_task_kind": web_task_kind,
@@ -319,6 +335,8 @@ def _persist_web_init_config(raw: Dict[str, Any], normalized: Dict[str, Any]) ->
         config.update({
             "userId": str(normalized.get("platform_task_id") or ""),
             "includeAI": bool(normalized.get("include_ai")),
+            "controlMode": normalized.get("control_mode", "1"),
+            "manualControlDisabled": bool(normalized.get("manual_control_disabled")),
             "taskType": web_kind,
             "isPractice": bool(normalized.get("is_practice")),
             "taskNumber": task_number,
@@ -547,9 +565,13 @@ def get_progress_key_for_task(user_id: str, task_type: str) -> str:
         )
         return task_type
 
-    mode = normalized.get("default_control_mode")
+    mode = normalized.get("control_mode")
     if mode is None or str(mode).strip() == "":
-        mode = "1" if normalized.get("include_ai") else "0"
+        raw_mode = normalized.get("default_control_mode")
+        if (raw_mode is None or str(raw_mode).strip() == "") and normalized.get("include_ai") is False:
+            mode = "0"
+        else:
+            mode = _normalize_control_mode(raw_mode)
     level = normalized.get("current_level") or normalized.get("ai_autonomy_level") or "L1"
     difficulty = normalized.get("difficulty_key") or ""
     combo = f"{str(mode).strip()}-{str(level).strip()}-{str(difficulty).strip()}"

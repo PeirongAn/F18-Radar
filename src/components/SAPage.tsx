@@ -21,7 +21,7 @@ interface SAPageProps {
   onAddMessage?: (type: MessageType, content: string) => void;
   onClearMessages?: () => void;
   userId?: string;
-  onResetSA?: () => void;
+  onResetSA?: (eventOwner?: 'AI' | 'manual' | 'confirmation') => void;
   onResetTargets?: () => void;
   onThreatListUpdate?: (threatData: ThreatListData) => void; // 新增：威胁数据回调
   onShowDetailedInfoChange?: (showDetailed: boolean) => void; // 新增：详细信息显示状态回调
@@ -668,13 +668,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const rightButtons = Array(5).fill(0).map((_, i) => `R${i + 1}`);
   
   // 按钮点击处理函数
-  const handleButtonClick = (label: string) => {
+  const handleButtonClick = (label: string, eventOwner: 'AI' | 'manual' = 'manual') => {
+    if (agentStore.isManualControlDisabled && eventOwner !== 'AI') {
+      console.warn('[SAPage] Manual button operation ignored in pure AI mode.');
+      return;
+    }
     console.log(`按钮 ${label} 被点击`);
     
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
-      if (threatTrustDecision.blockedOneClick) {
+      if (eventOwner !== 'AI' && threatTrustDecision.blockedOneClick) {
         onAddMessage?.('warning', `信任调控：${threatTrustDecision.primaryMessage}，请先查看证据或人工确认`);
         return;
       }
@@ -701,7 +705,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           task_id: currentTaskId,
           timestamp: Date.now(),
           user_id: userId,
-          event_owner: 'manual',
+          event_owner: eventOwner,
           extra: buildThreatTrustLogExtra(),
         });
         recordResultConfirmed(userSelection?.threat?.id);
@@ -879,7 +883,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const prevButton2Ref = React.useRef(false);
 
   // 处理重置SA
-  const handleResetSA = useCallback(() => {
+  const handleResetSA = useCallback((eventOwner: 'AI' | 'manual' | 'confirmation' = 'manual') => {
+    if (agentStore.isManualControlDisabled && eventOwner === 'manual') {
+      console.warn('[SAPage] Manual reset ignored in pure AI mode.');
+      return;
+    }
     console.log('====== SA系统重置 ======');
     
     // 核心修复：重置 MobX store 中的临机事件状态
@@ -906,7 +914,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 重置控制标志
     if (onResetSA) {
-      onResetSA();
+      onResetSA(eventOwner);
     }
     
     // 记录重置日志（在清空日志后重新记录）
@@ -1552,6 +1560,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 点击icon将其加入威胁列表首位但保持原优先级
   const handleThreatIconClick = useCallback((threat: any, eventOwner: string) => {
+    if (agentStore.isManualControlDisabled && eventOwner !== 'AI') {
+      console.warn('[SAPage] Manual threat selection ignored in pure AI mode.');
+      return;
+    }
     console.log('[AI Agent] handleThreatIconClick', threat, eventOwner)
     const highestPriorityThreat = getCurrentHighestPriorityThreat();
     const isClickedHighestPriority = highestPriorityThreat && (threat.id === highestPriorityThreat.id);
@@ -1645,6 +1657,17 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
   }, [getCurrentHighestPriorityThreat, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra]);
+
+  useEffect(() => {
+    if (!agentStore.requiresHumanConfirmation || !userSelection) return;
+    const taskKey = getCurrentSATaskKey();
+    if (taskKey && completedSATaskKeysRef.current.has(taskKey)) return;
+
+    console.log('[SAPage] AI operation completed; showing result and waiting for human confirmation.');
+    handleButtonClick('查看结果', 'AI');
+    // handleButtonClick reads the latest task state; the task-key guard prevents duplicates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userSelection, getCurrentSATaskKey]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -1826,7 +1849,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 摇杆 button1：选择光标附近最近的目标（弹窗期间屏蔽）
   React.useEffect(() => {
-    if (button1 && !prevButton1Ref.current && joystickEnabled && joystickCursorPos && !showTaskComplete) {
+    if (button1 && !prevButton1Ref.current && joystickEnabled && !agentStore.isManualControlDisabled && joystickCursorPos && !showTaskComplete) {
       console.log('[SAPage] Button1按下，查找光标附近目标');
 
       // 构建带位置的威胁列表（与渲染逻辑一致）
@@ -1891,7 +1914,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 摇杆 button2：弹窗期间触发确认，否则触发"查看结果"
   React.useEffect(() => {
-    if (button2 && !prevButton2Ref.current && joystickEnabled) {
+    if (button2 && !prevButton2Ref.current && joystickEnabled && !agentStore.isManualControlDisabled) {
       if (showTaskComplete) {
         console.log('[SAPage] Button2按下，确认任务评估弹窗');
         if (isCorrect === true || isCorrect === false) {
@@ -2222,7 +2245,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               <div key={label} className="relative">
                 <Button
                   label={label}
-                  onClick={idx === 1 ? (onResetSA || handleResetSA) : () => handleButtonClick(label)}
+                  onClick={idx === 1 ? () => {
+                    if (agentStore.isManualControlDisabled) return;
+                    if (onResetSA) onResetSA(); else handleResetSA();
+                  } : () => handleButtonClick(label)}
                 />
               
               </div>
@@ -2728,8 +2754,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   return;
                 }
                 // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
-                handleResetSA();
-              } : handleResetSA}
+                handleResetSA('confirmation');
+              } : () => {
+                handleResetSA('confirmation');
+              }}
               style={{
                 fontFamily: "'Share Tech Mono', monospace",
                 fontSize: '13px',

@@ -45,6 +45,7 @@ const AntennaElevationMarker: React.FC<AntennaElevationMarkerProps> = observer((
   const markerY = mapElevationToY(currentElevation, minY, maxY);
 
   const handleKeyAction = useCallback((action: 'up' | 'down' | 'left' | 'right') => {
+    if (agentStore.isManualControlDisabled) return;
     let newElevation = radarStore.currentAntennaElevation;
     if (action === 'up') { // 't' key
       newElevation = Math.min(3, radarStore.currentAntennaElevation + 1); // Max +3 degrees
