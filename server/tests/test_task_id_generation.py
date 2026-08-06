@@ -348,6 +348,62 @@ def test_html_questionnaire_resolves_completed_external_subtask_run(tmp_path):
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(questionnaire_responses)")}
     assert "task_id" not in columns
+    assert "control_mode" in columns
+
+
+def test_questionnaire_separates_manual_and_collaborative_task_groups(tmp_path):
+    db_path = tmp_path / "questionnaire-control-mode.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, difficulty, autonomy_level, control_mode,
+                is_ai_active, is_practice, config_json
+            ) VALUES (?, 'RADAR_TARGETING', 'u1', 'completed', 2, 2, 2,
+                      ?, ?, 'high', 'L2', ?, ?, 0, '{}')
+            """,
+            [
+                (201, 100, 200, '0', 0),
+                (202, 300, 400, '1', 1),
+            ],
+        )
+        conn.commit()
+
+    manager.record_questionnaire({
+        "userId": "u1",
+        "taskType": "RADAR_TARGETING",
+        "taskInfo": {
+            "difficulty": "high",
+            "autonomyLevel": "L2",
+            "controlMode": "0",
+        },
+        "answers": {"1": 4},
+    })
+    manager.record_questionnaire({
+        "userId": "u1",
+        "taskType": "RADAR_TARGETING",
+        "taskGroupId": 202,
+        "taskInfo": {
+            "difficulty": "high",
+            "autonomyLevel": "L2",
+            "controlMode": "1",
+        },
+        "answers": {"1": 5},
+    })
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT task_group_id, control_mode, is_ai_active
+            FROM questionnaire_responses
+            ORDER BY id
+            """
+        ).fetchall()
+    assert rows == [(201, '0', 0), (202, '1', 1)]
 
 
 def test_questionnaire_context_falls_back_from_stale_id_to_latest_completed_run(tmp_path):

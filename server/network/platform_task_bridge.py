@@ -1756,6 +1756,7 @@ def _handle_external_task(
                     raw_message_json=raw,
                     difficulty=normalized.get("difficulty_key") or normalized.get("difficulty_display"),
                     autonomy_level=normalized.get("current_level") or normalized.get("ai_autonomy_level"),
+                    control_mode=normalized.get("control_mode") or normalized.get("default_control_mode"),
                     is_ai_active=normalized.get("include_ai"),
                     is_practice=normalized.get("is_practice"),
                     progress_key=category,

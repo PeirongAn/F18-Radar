@@ -206,6 +206,7 @@ class MessageHandler:
                 raw_message_json=json.dumps(message or {}, ensure_ascii=False),
                 difficulty=difficulty,
                 autonomy_level=autonomy_level,
+                control_mode=current_scenario.get("control_mode"),
                 is_ai_active=current_scenario.get("is_ai_active"),
                 is_practice=getattr(task_manager, "is_practice", False),
                 progress_key=progress_key,
@@ -448,6 +449,19 @@ class MessageHandler:
         return control_mode, manual_control_disabled
 
     @staticmethod
+    def _apply_control_mode_to_scenario(
+        current_scenario: Dict[str, Any],
+        control_mode: str,
+        manual_control_disabled: bool,
+    ) -> None:
+        current_scenario['control_mode'] = control_mode
+        current_scenario['manual_control_disabled'] = manual_control_disabled
+        repetition_info = current_scenario.get('repetition_info') or {}
+        repetition_info['control_mode'] = control_mode
+        repetition_info['manual_control_disabled'] = manual_control_disabled
+        current_scenario['repetition_info'] = repetition_info
+
+    @staticmethod
     def _manual_operation_rejection(
         message_type: str,
         client_event_owner: str,
@@ -640,6 +654,7 @@ class MessageHandler:
         if repetition_override is not None:
             task_manager.apply_repetition_override(repetition_override, overwrite=True)
             current_scenario = task_manager.current_scenario
+        self._apply_control_mode_to_scenario(current_scenario, control_mode, manual_control_disabled)
         
         self.current_session[f'{task_type}_scenario'] = current_scenario
         trust_state = self._get_task_trust_state(task_type)
@@ -1258,6 +1273,7 @@ class MessageHandler:
         if repetition_override is not None:
             task_manager.apply_repetition_override(repetition_override, overwrite=True)
             current_scenario = task_manager.current_scenario
+        self._apply_control_mode_to_scenario(current_scenario, control_mode, manual_control_disabled)
 
         trust_state = self._get_task_trust_state(task_type)
         existing_task_id = db_manager.find_existing_task_setting_id(

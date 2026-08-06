@@ -133,6 +133,17 @@ def test_session_control_mode_uses_protocol_precedence(normalized, message, expe
     }
 
 
+def test_control_mode_is_copied_into_scenario_and_questionnaire_context():
+    scenario = {"repetition_info": {"current": 1, "total": 2}}
+
+    MessageHandler._apply_control_mode_to_scenario(scenario, "0", False)
+
+    assert scenario["control_mode"] == "0"
+    assert scenario["manual_control_disabled"] is False
+    assert scenario["repetition_info"]["control_mode"] == "0"
+    assert scenario["repetition_info"]["manual_control_disabled"] is False
+
+
 @pytest.mark.parametrize(
     "message_type",
     [

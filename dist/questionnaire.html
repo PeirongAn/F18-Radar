@@ -420,7 +420,9 @@ function getParams() {
   return {
     userId:       p.get('userId')       || '',
     taskType:     p.get('taskType')     || '',
-    taskId:       '',
+    taskId:       p.get('taskId')       || '',
+    taskGroupId:  p.get('taskGroupId')  || '',
+    controlMode:  p.get('controlMode')  || '',
     difficulty:   '',
     autonomyLevel: '',
     isPractice:   false,
@@ -522,13 +524,17 @@ function setSelectValue(id, value) {
 
 // The questionnaire display is owned by the completed server-side task run,
 // not by difficulty/autonomy values embedded in an externally opened URL.
-// taskId is preferred when available; the API falls back to the user's most
-// recent completed task of the requested type when it is absent or stale.
+// The API resolves display context from the user's task group. Questionnaire
+// storage itself prefers task_group_id and retains control mode as a separate dimension.
 async function loadAuthoritativeContext() {
-  const { userId, taskType } = contextData;
+  const { userId, taskType, taskGroupId, controlMode } = contextData;
   const query = new URLSearchParams();
   if (userId) query.set('userId', userId);
   if (taskType) query.set('taskType', taskType);
+  if (taskGroupId) query.set('taskGroupId', taskGroupId);
+  if (controlMode !== undefined && controlMode !== null && controlMode !== '') {
+    query.set('controlMode', controlMode);
+  }
   try {
     const response = await fetch(`/api/questionnaire/context?${query.toString()}`, {
       cache: 'no-store',
@@ -716,21 +722,22 @@ function handleSubmit() {
   const btn = document.getElementById('btnSubmit');
   btn.disabled = true;
 
-  const { userId, taskType, difficulty, autonomyLevel, isPractice, experimentNo, total } = contextData;
+  const { userId, taskType, taskGroupId, controlMode, difficulty, autonomyLevel, isPractice, experimentNo, total } = contextData;
   const taskId = contextData.taskId ?? contextData.task_id;
   const timestamp = Date.now();
 
   const payload = {
     type:               'questionnaire_submitted',
     taskType:           taskType || 'RADAR_TARGETING',
-    taskId:             taskId ? Number(taskId) || taskId : undefined,
     userId:             userId || '',
+    taskGroupId:        taskGroupId ? Number(taskGroupId) || taskGroupId : undefined,
     repetitionCurrent:  parseInt(experimentNo) || 0,
     repetitionTotal:    parseInt(total) || 0,
     answers:            { ...answers },
     taskInfo: {
       difficulty:  difficulty || null,
       autonomyLevel: autonomyLevel || null,
+      controlMode: controlMode === undefined || controlMode === null || controlMode === '' ? null : String(controlMode),
       isPractice:  !!isPractice,
     },
     timestamp,

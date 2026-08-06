@@ -17,6 +17,7 @@ export interface RepetitionInfo {
   total: number;
   difficulty?: string;
   is_ai_active?: boolean;
+  control_mode?: string;
   autonomy_level?: string;
   is_practice?: boolean;
   scenario_index?: number;
@@ -59,8 +60,10 @@ export interface QuestionnaireSubmitData {
   taskInfo: {
     difficulty?: string;
     autonomyLevel?: string;
+    controlMode?: string;
     isPractice?: boolean;
   };
+  taskGroupId?: number;
   timestamp: number;
 }
 
@@ -268,10 +271,12 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
         userId,
         repetitionCurrent: infoObj?.current ?? 0,
         repetitionTotal: infoObj?.total ?? 0,
+        taskGroupId: infoObj?.task_group_id,
         answers,
         taskInfo: {
           difficulty: infoObj?.difficulty,
           autonomyLevel: infoObj?.autonomy_level,
+          controlMode: infoObj?.control_mode,
           isPractice: infoObj?.is_practice,
         },
         timestamp: Date.now(),

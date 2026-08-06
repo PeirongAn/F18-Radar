@@ -13,6 +13,7 @@ import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils
 import type { ThreatListData } from './ThreatList';
 import { useThreatTrustCalibration } from '../hooks/useThreatTrustCalibration';
 import { ThreatTrustDecision } from '../types/trustCalibration';
+import { canUseSAControl, decideSAButton2Action } from '../utils/saResultReviewPolicy';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -254,6 +255,7 @@ const FAN_START_ANGLE = -132;
 const FAN_END_ANGLE = -48;
 const FAN_ANGLE_SPAN = FAN_END_ANGLE - FAN_START_ANGLE;
 const FAN_EDGE_COLOR = '#ffffff';
+const SA_AI_GAZE_FEEDBACK_ENABLED = false;
 const ATTACK_SOURCES = ['雷达', '友机', '装订'] as const;
 
 const degToRad = (angle: number) => (angle * Math.PI) / 180;
@@ -669,7 +671,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   
   // 按钮点击处理函数
   const handleButtonClick = (label: string, eventOwner: 'AI' | 'manual' = 'manual') => {
-    if (agentStore.isManualControlDisabled && eventOwner !== 'AI') {
+    if (!canUseSAControl({
+      manualControlDisabled: agentStore.isManualControlDisabled,
+      label,
+      eventOwner,
+    })) {
       console.warn('[SAPage] Manual button operation ignored in pure AI mode.');
       return;
     }
@@ -678,7 +684,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
-      if (eventOwner !== 'AI' && threatTrustDecision.blockedOneClick) {
+      if (eventOwner !== 'AI' && !agentStore.isManualControlDisabled && threatTrustDecision.blockedOneClick) {
         onAddMessage?.('warning', `信任调控：${threatTrustDecision.primaryMessage}，请先查看证据或人工确认`);
         return;
       }
@@ -1233,6 +1239,34 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     new Map(threatsWithScore.map((item, index) => [item.threat.id, index]))
   , [threatsWithScore]);
 
+  // 仅在威胁名称重复时添加编号，用于区分同名目标；编号与威胁排名无关。
+  const duplicateThreatLabelIndexMap = useMemo(() => {
+    const threats: Array<{ id: string; label?: string }> = useEnhancedProtocol && enhancedThreats.length > 0
+      ? enhancedThreats.filter(threat => !threat.is_missile)
+      : saThreats;
+    const labelCounts = new Map<string, number>();
+
+    threats.forEach(threat => {
+      const label = String(threat.label ?? '');
+      if (label) {
+        labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+      }
+    });
+
+    const nextIndexByLabel = new Map<string, number>();
+    const indexByThreatId = new Map<string, number>();
+    threats.forEach(threat => {
+      const label = String(threat.label ?? '');
+      if (!label || (labelCounts.get(label) ?? 0) < 2) return;
+
+      const index = nextIndexByLabel.get(label) ?? 0;
+      indexByThreatId.set(threat.id, index);
+      nextIndexByLabel.set(label, index + 1);
+    });
+
+    return indexByThreatId;
+  }, [enhancedThreats, saThreats, useEnhancedProtocol]);
+
   // 获取当前最高优先级威胁的函数
   const getCurrentHighestPriorityThreat = useCallback(() => {
     if (threatsWithScore.length === 0) {
@@ -1493,7 +1527,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   useEffect(() => {
     const handleSaAttentionEvent = (event: Event) => {
-      if (!agentStore.isAIActive || !aiSelectedThreatRef.current) return;
+      if (!SA_AI_GAZE_FEEDBACK_ENABLED || !agentStore.isAIActive || !aiSelectedThreatRef.current) return;
       const customEvent = event as CustomEvent<{ durationMs?: number }>;
       const durationMs = Number(customEvent?.detail?.durationMs) || 3000;
       triggerHighestThreatAttention(durationMs);
@@ -1914,25 +1948,30 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 摇杆 button2：弹窗期间触发确认，否则触发"查看结果"
   React.useEffect(() => {
-    if (button2 && !prevButton2Ref.current && joystickEnabled && !agentStore.isManualControlDisabled) {
-      if (showTaskComplete) {
-        console.log('[SAPage] Button2按下，确认任务评估弹窗');
-        if (isCorrect === true || isCorrect === false) {
-          setShowTaskComplete(false);
-          if (hasReachedSAOverallTotal || isSAAllCompleted) {
-            onResultConfirmed?.();
-            prevButton2Ref.current = button2;
-            return;
-          }
-          // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
-          handleResetSA();
-        } else {
-          handleResetSA();
+    const action = decideSAButton2Action({
+      button2,
+      previousButton2: prevButton2Ref.current,
+      joystickEnabled,
+      showTaskComplete,
+    });
+
+    if (action === 'confirm_result') {
+      console.log('[SAPage] Button2按下，确认任务评估弹窗');
+      if (isCorrect === true || isCorrect === false) {
+        setShowTaskComplete(false);
+        if (hasReachedSAOverallTotal || isSAAllCompleted) {
+          onResultConfirmed?.();
+          prevButton2Ref.current = button2;
+          return;
         }
+        // 推进 SA 任务次数：发 ResetSA 让服务端返回下一个 sa_task_updated。
+        handleResetSA('confirmation');
       } else {
-        console.log('[SAPage] Button2按下，触发查看结果');
-        handleButtonClick('查看结果');
+        handleResetSA('confirmation');
       }
+    } else if (action === 'view_result') {
+      console.log('[SAPage] Button2按下，触发查看结果');
+      handleButtonClick('查看结果');
     }
     prevButton2Ref.current = button2;
   }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, onResultConfirmed, hasReachedSAOverallTotal, isSAAllCompleted]);
@@ -2652,7 +2691,9 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                       <Text
                         x={position.x  - ICON_SIZE / 2 + ICON_SIZE + 5}
                         y={position.y  - ICON_SIZE / 2 + ICON_SIZE / 2 - 8}
-                        text={`${threat.label} [${threatIdToSortedIndexMap.get(threat.id)}]`}
+                        text={`${threat.label}${duplicateThreatLabelIndexMap.has(threat.id)
+                          ? ` [${duplicateThreatLabelIndexMap.get(threat.id)}]`
+                          : ''}`}
                         fontSize={14}
                         fill="#00ff00"
                         fontFamily="monospace"
