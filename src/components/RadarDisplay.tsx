@@ -14,6 +14,8 @@ import useRadarData from '../hooks/useRadarData';
 import agentStore from '../stores/AgentStore';
 import audioManager from '../managers/AudioManager';
 import { SensorTrustDecision } from '../types/trustCalibration';
+import { decideRadarConfirmation, decideRadarIffClick } from '../utils/radarConfirmationFlow';
+import { decideJoystickButton2Action } from '../utils/joystickInputPolicy';
 
 // 扫描控制参数类型
 export interface ScanControlParams {
@@ -662,61 +664,65 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions, joystickEnabled, calculatedTdcPosition]);
 
   const finishMissionAndAdvance = useCallback((eventOwner: 'AI' | 'manual' = 'manual') => {
-    if (onClearMessages) {
-      onClearMessages();
-    }
-
     const taskKey = getCurrentRadarTaskKey();
-    if (taskKey && completedRadarTaskKeysRef.current.has(taskKey)) {
-      setShowMissionConfirm(false);
-      setIffMode(false);
-      console.log('[RadarDisplay] IFF confirm ignored because current radar task was already completed:', taskKey);
-      if (hasReachedRadarTaskTotal) {
-        onTaskCompleted?.();
-      }
-      return;
-    }
-    if (taskKey) {
-      completedRadarTaskKeysRef.current.add(taskKey);
-    }
-
-    sendMessage?.({
-      type: 'task_result_confirmed',
-      task_type: 'RADAR_TARGETING',
-      task_id: getCurrentRadarTaskId(),
-      timestamp: Date.now(),
-      event_owner: eventOwner,
+    const decision = decideRadarConfirmation({
+      missionCanComplete,
+      alreadyHandled: isCurrentRadarTaskAlreadyHandled(),
+      hasReachedTaskTotal: hasReachedRadarTaskTotal,
+      canNavigateToSA: !!onNavigateToSA,
     });
 
-    if (hasReachedRadarTaskTotal) {
-      setShowMissionConfirm(false);
-      onTaskCompleted?.();
-      console.log('[RadarDisplay] Radar task total reached; showing completion notice.');
-      return;
-    }
-
-    if (onNavigateToSA) {
-      setShowMissionConfirm(false);
-      onNavigateToSA();
-    } else {
-      if (onResetForNextMission) {
-        onResetForNextMission();
-      }
-      setShowMissionConfirm(false);
-    }
-  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
-
-  // 处理确认弹窗的确认操作
-  const handleConfirmYes = useCallback(() => {
-    if (!missionCanComplete) {
+    if (decision.action === 'dismiss_invalid') {
       setShowMissionConfirm(false);
       setIffMode(false);
       console.log('[RadarDisplay] IFF误触确认，仅关闭提示框，继续当前任务');
       return;
     }
 
+    onClearMessages?.();
+
+    if (decision.action === 'ignore_duplicate') {
+      setShowMissionConfirm(false);
+      setIffMode(false);
+      console.log('[RadarDisplay] IFF confirm ignored because current radar task was already completed:', taskKey);
+      if (decision.notifyTaskCompleted) onTaskCompleted?.();
+      return;
+    }
+
+    if (decision.shouldMarkHandled && taskKey) {
+      completedRadarTaskKeysRef.current.add(taskKey);
+    }
+
+    if (decision.shouldSendResultConfirmed) {
+      sendMessage?.({
+        type: 'task_result_confirmed',
+        task_type: 'RADAR_TARGETING',
+        task_id: getCurrentRadarTaskId(),
+        timestamp: Date.now(),
+        event_owner: eventOwner,
+      });
+    }
+
+    if (decision.action === 'complete_task_group') {
+      setShowMissionConfirm(false);
+      onTaskCompleted?.();
+      console.log('[RadarDisplay] Radar task total reached; showing completion notice.');
+      return;
+    }
+
+    if (decision.action === 'navigate_to_sa') {
+      setShowMissionConfirm(false);
+      onNavigateToSA?.();
+    } else {
+      onResetForNextMission?.();
+      setShowMissionConfirm(false);
+    }
+  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, isCurrentRadarTaskAlreadyHandled, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
+
+  // 处理确认弹窗的确认操作
+  const handleConfirmYes = useCallback(() => {
     finishMissionAndAdvance();
-  }, [missionCanComplete, finishMissionAndAdvance]);
+  }, [finishMissionAndAdvance]);
 
   // 处理button1目标锁定（上升沿检测，直接调用handleKeyDown模拟Enter）
   React.useEffect(() => {
@@ -810,67 +816,50 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 处理IFF按钮点击，现在用于弹出确认框
   const handleIffButtonClick = () => {
-    if (isCurrentRadarTaskAlreadyHandled()) {
-      setShowMissionConfirm(false);
-      setMissionCanComplete(false);
-      setIffMode(false);
+    const decision = decideRadarIffClick({
+      alreadyHandled: isCurrentRadarTaskAlreadyHandled(),
+      hasLockedTarget: !!lockedTargetObject,
+      lockedTargetType: lockedTargetObject?.type,
+      currentIffMode: iffMode,
+      hasReachedTaskTotal: hasReachedRadarTaskTotal,
+    });
+
+    setShowMissionConfirm(decision.showMissionConfirm);
+    setMissionCanComplete(decision.missionCanComplete);
+    setMissionResultMessage(decision.missionResultMessage);
+    setIffMode(decision.nextIffMode);
+
+    if (decision.action === 'ignore_already_handled') {
       console.log('[RadarDisplay] IFF click ignored because current radar task is already completed.');
-      if (hasReachedRadarTaskTotal) {
-        onTaskCompleted?.();
-      }
+      if (decision.notifyTaskCompleted) onTaskCompleted?.();
       return;
     }
 
-    if (!lockedTargetObject) {
-      setShowMissionConfirm(false);
-      setMissionCanComplete(false);
-      setMissionResultMessage('');
-      setIffMode(false);
+    if (decision.action === 'ignore_without_locked_target' || !lockedTargetObject) {
       console.log('[RadarDisplay] IFF click ignored because no target is locked.');
       return;
     }
 
-    if (lockedTargetObject) {
-      const targetInfo = calculateTargetInfo(lockedTargetObject);
-      onIffTargetConfirmed?.(lockedTargetObject.id);
+    const targetInfo = calculateTargetInfo(lockedTargetObject);
+    onIffTargetConfirmed?.(lockedTargetObject.id);
       
-      // 添加目标详细信息到日志
-      if (onAddMessage) {
-        onAddMessage('info', '=== 目标识别结果详情 ===');
-        onAddMessage('info', `目标ID: ${lockedTargetObject.id}`);
-        onAddMessage('info', `目标类型: ${lockedTargetObject.type === 'army' ? '敌机' : '友机'}`);
-        onAddMessage('info', `距离: ${targetInfo.distance.toFixed(2)} 海里`);
-        onAddMessage('info', `屏幕坐标: (${lockedTargetObject.position.x.toFixed(1)}, ${lockedTargetObject.position.y.toFixed(1)})`);
-        if (lockedTargetObject.speed !== undefined) {
-          onAddMessage('info', `速度: ${lockedTargetObject.speed}`);
-        }
-        if (targetInfo.direction !== undefined) {
-          onAddMessage('info', `运动方向: ${targetInfo.direction.toFixed(1)}°`);
-        }
-        if (targetInfo.threatScore !== undefined) {
-          onAddMessage('info', `威胁评分: ${targetInfo.threatScore.toFixed(3)} (0°最小威胁，180°最大威胁)`);
-        }
-      
-        
+    // 添加目标详细信息到日志
+    if (onAddMessage) {
+      onAddMessage('info', '=== 目标识别结果详情 ===');
+      onAddMessage('info', `目标ID: ${lockedTargetObject.id}`);
+      onAddMessage('info', `目标类型: ${lockedTargetObject.type === 'army' ? '敌机' : '友机'}`);
+      onAddMessage('info', `距离: ${targetInfo.distance.toFixed(2)} 海里`);
+      onAddMessage('info', `屏幕坐标: (${lockedTargetObject.position.x.toFixed(1)}, ${lockedTargetObject.position.y.toFixed(1)})`);
+      if (lockedTargetObject.speed !== undefined) {
+        onAddMessage('info', `速度: ${lockedTargetObject.speed}`);
       }
-    
-      // 添加重复次数信息
-      const radarRepetitionInfo = repetitionInfos['RADAR_TARGETING'];
-      setShowMissionConfirm(true);
-      setMissionCanComplete(true);
-      
-      // 'army' is considered the correct type for this task (enemy)
-      if (lockedTargetObject.type === 'army') {
-        setMissionResultMessage('结果: 正确');
-      } else {
-        setMissionResultMessage('结果: 错误');
+      if (targetInfo.direction !== undefined) {
+        onAddMessage('info', `运动方向: ${targetInfo.direction.toFixed(1)}°`);
       }
-    } else {
-      setMissionResultMessage('结果: 未锁定目标');
-      setMissionCanComplete(false);
-      setShowMissionConfirm(true);
+      if (targetInfo.threatScore !== undefined) {
+        onAddMessage('info', `威胁评分: ${targetInfo.threatScore.toFixed(3)} (0°最小威胁，180°最大威胁)`);
+      }
     }
-    setIffMode(prev => !prev);
   };
 
   
@@ -892,14 +881,20 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   // 处理button2(IFF)（上升沿检测，直接调用handleIffButtonClick）
   // 弹窗显示时优先触发确认，否则触发IFF
   React.useEffect(() => {
-    if (button2 && !previousButton2Ref.current && joystickEnabled && !agentStore.isManualControlDisabled && !suppressJoystickActions) {
-      if (showMissionConfirm) {
-        console.log('[RadarDisplay] Button2按下，弹窗显示中，触发确认');
-        handleConfirmYes();
-      } else {
-        console.log('[RadarDisplay] Button2(IFF)按下，直接触发IFF');
-        handleIffButtonClick();
-      }
+    const action = decideJoystickButton2Action({
+      button2,
+      previousButton2: previousButton2Ref.current,
+      joystickEnabled,
+      suppressJoystickActions,
+      showMissionConfirm,
+    });
+
+    if (action === 'confirm_result') {
+      console.log('[RadarDisplay] Button2按下，弹窗显示中，触发确认');
+      handleConfirmYes();
+    } else if (action === 'open_iff') {
+      console.log('[RadarDisplay] Button2(IFF)按下，直接触发IFF');
+      handleIffButtonClick();
     }
     previousButton2Ref.current = button2;
   }, [button2, joystickEnabled, suppressJoystickActions, showMissionConfirm, handleConfirmYes]);

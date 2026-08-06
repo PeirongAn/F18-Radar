@@ -452,6 +452,7 @@ const MainApp: React.FC = observer(() => {
   const [useJoystick, setUseJoystick] = useState<boolean>(false);
   const currentUserIdRef = useRef<string>('');
   const joystickInitedRef = useRef<boolean>(false);
+  const [joystickInitRequestId, setJoystickInitRequestId] = useState(0);
   const lastStartRequestRef = useRef<{ key: string; timestamp: number } | null>(null);
   const [radarRange, setRadarRange] = useState<number>(20);
   const [scanAngle, setScanAngle] = useState<number>(60);
@@ -906,8 +907,13 @@ const MainApp: React.FC = observer(() => {
 
     setUserId(id);
     setIncludeAI(includeAIForMode);
-    setUseJoystick(_useJoystick && controlMode !== '2');
+    // Pure AI still needs Button2 as the IFF/confirmation input. Other
+    // joystick task operations are filtered in useRadarData.
+    setUseJoystick(_useJoystick);
     joystickInitedRef.current = false;
+    // A new task can keep the same user/useJoystick values, so explicitly
+    // retrigger connection and subscription instead of relying on value changes.
+    setJoystickInitRequestId(previous => previous + 1);
     radarStore.setLockedTargetId(undefined);
     radarStore.setLockScreenX(undefined);
     aiSelectedTargetRef.current = undefined;
@@ -942,7 +948,7 @@ const MainApp: React.FC = observer(() => {
     joystickInitedRef.current = true;
     globalWS.sendMessage({ type: 'joystick_connect', timestamp: Date.now(), user_id: userId });
     globalWS.sendMessage({ type: 'joystick_subscribe', timestamp: Date.now(), user_id: userId });
-  }, [isStarted, connected, useJoystick, userId]);
+  }, [isStarted, connected, useJoystick, userId, joystickInitRequestId]);
 
   useEffect(() => {
     if (!platformAutoStart) return;

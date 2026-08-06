@@ -4,6 +4,7 @@ import radarStore from '../stores/RadarStore';
 import agentStore, { type ControlMode, normalizeControlMode, ServerAIParameterRecommendation } from '../stores/AgentStore'; // Import AgentStore and type
 import audioManager from '../managers/AudioManager'; // 引入新的全局音频管理器
 import { normalizeTimestampMs } from '../utils/trustCalibration';
+import { projectJoystickInput } from '../utils/joystickInputPolicy';
 
 export interface TargetHistory {
   x: number;
@@ -1091,25 +1092,24 @@ const useRadarData = (
     }
 
     // 处理操纵杆数据消息
-    if (message.type === 'joystick_data' && joystickEnabled && !agentStore.isManualControlDisabled) {
+    if (message.type === 'joystick_data' && joystickEnabled) {
       console.log('[useRadarData] Processing joystick_data:', message.data);
       
       if (message.data) {
-        // 更新主轴位置
-        setMainPos({ 
-          x: message.data.main_x || 0.0, 
-          y: message.data.main_y || 0.0 
-        });
-        
-        // 更新副轴Y坐标
-        setSubY(message.data.sub_y || 0.0);
-        
-        // 更新按钮状态
-        if (message.data.buttons) {
-          setButton1(message.data.buttons.button0 || false);
-          setButton2(message.data.buttons.button1 || false);
-          setButton7(message.data.buttons.button7 || false);
+        const projected = projectJoystickInput(
+          message.data,
+          agentStore.isManualControlDisabled,
+        );
+
+        if (projected.mainPos) {
+          setMainPos(projected.mainPos);
         }
+        if (projected.subY !== null) {
+          setSubY(projected.subY);
+        }
+        setButton1(projected.button1);
+        setButton2(projected.button2);
+        setButton7(projected.button7);
       }
     }
 
