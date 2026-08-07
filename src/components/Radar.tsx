@@ -13,6 +13,7 @@ import toast from 'react-hot-toast';
 import audioManager from '../managers/AudioManager';
 import { useSensorTrustCalibration } from '../hooks/useSensorTrustCalibration';
 import { SensorTrustDecision } from '../types/trustCalibration';
+import { selectRadarTarget } from '../utils/aiAccuracyDecision';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -33,6 +34,12 @@ interface TargetSelectParams {
   event_owner?: 'AI' | 'manual';
   action?: 'select' | 'reset';
   extra?: Record<string, unknown>;
+  ai_decision_outcome?: {
+    selected_pool: string[];
+    fallback_reason: string | null;
+    selection_protocol: string;
+    expected_target_id: string | null;
+  };
 }
 
 export interface RadarProps {
@@ -603,54 +610,13 @@ const Radar: React.FC<RadarProps> = (({
       const availableTargets = radarData.externalTargets;
       
       if (availableTargets.length > 0) {
-        let targetToSelect: (typeof availableTargets)[0] | undefined;
-
-        // 最新的、更精确的逻辑
-        if (config.decision_probabilities && config.decision_probabilities.length > 0) {
-          // 新增：根据数组长度生成准确率（从正确池子选择的概率）
-          let accuracy = 1.0; // 默认值
-          if (config.decision_probabilities.length === 1) {
-            // 只有一个值，直接使用
-            accuracy = config.decision_probabilities[0];
-          } else if (config.decision_probabilities.length >= 2) {
-            // 有两个或多个值，第一个是最小值，第二个是最大值，在范围内随机生成
-            const min = config.decision_probabilities[0];
-            const max = config.decision_probabilities[1];
-            accuracy = parseFloat((Math.random() * (max - min) + min).toFixed(2));
-          }
-          const randomChoice = Math.random();
-
-          const enemyTargets = availableTargets.filter((t: { id: string }) => t.id.startsWith('enemy'));
-          const friendlyTargets = availableTargets.filter((t: { id: string }) => !t.id.startsWith('enemy'));
-          console.log(`[AI Engine] Decision probabilities: ${config.decision_probabilities}, ${randomChoice}`);
-          // 根据准确率，决定是从敌机池选还是友机池选
-          if (randomChoice < accuracy) {
-            // 决定 "准确" 选择: 从敌机池里选
-            if (enemyTargets.length > 0) {
-              targetToSelect = enemyTargets[Math.floor(Math.random() * enemyTargets.length)];
-              console.log(`[AI Engine] Decision: ACCURATE. Choosing from enemy pool. Selected: ${targetToSelect.id}`);
-            } else {
-              // 敌机池是空的，只能从友机池选
-              targetToSelect = friendlyTargets[Math.floor(Math.random() * friendlyTargets.length)];
-              console.log(`[AI Engine] Decision: ACCURATE. Enemy pool empty, fallback to friendly pool. Selected: ${targetToSelect?.id}`);
-            }
-          } else {
-            // 决定 "失误" 选择: 从友机池里选
-            if (friendlyTargets.length > 0) {
-              targetToSelect = friendlyTargets[Math.floor(Math.random() * friendlyTargets.length)];
-               console.log(`[AI Engine] Decision: INACCURATE. Choosing from friendly pool. Selected: ${targetToSelect.id}`);
-            } else {
-              // 友机池是空的，只能从敌机池选
-              targetToSelect = enemyTargets[Math.floor(Math.random() * enemyTargets.length)];
-              console.log(`[AI Engine] Decision: INACCURATE. Friendly pool empty, fallback to enemy pool. Selected: ${targetToSelect?.id}`);
-            }
-          }
-        } else {
-          // 旧逻辑：如果没配置概率，则默认优先选择敌机
-          const enemyTarget = availableTargets.find((target: { id:string }) => target.id.startsWith('enemy'));
-          targetToSelect = enemyTarget || availableTargets[0];
-          console.log(`[AI Engine] Legacy decision: Chose ${targetToSelect?.id}`);
+        const decision = agentStore.currentAIDecision;
+        if (!decision || String(decision.task_id) !== String(taskId)) {
+          console.warn('[AI Engine] Waiting for the server-owned AI decision context.');
+          return;
         }
+        const selectionOutcome = selectRadarTarget(availableTargets, decision);
+        const targetToSelect: (typeof availableTargets)[0] | undefined = selectionOutcome.selected;
 
         if (!targetToSelect) {
           console.warn("[AI Engine] Could not select any target.");
@@ -662,6 +628,11 @@ const Radar: React.FC<RadarProps> = (({
         
         // 使用tdc_select_delay_ms作为统一的延迟参数
         const selectionKey = `${taskId || 'pending'}:${radarData?.externalTargetsTimestamp || 'targets'}`;
+        if (agentStore.radarAISelection.status === 'failed'
+          && agentStore.radarAISelection.taskId === String(taskId)) {
+          aiTargetSelectionsRef.current.delete(selectionKey);
+          pendingAiTargetSelectionsRef.current.delete(selectionKey);
+        }
         if (aiTargetSelectionsRef.current.has(selectionKey) || pendingAiTargetSelectionsRef.current.has(selectionKey)) {
           return;
         }
@@ -690,6 +661,12 @@ const Radar: React.FC<RadarProps> = (({
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
                 event_owner: 'AI', // AI操作
                 extra: trustExtra ?? buildSensorTrustLogExtra(),
+                ai_decision_outcome: {
+                  selected_pool: selectionOutcome.selectedPool,
+                  fallback_reason: selectionOutcome.fallbackReason,
+                  selection_protocol: selectionOutcome.selectionProtocol,
+                  expected_target_id: selectionOutcome.expectedTargetId,
+                },
               });
 
               console.log(`[AI Engine] Target locked at X: ${lockX}`);
@@ -707,6 +684,12 @@ const Radar: React.FC<RadarProps> = (({
                 externalTargetsTimestamp: radarData?.externalTargetsTimestamp,
                 event_owner: 'AI', // AI操作
                 extra: trustExtra ?? buildSensorTrustLogExtra(),
+                ai_decision_outcome: {
+                  selected_pool: selectionOutcome.selectedPool,
+                  fallback_reason: selectionOutcome.fallbackReason,
+                  selection_protocol: selectionOutcome.selectionProtocol,
+                  expected_target_id: selectionOutcome.expectedTargetId,
+                },
               });
               
               console.log(`[AI Engine] Target locked at center X: ${centerX} (fallback)`);
@@ -723,6 +706,8 @@ const Radar: React.FC<RadarProps> = (({
   }, [
     agentStore.isAIActive,
     agentStore.currentAILevelConfig,
+    agentStore.currentAIDecision,
+    agentStore.radarAISelection.status,
     radarData,
     radarStore.lockedTargetId,
     onTargetSelect,

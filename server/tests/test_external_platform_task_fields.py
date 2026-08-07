@@ -254,6 +254,17 @@ def test_numeric_autonomy_mapping_depends_on_task_category():
     assert bridge._normalize_current_level("3", config, "weapon_launch") == "L1"
 
 
+def test_radar_and_sa_all_numeric_level_difficulty_combinations():
+    config = make_config()
+    expected_levels = {"1": "L1", "2": "L2", "3": "L3"}
+    expected_difficulties = {"1": "high", "2": "medium", "3": "low"}
+    for category in ("radar", "sa"):
+        for raw_level, level in expected_levels.items():
+            for raw_difficulty, difficulty in expected_difficulties.items():
+                assert bridge._normalize_current_level(raw_level, config, category) == level
+                assert bridge._normalize_difficulty_key(raw_difficulty, config, category) == difficulty
+
+
 def test_platform_autonomy_numeric_zero_is_not_a_protocol_level(monkeypatch):
     setup_bridge(monkeypatch)
     config = make_config()

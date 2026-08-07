@@ -23,7 +23,33 @@ export interface AgentLevelConfig {
   // 可以根据需要添加更多雷达相关的AI配置，例如：
   // radar_auto_scan_angle?: number;
   decision_probabilities?: number[];
+  decision_probability_ranges_by_difficulty?: Record<'low' | 'medium' | 'high', [number, number]>;
   scan_interval_ms: number;
+}
+
+export interface AIAccuracyContext {
+  algorithm_version: string;
+  task_group_id: number;
+  ai_level: string;
+  difficulty: 'low' | 'medium' | 'high';
+  probability_range: [number, number];
+  probability_seed: number;
+  probability_random: number;
+  sampled_probability: number;
+}
+
+export interface AIDecisionContext {
+  task_id: number;
+  task_seq: number;
+  decision_seed: number;
+  decision_random: number;
+  pool_random: number;
+  intended_correct: boolean;
+  selection_protocol: 'server-authoritative-target-v1';
+  selected_pool: string[];
+  fallback_reason: string | null;
+  pool_index: number | null;
+  expected_target_id: string | null;
 }
 
 // 新增：定义服务端AI参数推荐的接口
@@ -50,6 +76,8 @@ class AgentStore {
   // --- AI 等级与配置 ---
   aiConfigs: AgentLevelConfig[] = []; // 由服务器初始化
   currentAILevel: string = ""; // 由服务器初始化
+  currentAIAccuracy: AIAccuracyContext | null = null;
+  currentAIDecision: AIDecisionContext | null = null;
 
   // --- 事件归属 ---
   currentOperationOwner: 'AI' | 'manual' = 'manual';
@@ -116,6 +144,8 @@ class AgentStore {
     control_mode?: unknown;
     manual_control_disabled?: boolean;
     platform_task?: { normalized?: { control_mode?: unknown; default_control_mode?: unknown } };
+    ai_accuracy?: AIAccuracyContext;
+    ai_decision?: AIDecisionContext;
   }) => {
     runInAction(() => {
       const serverMode = data.control_mode
@@ -126,6 +156,8 @@ class AgentStore {
       this.isAIActive = this.controlMode !== '0';
       this.currentAILevel = data.ai_level;
       this.aiConfigs = data.ai_configs;
+      this.currentAIAccuracy = data.ai_accuracy ?? null;
+      this.currentAIDecision = data.ai_decision ?? null;
       this.audioEnabled = data.audio_enabled;
       this.trustCalibrationConfig = data.trust_calibration ?? null;
       this.currentOperationOwner = this.isAIActive ? 'AI' : 'manual';
@@ -216,6 +248,10 @@ class AgentStore {
       status: 'failed',
       error: String(error || 'target_selected_not_recorded'),
     };
+  }
+
+  setCurrentAIDecision = (decision: AIDecisionContext | null) => {
+    this.currentAIDecision = decision;
   }
 
   setCurrentAILevel = (level: string) => {

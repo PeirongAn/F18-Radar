@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from models.threat_models import RadarConfig, ThreatGenerationResult, EnhancedThreat
 from services.position_calculator import position_calculator
 from services.priority_calculator import priority_calculator
+from services.ai_accuracy import bind_task_decision_selection
 # 延迟导入 message_protocol 以避免循环导入
 
 class ThreatManager:
@@ -363,6 +364,34 @@ class ThreatManager:
         
         if use_enhanced_protocol:
             emergency_msg = self.generate_enhanced_sa_emergency(threats, radar_config)
+            current_threats = list(emergency_msg.get('updated_threats') or [])
+            missile_threat = emergency_msg.get('missile_threat')
+            if isinstance(missile_threat, dict):
+                current_threats.append(missile_threat)
+            if current_threats:
+                highest = max(current_threats, key=lambda item: float(item.get('score') or 0))
+                current_task_id = session_state.get('current_task_id')
+                session_state['sa_threat_truth'] = {
+                    'task_id': current_task_id,
+                    'threat_ids': [item.get('id') for item in current_threats],
+                    'highest_priority_threat_id': highest.get('id'),
+                }
+                context = (session_state.get('ai_decision_contexts') or {}).get(str(current_task_id))
+                if isinstance(context, dict) and context.get('task_type') == 'SA_THREAT_RESPONSE':
+                    threat_ids = session_state['sa_threat_truth']['threat_ids']
+                    highest_id = session_state['sa_threat_truth']['highest_priority_threat_id']
+                    bound_decision = bind_task_decision_selection(
+                        context.get('ai_decision') or {},
+                        correct_pool=[highest_id] if highest_id is not None else [],
+                        incorrect_pool=[
+                            threat_id for threat_id in threat_ids
+                            if str(threat_id) != str(highest_id)
+                        ],
+                        correct_pool_empty_reason='highest_priority_pool_empty',
+                        incorrect_pool_empty_reason='single_threat_no_incorrect_pool',
+                    )
+                    context['ai_decision'] = bound_decision
+                    emergency_msg['ai_decision'] = bound_decision
         else:
             # 回退到传统协议
             legacy_threats = [
@@ -488,4 +517,4 @@ class ThreatManager:
             print(f"记录SAEmergency日志失败: {e}")
 
 # 全局威胁管理器实例
-threat_manager = ThreatManager() 
+threat_manager = ThreatManager()

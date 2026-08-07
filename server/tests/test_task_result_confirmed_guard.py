@@ -102,6 +102,37 @@ def test_matching_task_result_confirmed_completes_current_task():
     assert gaze.stopped == [("66", "task_result_confirmed")]
 
 
+def _ai_decision_context(task_id):
+    return {
+        str(task_id): {
+            "task_type": "RADAR_TARGETING",
+            "ai_accuracy": {
+                "algorithm_version": "difficulty-group-range-v1",
+                "task_group_id": 5,
+                "ai_level": "L2",
+                "difficulty": "high",
+                "probability_range": [0.7, 0.8],
+                "probability_seed": 10,
+                "probability_random": 0.4,
+                "sampled_probability": 0.74,
+            },
+            "ai_decision": {
+                "task_id": task_id,
+                "task_seq": 1,
+                "decision_seed": 11,
+                "decision_random": 0.2,
+                "pool_random": 0.3,
+                "intended_correct": True,
+                "selection_protocol": "server-authoritative-target-v1",
+                "selected_pool": ["enemy-1"],
+                "fallback_reason": None,
+                "pool_index": 0,
+                "expected_target_id": "enemy-1",
+            },
+        }
+    }
+
+
 def test_pure_ai_target_selection_is_acknowledged_only_after_recording(monkeypatch):
     handler = MessageHandler()
     handler._set_current_task("RADAR_TARGETING", 66, int(time.time() * 1000))
@@ -110,6 +141,7 @@ def test_pure_ai_target_selection_is_acknowledged_only_after_recording(monkeypat
         "manual_control_disabled": True,
         "is_practice": False,
         "radar_ai_selection": None,
+        "ai_decision_contexts": _ai_decision_context(66),
     }
     recorded = []
 
@@ -131,6 +163,10 @@ def test_pure_ai_target_selection_is_acknowledged_only_after_recording(monkeypat
         "target_id": "enemy-1",
         "event_owner": "AI",
         "timestamp": int(time.time() * 1000),
+        "ai_decision_outcome": {
+            "selection_protocol": "server-authoritative-target-v1",
+            "expected_target_id": "enemy-1",
+        },
     }
     result = asyncio.run(handler._handle_target_selected(message, session_state, "AI"))
 
@@ -153,6 +189,7 @@ def test_pure_ai_target_selection_failure_does_not_unlock_iff(monkeypatch):
         "manual_control_disabled": True,
         "is_practice": False,
         "radar_ai_selection": None,
+        "ai_decision_contexts": _ai_decision_context(67),
     }
     monkeypatch.setattr(
         message_handler_module.target_manager,
@@ -169,11 +206,72 @@ def test_pure_ai_target_selection_failure_does_not_unlock_iff(monkeypatch):
         "task_id": 67,
         "target_id": "enemy-1",
         "event_owner": "AI",
+        "ai_decision_outcome": {
+            "selection_protocol": "server-authoritative-target-v1",
+            "expected_target_id": "enemy-1",
+        },
     }, session_state, "AI"))
 
     assert result[0]["type"] == "target_selected_record_failed"
     assert result[0]["reason"] == "database_write_failed"
     assert session_state["radar_ai_selection"] is None
+
+
+def test_ai_target_selection_rejects_outdated_frontend_protocol(monkeypatch):
+    handler = MessageHandler()
+    handler._set_current_task("RADAR_TARGETING", 70, int(time.time() * 1000))
+    session_state = {
+        "is_practice": False,
+        "radar_ai_selection": None,
+        "ai_decision_contexts": _ai_decision_context(70),
+    }
+    monkeypatch.setattr(
+        message_handler_module.target_manager,
+        "get_targets",
+        lambda: [{"id": "enemy-1", "type": "army"}],
+    )
+    result = asyncio.run(handler._handle_target_selected({
+        "type": "target_selected",
+        "task_id": 70,
+        "target_id": "enemy-1",
+        "event_owner": "AI",
+    }, session_state, "AI"))
+
+    assert result[0]["type"] == "target_selected_record_failed"
+    assert result[0]["reason"] == "ai_decision_protocol_mismatch"
+    assert result[0]["expected_target_id"] == "enemy-1"
+
+
+def test_ai_target_selection_rejects_target_outside_server_decision(monkeypatch):
+    handler = MessageHandler()
+    handler._set_current_task("RADAR_TARGETING", 71, int(time.time() * 1000))
+    session_state = {
+        "is_practice": False,
+        "radar_ai_selection": None,
+        "ai_decision_contexts": _ai_decision_context(71),
+    }
+    monkeypatch.setattr(
+        message_handler_module.target_manager,
+        "get_targets",
+        lambda: [
+            {"id": "enemy-1", "type": "army"},
+            {"id": "friend-1", "type": "friend"},
+        ],
+    )
+    result = asyncio.run(handler._handle_target_selected({
+        "type": "target_selected",
+        "task_id": 71,
+        "target_id": "friend-1",
+        "event_owner": "AI",
+        "ai_decision_outcome": {
+            "selection_protocol": "server-authoritative-target-v1",
+            "expected_target_id": "enemy-1",
+        },
+    }, session_state, "AI"))
+
+    assert result[0]["type"] == "target_selected_record_failed"
+    assert result[0]["reason"] == "ai_decision_target_mismatch"
+    assert result[0]["expected_target_id"] == "enemy-1"
 
 
 def test_pure_ai_result_confirmation_requires_current_ai_selection():
