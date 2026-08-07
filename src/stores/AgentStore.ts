@@ -32,6 +32,15 @@ export interface ServerAIParameterRecommendation {
   scanAngle: number;
 }
 
+export type RadarAISelectionStatus = 'waiting' | 'recording' | 'ready' | 'failed';
+
+export interface RadarAISelectionState {
+  status: RadarAISelectionStatus;
+  taskId: string | null;
+  targetId: string | null;
+  error: string | null;
+}
+
 class AgentStore {
   // --- AI 激活状态 ---
   isAIActive: boolean = false; // 由服务器初始化
@@ -53,6 +62,13 @@ class AgentStore {
 
   // 信任状态调控配置，由服务端随任务配置下发
   trustCalibrationConfig: Partial<TrustCalibrationConfig> | null = null;
+
+  radarAISelection: RadarAISelectionState = {
+    status: 'waiting',
+    taskId: null,
+    targetId: null,
+    error: null,
+  };
 
   constructor() {
     makeAutoObservable(this, {
@@ -79,6 +95,13 @@ class AgentStore {
 
   get requiresHumanConfirmation(): boolean {
     return this.controlMode === '2';
+  }
+
+  isRadarAISelectionReadyFor(taskId: unknown): boolean {
+    if (!this.isManualControlDisabled) return true;
+    if (taskId === undefined || taskId === null) return false;
+    return this.radarAISelection.status === 'ready'
+      && this.radarAISelection.taskId === String(taskId);
   }
 
   // --- Actions ---
@@ -151,6 +174,48 @@ class AgentStore {
       this.trustCalibrationConfig = config;
       console.log("[AgentStore] Trust calibration config updated:", config);
     });
+  }
+
+  resetRadarAISelection = (taskId: unknown) => {
+    this.radarAISelection = {
+      status: 'waiting',
+      taskId: taskId === undefined || taskId === null ? null : String(taskId),
+      targetId: null,
+      error: null,
+    };
+  }
+
+  markRadarAISelectionRecording = (taskId: unknown, targetId: unknown) => {
+    if (taskId === undefined || taskId === null || !targetId) return;
+    this.radarAISelection = {
+      status: 'recording',
+      taskId: String(taskId),
+      targetId: String(targetId),
+      error: null,
+    };
+  }
+
+  markRadarAISelectionReady = (taskId: unknown, targetId: unknown) => {
+    if (taskId === undefined || taskId === null) return;
+    const normalizedTaskId = String(taskId);
+    if (this.radarAISelection.taskId !== normalizedTaskId) return;
+    this.radarAISelection = {
+      status: 'ready',
+      taskId: normalizedTaskId,
+      targetId: targetId ? String(targetId) : this.radarAISelection.targetId,
+      error: null,
+    };
+  }
+
+  markRadarAISelectionFailed = (taskId: unknown, error: unknown) => {
+    if (taskId === undefined || taskId === null) return;
+    const normalizedTaskId = String(taskId);
+    if (this.radarAISelection.taskId !== normalizedTaskId) return;
+    this.radarAISelection = {
+      ...this.radarAISelection,
+      status: 'failed',
+      error: String(error || 'target_selected_not_recorded'),
+    };
   }
 
   setCurrentAILevel = (level: string) => {

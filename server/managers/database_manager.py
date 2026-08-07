@@ -32,6 +32,8 @@ class DatabaseManager:
         self._pending_operation_keys: Set[Tuple[Any, ...]] = set()
         self._shutdown_lock = threading.Lock()
         self._shutdown_requested = False
+        self._db_ready = threading.Event()
+        self._db_start_error: Optional[Exception] = None
         self._start_db_worker()
         atexit.register(self._cleanup_db_thread)
 
@@ -128,16 +130,30 @@ class DatabaseManager:
         """启动数据库工作线程"""
         self.db_thread = threading.Thread(target=self._db_worker, daemon=True)
         self.db_thread.start()
+        if not self._db_ready.wait(timeout=5.0):
+            raise TimeoutError("Timed out while starting the database worker")
+        if self._db_start_error is not None:
+            raise RuntimeError("Failed to start the database worker") from self._db_start_error
     
     def _db_worker(self) -> None:
         """在后台线程中同步处理所有数据库写入操作"""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute('PRAGMA journal_mode=WAL;')
+        try:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=5.0)
+            conn.execute('PRAGMA journal_mode=WAL;')
+        except Exception as exc:
+            self._db_start_error = exc
+            self._db_ready.set()
+            self.logger.error("Failed to start DB worker: %s", exc, exc_info=True)
+            return
+        self._db_ready.set()
         self.logger.info("DB worker thread started, connection in WAL mode.")
         
         while True:
+            result_queue = None
             try:
-                sql, params = self.writer_queue.get(timeout=1)
+                item = self.writer_queue.get(timeout=1)
+                sql, params = item[0], item[1]
+                result_queue = item[2] if len(item) > 2 else None
                 
                 if sql is None:  # 停止信号
                     self.logger.info("DB worker thread received shutdown signal.")
@@ -145,11 +161,15 @@ class DatabaseManager:
                     
                 conn.execute(sql, params)
                 conn.commit()
+                if result_queue is not None:
+                    result_queue.put((True, None))
                 
             except queue.Empty:
                 continue
             except Exception as e:
                 self.logger.error(f"Failed to execute DB operation: {e}", exc_info=True)
+                if result_queue is not None:
+                    result_queue.put((False, e))
                 
         try:
             conn.commit()
@@ -197,6 +217,17 @@ class DatabaseManager:
     def execute_async(self, sql: str, params: tuple) -> None:
         """异步执行SQL语句"""
         self.writer_queue.put((sql, params))
+
+    def execute_sync(self, sql: str, params: tuple, timeout: float = 5.0) -> None:
+        """Queue a write and wait until the database worker commits it."""
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        self.writer_queue.put((sql, params, result_queue))
+        try:
+            succeeded, error = result_queue.get(timeout=timeout)
+        except queue.Empty as exc:
+            raise TimeoutError("Timed out waiting for database write confirmation") from exc
+        if not succeeded:
+            raise RuntimeError("Database write failed") from error
 
     def build_task_setting_key(
         self,
@@ -347,11 +378,16 @@ class DatabaseManager:
         self.execute_async(sql, params)
         self.logger.info(f"记录任务设置: task_id {task_id}")
     
-    def record_operation(self, operation: Dict[str, Any], is_practice: bool) -> None:
+    def record_operation(
+        self,
+        operation: Dict[str, Any],
+        is_practice: bool,
+        wait_for_commit: bool = False,
+    ) -> bool:
         """记录用户操作"""
         if is_practice:
             self.logger.debug(f"练习模式，跳过操作记录: {operation.get('operationType')}")
-            return
+            return True
 
         # 从parameters中提取is_correct值
         parameters = operation.get('parameters', {})
@@ -370,7 +406,7 @@ class DatabaseManager:
             with self._operation_lock:
                 if operation_key in self._pending_operation_keys:
                     self.logger.info(f"跳过重复操作记录: task_id={task_id}, operation={operation_type}")
-                    return
+                    return True
                 try:
                     with self.get_connection() as conn:
                         cursor = conn.cursor()
@@ -390,7 +426,7 @@ class DatabaseManager:
                             )
                         if cursor.fetchone():
                             self.logger.info(f"跳过已存在操作记录: task_id={task_id}, operation={operation_type}")
-                            return
+                            return True
                 except Exception as e:
                     self.logger.warning(f"检查 user_operations 重复记录失败，将继续写入: {e}")
                 self._pending_operation_keys.add(operation_key)
@@ -421,7 +457,17 @@ class DatabaseManager:
             operation.get('event_owner'),
             is_correct_str
         )
-        self.execute_async(sql, params)
+        try:
+            if wait_for_commit:
+                self.execute_sync(sql, params)
+            else:
+                self.execute_async(sql, params)
+        except Exception:
+            if operation_key:
+                with self._operation_lock:
+                    self._pending_operation_keys.discard(operation_key)
+            raise
+        return True
 
     @staticmethod
     def _extract_trust_events(parameters: Dict[str, Any]) -> List[Dict[str, Any]]:

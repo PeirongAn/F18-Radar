@@ -46,9 +46,10 @@ export const decideJoystickButton2Action = (input: {
   joystickEnabled: boolean;
   suppressJoystickActions: boolean;
   showMissionConfirm: boolean;
+  iffInteractionAllowed?: boolean;
 }): JoystickButton2Action => {
   const isRisingEdge = input.button2 && !input.previousButton2;
-  if (!isRisingEdge || !input.joystickEnabled || input.suppressJoystickActions) {
+  if (!isRisingEdge || !input.joystickEnabled || input.suppressJoystickActions || input.iffInteractionAllowed === false) {
     return 'none';
   }
   return input.showMissionConfirm ? 'confirm_result' : 'open_iff';

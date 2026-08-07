@@ -499,6 +499,7 @@ const MainApp: React.FC = observer(() => {
   const pendingSACompletionRef = useRef<any>(null);
   const confirmedSAResultGroupRef = useRef<string | null>(null);
   const aiSelectedTargetRef = useRef<string | undefined>(undefined);
+  const aiTargetSelectionAckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isQuestionnaireVisible, setIsQuestionnaireVisible] = useState(false);
 
   const { radarStore } = useStore();
@@ -713,6 +714,46 @@ const MainApp: React.FC = observer(() => {
     return taskId;
   }, [repetitionInfos, taskId]);
 
+  useEffect(() => {
+    if (!initSettings || initSettings.__task_type !== 'RADAR_TARGETING') return;
+    const nextTaskId = initSettings.__task_id ?? getTaskIdForType('RADAR_TARGETING');
+    if (aiTargetSelectionAckTimeoutRef.current) {
+      clearTimeout(aiTargetSelectionAckTimeoutRef.current);
+      aiTargetSelectionAckTimeoutRef.current = null;
+    }
+    aiSelectedTargetRef.current = undefined;
+    agentStore.resetRadarAISelection(nextTaskId);
+    radarStore.setLockedTargetId(undefined);
+    radarStore.setLockScreenX(undefined);
+  }, [initSettings, getTaskIdForType, radarStore]);
+
+  useEffect(() => {
+    if (!lastMessage) return;
+    if (lastMessage.type === 'target_selected_recorded') {
+      agentStore.markRadarAISelectionReady(lastMessage.task_id, lastMessage.target_id);
+      if (agentStore.isRadarAISelectionReadyFor(lastMessage.task_id) && aiTargetSelectionAckTimeoutRef.current) {
+        clearTimeout(aiTargetSelectionAckTimeoutRef.current);
+        aiTargetSelectionAckTimeoutRef.current = null;
+      }
+    } else if (lastMessage.type === 'target_selected_record_failed') {
+      agentStore.markRadarAISelectionFailed(lastMessage.task_id, lastMessage.reason);
+      if (aiTargetSelectionAckTimeoutRef.current) {
+        clearTimeout(aiTargetSelectionAckTimeoutRef.current);
+        aiTargetSelectionAckTimeoutRef.current = null;
+      }
+      addMessage('warning', `AI目标选择记录失败：${lastMessage.reason || '未知原因'}`);
+    } else if (lastMessage.type === 'task_result_confirmation_rejected'
+      && lastMessage.reason === 'missing_target_selected') {
+      addMessage('warning', 'AI尚未完成本轮目标选择，IFF确认已被拒绝');
+    }
+  }, [lastMessage, addMessage]);
+
+  useEffect(() => () => {
+    if (aiTargetSelectionAckTimeoutRef.current) {
+      clearTimeout(aiTargetSelectionAckTimeoutRef.current);
+    }
+  }, []);
+
   const handleCompletionNoticeConfirm = useCallback(() => {
     const taskType = completionNoticeTask;
     if (taskType && !completionExitSentRef.current) {
@@ -817,7 +858,9 @@ const MainApp: React.FC = observer(() => {
 
   /* ── 目标选择 ─────────────────────────────────── */
   const handleTargetSelect = useCallback((params: TargetSelectParams) => {
-    if (agentStore.isManualControlDisabled && params.event_owner !== 'AI') {
+    const action = params.action ?? 'select';
+    const isResetOnly = !params.targetId || action === 'reset';
+    if (agentStore.isManualControlDisabled && params.event_owner !== 'AI' && !isResetOnly) {
       console.warn('[App] Manual target operation ignored in pure AI mode.');
       return;
     }
@@ -836,10 +879,14 @@ const MainApp: React.FC = observer(() => {
     } else {
       radarStore.setLockScreenX(undefined);
     }
-    const action = params.action ?? 'select';
+    if (agentStore.isManualControlDisabled && isResetOnly && params.event_owner !== 'AI') {
+      return;
+    }
     if (params.targetId || action !== 'select') {
+      const currentRadarTaskId = getTaskIdForType('RADAR_TARGETING');
       const payload: Record<string, unknown> = {
         type: 'target_selected',
+        task_id: currentRadarTaskId,
         timestamp: Date.now(),
         target_id: params.targetId ?? null,
         action,
@@ -849,10 +896,20 @@ const MainApp: React.FC = observer(() => {
       if (params.externalTargetsTimestamp != null) payload.receive_timestamp = params.externalTargetsTimestamp;
       if (params.extra) payload.extra = params.extra;
       if (!isManualRepeatOfAITarget || action !== 'select') {
+        if (agentStore.isManualControlDisabled && params.event_owner === 'AI' && params.targetId && currentRadarTaskId != null) {
+          agentStore.markRadarAISelectionRecording(currentRadarTaskId, params.targetId);
+          if (aiTargetSelectionAckTimeoutRef.current) {
+            clearTimeout(aiTargetSelectionAckTimeoutRef.current);
+          }
+          aiTargetSelectionAckTimeoutRef.current = setTimeout(() => {
+            agentStore.markRadarAISelectionFailed(currentRadarTaskId, 'record_confirmation_timeout');
+            aiTargetSelectionAckTimeoutRef.current = null;
+          }, 5000);
+        }
         sendMessage?.(payload);
       }
     }
-  }, [sendMessage, radarStore]);
+  }, [sendMessage, radarStore, getTaskIdForType]);
 
   /* ── 启动应用 ─────────────────────────────────── */
   const handleStartApp = useCallback((

@@ -102,6 +102,131 @@ def test_matching_task_result_confirmed_completes_current_task():
     assert gaze.stopped == [("66", "task_result_confirmed")]
 
 
+def test_pure_ai_target_selection_is_acknowledged_only_after_recording(monkeypatch):
+    handler = MessageHandler()
+    handler._set_current_task("RADAR_TARGETING", 66, int(time.time() * 1000))
+    handler.current_session["user_id"] = "pure-ai-user"
+    session_state = {
+        "manual_control_disabled": True,
+        "is_practice": False,
+        "radar_ai_selection": None,
+    }
+    recorded = []
+
+    monkeypatch.setattr(
+        message_handler_module.target_manager,
+        "get_targets",
+        lambda: [{"id": "enemy-1", "type": "army"}],
+    )
+
+    def record_operation(operation, is_practice, wait_for_commit=False):
+        recorded.append((operation, is_practice, wait_for_commit))
+        return True
+
+    monkeypatch.setattr(message_handler_module.db_manager, "record_operation", record_operation)
+
+    message = {
+        "type": "target_selected",
+        "task_id": 66,
+        "target_id": "enemy-1",
+        "event_owner": "AI",
+        "timestamp": int(time.time() * 1000),
+    }
+    result = asyncio.run(handler._handle_target_selected(message, session_state, "AI"))
+
+    assert result[0]["type"] == "target_selected_recorded"
+    assert result[0]["task_id"] == 66
+    assert result[0]["target_id"] == "enemy-1"
+    assert result[0]["persisted"] is True
+    assert recorded[0][2] is True
+    assert session_state["radar_ai_selection"]["target_id"] == "enemy-1"
+
+    duplicate = asyncio.run(handler._handle_target_selected(message, session_state, "AI"))
+    assert duplicate[0]["duplicate"] is True
+    assert len(recorded) == 1
+
+
+def test_pure_ai_target_selection_failure_does_not_unlock_iff(monkeypatch):
+    handler = MessageHandler()
+    handler._set_current_task("RADAR_TARGETING", 67, int(time.time() * 1000))
+    session_state = {
+        "manual_control_disabled": True,
+        "is_practice": False,
+        "radar_ai_selection": None,
+    }
+    monkeypatch.setattr(
+        message_handler_module.target_manager,
+        "get_targets",
+        lambda: [{"id": "enemy-1", "type": "army"}],
+    )
+
+    def fail_recording(*_args, **_kwargs):
+        raise RuntimeError("disk unavailable")
+
+    monkeypatch.setattr(message_handler_module.db_manager, "record_operation", fail_recording)
+    result = asyncio.run(handler._handle_target_selected({
+        "type": "target_selected",
+        "task_id": 67,
+        "target_id": "enemy-1",
+        "event_owner": "AI",
+    }, session_state, "AI"))
+
+    assert result[0]["type"] == "target_selected_record_failed"
+    assert result[0]["reason"] == "database_write_failed"
+    assert session_state["radar_ai_selection"] is None
+
+
+def test_pure_ai_result_confirmation_requires_current_ai_selection():
+    handler = MessageHandler()
+    task_manager = FakeTaskManager()
+    task_manager.current_scenario["is_ai_active"] = True
+    handler._set_current_task("RADAR_TARGETING", 68, int(time.time() * 1000) - 5000)
+    session_state = {
+        "task_manager": task_manager,
+        "manual_control_disabled": True,
+        "radar_ai_selection": None,
+    }
+
+    result = asyncio.run(handler._handle_task_result_confirmed({
+        "type": "task_result_confirmed",
+        "task_type": "RADAR_TARGETING",
+        "task_id": 68,
+        "timestamp": int(time.time() * 1000),
+    }, session_state))
+
+    assert result[0]["type"] == "task_result_confirmation_rejected"
+    assert result[0]["reason"] == "missing_target_selected"
+    assert task_manager.completed is False
+
+
+def test_pure_ai_result_confirmation_accepts_current_ai_selection(monkeypatch):
+    handler = MessageHandler()
+    task_manager = FakeTaskManager()
+    task_manager.current_scenario["is_ai_active"] = True
+    handler._set_current_task("RADAR_TARGETING", 69, int(time.time() * 1000) - 5000)
+    session_state = {
+        "task_manager": task_manager,
+        "manual_control_disabled": True,
+        "is_practice": True,
+        "radar_ai_selection": {
+            "task_id": 69,
+            "target_id": "enemy-1",
+            "event_owner": "AI",
+        },
+    }
+    monkeypatch.setattr(message_handler_module.db_manager, "record_operation", lambda *_args, **_kwargs: True)
+
+    result = asyncio.run(handler._handle_task_result_confirmed({
+        "type": "task_result_confirmed",
+        "task_type": "RADAR_TARGETING",
+        "task_id": 69,
+        "timestamp": int(time.time() * 1000),
+    }, session_state))
+
+    assert result == []
+    assert task_manager.completed is True
+
+
 def test_task_group_completion_returns_its_group_id():
     handler = MessageHandler()
     task_manager = FakeTaskManager()

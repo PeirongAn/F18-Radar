@@ -280,6 +280,8 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   // 计算显示区域中心
   const activeRadarTaskKey = getCurrentRadarTaskKey();
+  const currentRadarTaskId = getCurrentRadarTaskId();
+  const iffInteractionAllowed = agentStore.isRadarAISelectionReadyFor(currentRadarTaskId);
   React.useEffect(() => {
     if (!activeRadarTaskKey || repetitionInfos['RADAR_TARGETING'] === 'ALL_COMPLETED') {
       previousRadarTaskKeyRef.current = activeRadarTaskKey;
@@ -664,6 +666,12 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   }, [tdcPosition, processedExternalTargets, centerX, onTDCPositionSet, onTargetSelect, iffMode, radarData?.externalTargetsTimestamp, radarStore.targetDisplayPositions, joystickEnabled, calculatedTdcPosition]);
 
   const finishMissionAndAdvance = useCallback((eventOwner: 'AI' | 'manual' = 'manual') => {
+    if (!agentStore.isRadarAISelectionReadyFor(getCurrentRadarTaskId())) {
+      setShowMissionConfirm(false);
+      setMissionCanComplete(false);
+      onAddMessage?.('warning', '等待AI完成本轮目标选择后才能确认IFF结果');
+      return;
+    }
     const taskKey = getCurrentRadarTaskKey();
     const decision = decideRadarConfirmation({
       missionCanComplete,
@@ -717,7 +725,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       onResetForNextMission?.();
       setShowMissionConfirm(false);
     }
-  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, isCurrentRadarTaskAlreadyHandled, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal]);
+  }, [missionCanComplete, onClearMessages, getCurrentRadarTaskKey, getCurrentRadarTaskId, isCurrentRadarTaskAlreadyHandled, sendMessage, onResetForNextMission, onNavigateToSA, onTaskCompleted, hasReachedRadarTaskTotal, onAddMessage]);
 
   // 处理确认弹窗的确认操作
   const handleConfirmYes = useCallback(() => {
@@ -819,6 +827,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     const decision = decideRadarIffClick({
       alreadyHandled: isCurrentRadarTaskAlreadyHandled(),
       hasLockedTarget: !!lockedTargetObject,
+      interactionAllowed: iffInteractionAllowed,
       lockedTargetType: lockedTargetObject?.type,
       currentIffMode: iffMode,
       hasReachedTaskTotal: hasReachedRadarTaskTotal,
@@ -828,6 +837,11 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
     setMissionCanComplete(decision.missionCanComplete);
     setMissionResultMessage(decision.missionResultMessage);
     setIffMode(decision.nextIffMode);
+
+    if (decision.action === 'ignore_ai_selection_pending') {
+      onAddMessage?.('warning', '等待AI完成本轮目标选择后才能使用IFF');
+      return;
+    }
 
     if (decision.action === 'ignore_already_handled') {
       console.log('[RadarDisplay] IFF click ignored because current radar task is already completed.');
@@ -887,6 +901,7 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       joystickEnabled,
       suppressJoystickActions,
       showMissionConfirm,
+      iffInteractionAllowed,
     });
 
     if (action === 'confirm_result') {
@@ -897,11 +912,11 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
       handleIffButtonClick();
     }
     previousButton2Ref.current = button2;
-  }, [button2, joystickEnabled, suppressJoystickActions, showMissionConfirm, handleConfirmYes]);
+  }, [button2, joystickEnabled, suppressJoystickActions, showMissionConfirm, handleConfirmYes, iffInteractionAllowed]);
   
   // 自定义渲染函数，添加IFF按钮的点击事件
   const renderCustomText = (props: any) => {
-    const isIffEnabled = !!lockedTargetObject;
+    const isIffEnabled = !!lockedTargetObject && iffInteractionAllowed;
     const originalElements = renderText({
       ...props,
       displayMode, // 传递当前显示模式
@@ -1019,6 +1034,29 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   
   return (
     <div style={{ position: 'relative', width, height }}>
+      {agentStore.isManualControlDisabled && !iffInteractionAllowed && (
+        <div style={{
+          position: 'absolute',
+          top: 8,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 20,
+          padding: '5px 12px',
+          border: '1px solid rgba(255, 190, 70, 0.7)',
+          borderRadius: 3,
+          background: 'rgba(30, 18, 0, 0.88)',
+          color: '#ffd36b',
+          fontSize: 12,
+          fontFamily: "'Share Tech Mono', 'Microsoft YaHei', monospace",
+          pointerEvents: 'none',
+        }}>
+          {agentStore.radarAISelection.status === 'failed'
+            ? 'AI目标选择记录失败，正在重试'
+            : agentStore.radarAISelection.status === 'recording'
+              ? '正在确认AI目标选择记录'
+              : '等待AI完成目标选择'}
+        </div>
+      )}
       
       {/* 摇杆控制状态指示器
       {joystickEnabled && (

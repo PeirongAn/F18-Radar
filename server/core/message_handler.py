@@ -687,6 +687,7 @@ class MessageHandler:
         )
         task_id = existing_task_id or generate_task_id()
         self._set_current_task(task_type, task_id, task_started_at_ms)
+        session_state['radar_ai_selection'] = None
         self._ensure_unified_task_run(
             task_id,
             task_type,
@@ -894,32 +895,89 @@ class MessageHandler:
         print("消息类型: target_selected")
         target_id = message.get('target_id')
         iff_mode = message.get('iff_mode', False)
-        
-        targets = target_manager.get_targets()
-        is_enemy = any(target['id'] == target_id and target['type'] == 'army' for target in targets)
-        
+        if message.get('action', 'select') == 'reset' or not target_id:
+            return []
         task_id = self._get_current_task_id('RADAR_TARGETING')
-        if not session_state.get('is_practice', False) and task_id:
-            operation = {
+        message_task_id = message.get('task_id')
+        response_timestamp = int(time.time() * 1000)
+
+        def failed(reason: str, detail: str = '') -> List[Dict[str, Any]]:
+            return [{
+                'type': 'target_selected_record_failed',
+                'task_id': message_task_id if message_task_id is not None else task_id,
+                'target_id': target_id,
+                'reason': reason,
+                'message': detail,
+                'timestamp': response_timestamp,
+            }]
+
+        if not task_id:
+            return failed('missing_active_task', 'No active radar task is available.')
+        if message_task_id is not None and str(message_task_id) != str(task_id):
+            return failed('stale_task', 'The target selection belongs to another radar task.')
+
+        targets = target_manager.get_targets()
+        selected_target = next((target for target in targets if target.get('id') == target_id), None)
+        if not selected_target:
+            return failed('invalid_target', 'The selected target is not part of the current radar task.')
+        is_enemy = selected_target.get('type') == 'army'
+        is_ai_selection = str(client_event_owner or '').strip().lower() == 'ai'
+
+        existing_selection = session_state.get('radar_ai_selection')
+        if is_ai_selection and isinstance(existing_selection, dict) and str(existing_selection.get('task_id')) == str(task_id):
+            if existing_selection.get('target_id') != target_id:
+                return failed('selection_conflict', 'Another AI target has already been recorded for this task.')
+            return [{
+                'type': 'target_selected_recorded',
                 'task_id': task_id,
-                'operationType': 'target_selected',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),
-                'isActive': not iff_mode,
-                'parameters': {
-                    'target_id': target_id,
-                    'action': message.get('action', 'select'),
-                    'iff_mode': iff_mode,
-                    'is_enemy': is_enemy,
-                    'is_correct': (is_enemy and not iff_mode) or False,
-                    'extra': message.get('extra', {})
-                },
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner
+                'target_id': target_id,
+                'persisted': bool(existing_selection.get('persisted')),
+                'duplicate': True,
+                'timestamp': response_timestamp,
+            }]
+
+        persisted = not session_state.get('is_practice', False)
+        operation = {
+            'task_id': task_id,
+            'operationType': 'target_selected',
+            'timestamp': message.get('timestamp', response_timestamp),
+            'receive_timestamp': message.get('receive_timestamp'),
+            'isActive': not iff_mode,
+            'parameters': {
+                'target_id': target_id,
+                'action': message.get('action', 'select'),
+                'iff_mode': iff_mode,
+                'is_enemy': is_enemy,
+                'is_correct': (is_enemy and not iff_mode) or False,
+                'extra': message.get('extra', {})
+            },
+            'user_id': message.get('user_id') or self.current_session.get('user_id', ''),
+            'event_owner': client_event_owner
+        }
+        try:
+            db_manager.record_operation(
+                operation,
+                session_state.get('is_practice', False),
+                wait_for_commit=persisted,
+            )
+        except Exception as exc:
+            self.logger.error(
+                'Failed to persist target_selected: task_id=%s target_id=%s error=%s',
+                task_id,
+                target_id,
+                exc,
+                exc_info=True,
+            )
+            return failed('database_write_failed', str(exc))
+
+        if is_ai_selection:
+            session_state['radar_ai_selection'] = {
+                'task_id': task_id,
+                'target_id': target_id,
+                'event_owner': 'AI',
+                'persisted': persisted,
+                'timestamp': operation['timestamp'],
             }
-            db_manager.record_operation(operation, session_state.get('is_practice', False))
-        else:
-            print("练习模式，跳过 target_selected 数据库记录。")
 
         self._physio_marker("target_selected", message, session_state, {
             "operation": "target_selected",
@@ -930,6 +988,15 @@ class MessageHandler:
             "is_correct": (is_enemy and not iff_mode) or False,
         })
         
+        if is_ai_selection:
+            return [{
+                'type': 'target_selected_recorded',
+                'task_id': task_id,
+                'target_id': target_id,
+                'persisted': persisted,
+                'duplicate': False,
+                'timestamp': response_timestamp,
+            }]
         return []
     
     async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any], 
@@ -1024,6 +1091,28 @@ class MessageHandler:
             task_manager = session_state.get('sa_task_manager')
         else:
             task_manager = None
+
+        if task_type == 'RADAR_TARGETING' and session_state.get('manual_control_disabled'):
+            selection = session_state.get('radar_ai_selection')
+            has_current_ai_selection = (
+                isinstance(selection, dict)
+                and str(selection.get('task_id')) == str(current_task_id)
+                and str(selection.get('event_owner') or '').strip().lower() == 'ai'
+                and bool(selection.get('target_id'))
+            )
+            if not has_current_ai_selection:
+                self.logger.warning(
+                    'Rejected radar result confirmation without recorded AI selection: task_id=%s',
+                    current_task_id,
+                )
+                return [{
+                    'type': 'task_result_confirmation_rejected',
+                    'task_type': task_type,
+                    'task_id': current_task_id,
+                    'reason': 'missing_target_selected',
+                    'message': 'AI target selection has not been recorded for the current radar task.',
+                    'timestamp': int(time.time() * 1000),
+                }]
 
         repetition_info = {}
         event_owner = ""

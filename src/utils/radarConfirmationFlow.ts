@@ -3,6 +3,7 @@ export type RadarTargetClassification = 'army' | string;
 export interface RadarIffClickInput {
   alreadyHandled: boolean;
   hasLockedTarget: boolean;
+  interactionAllowed?: boolean;
   lockedTargetType?: RadarTargetClassification;
   currentIffMode: boolean;
   hasReachedTaskTotal: boolean;
@@ -16,6 +17,14 @@ export type RadarIffClickDecision =
       nextIffMode: false;
       missionResultMessage: '';
       notifyTaskCompleted: boolean;
+    }
+  | {
+      action: 'ignore_ai_selection_pending';
+      showMissionConfirm: false;
+      missionCanComplete: false;
+      nextIffMode: false;
+      missionResultMessage: '';
+      notifyTaskCompleted: false;
     }
   | {
       action: 'ignore_without_locked_target';
@@ -43,6 +52,17 @@ export const decideRadarIffClick = (input: RadarIffClickInput): RadarIffClickDec
       nextIffMode: false,
       missionResultMessage: '',
       notifyTaskCompleted: input.hasReachedTaskTotal,
+    };
+  }
+
+  if (input.interactionAllowed === false) {
+    return {
+      action: 'ignore_ai_selection_pending',
+      showMissionConfirm: false,
+      missionCanComplete: false,
+      nextIffMode: false,
+      missionResultMessage: '',
+      notifyTaskCompleted: false,
     };
   }
 

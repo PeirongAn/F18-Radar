@@ -2,6 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { decideRadarConfirmation, decideRadarIffClick } from './radarConfirmationFlow';
 
 describe('pure AI radar IFF gate', () => {
+  it('does not show IFF while the current AI selection is not recorded', () => {
+    expect(decideRadarIffClick({
+      alreadyHandled: false,
+      hasLockedTarget: true,
+      interactionAllowed: false,
+      lockedTargetType: 'army',
+      currentIffMode: false,
+      hasReachedTaskTotal: false,
+    })).toEqual({
+      action: 'ignore_ai_selection_pending',
+      showMissionConfirm: false,
+      missionCanComplete: false,
+      nextIffMode: false,
+      missionResultMessage: '',
+      notifyTaskCompleted: false,
+    });
+  });
+
   it('does not show a confirmation before AI has locked a target', () => {
     expect(decideRadarIffClick({
       alreadyHandled: false,

@@ -4,6 +4,7 @@ import agentStore, { normalizeControlMode } from './AgentStore';
 beforeEach(() => {
   agentStore.setControlMode('0', false);
   agentStore.setServerAIRecommendation(null);
+  agentStore.resetRadarAISelection(null);
 });
 
 describe('normalizeControlMode', () => {
@@ -40,6 +41,20 @@ describe('normalizeControlMode', () => {
     expect(agentStore.requiresHumanConfirmation).toBe(true);
     expect(agentStore.isAIActive).toBe(true);
     expect(agentStore.currentOperationOwner).toBe('AI');
+  });
+
+  it('opens pure-AI IFF only for the recorded selection of the current task', () => {
+    agentStore.setControlMode('2', true);
+    agentStore.resetRadarAISelection(1002);
+
+    expect(agentStore.isRadarAISelectionReadyFor(1002)).toBe(false);
+    agentStore.markRadarAISelectionRecording(1002, 'enemy-1');
+    expect(agentStore.isRadarAISelectionReadyFor(1002)).toBe(false);
+    agentStore.markRadarAISelectionReady(1001, 'enemy-1');
+    expect(agentStore.isRadarAISelectionReadyFor(1002)).toBe(false);
+    agentStore.markRadarAISelectionReady(1002, 'enemy-1');
+    expect(agentStore.isRadarAISelectionReadyFor(1002)).toBe(true);
+    expect(agentStore.isRadarAISelectionReadyFor(1001)).toBe(false);
   });
 
   it('prevents manual takeover while preserving pure AI mode', () => {

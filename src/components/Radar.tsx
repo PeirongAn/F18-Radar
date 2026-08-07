@@ -456,6 +456,15 @@ const Radar: React.FC<RadarProps> = (({
   }, [missionInitSettings, isStarted]);
 
   useEffect(() => {
+    if (!agentStore.isManualControlDisabled || agentStore.radarAISelection.status !== 'failed') return;
+    if (taskId === undefined || taskId === null) return;
+    if (agentStore.radarAISelection.taskId !== String(taskId)) return;
+    aiTargetSelectionsRef.current.clear();
+    pendingAiTargetSelectionsRef.current.clear();
+    onTargetSelect?.({ targetId: undefined, event_owner: 'AI' });
+  }, [agentStore.radarAISelection.status, agentStore.radarAISelection.taskId, taskId, onTargetSelect]);
+
+  useEffect(() => {
     // If initSettings is null (e.g., after a reset), do nothing until new settings arrive.
     if (!missionInitSettings) {
       return;

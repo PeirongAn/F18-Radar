@@ -68,6 +68,13 @@ describe('joystick Button2 action', () => {
     })).toBe('confirm_result');
   });
 
+  it('ignores Button2 until the current AI selection is recorded', () => {
+    expect(decideJoystickButton2Action({
+      ...base,
+      iffInteractionAllowed: false,
+    })).toBe('none');
+  });
+
   it.each([
     { button2: false },
     { previousButton2: true },
