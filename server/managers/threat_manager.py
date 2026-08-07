@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from models.threat_models import RadarConfig, ThreatGenerationResult, EnhancedThreat
 from services.position_calculator import position_calculator
 from services.priority_calculator import priority_calculator
+from services.ai_accuracy import bind_task_decision_selection
 # 延迟导入 message_protocol 以避免循环导入
 
 class ThreatManager:
@@ -397,6 +398,30 @@ class ThreatManager:
                     "emergency_event": emergency_msg.get("event"),
                     "updated_at_ms": int(time.time() * 1000),
                 }
+            if scored_candidates:
+                highest = max(scored_candidates, key=lambda item: float(item.get('score') or 0))
+                current_task_id = session_state.get('current_task_id')
+                session_state['sa_threat_truth'] = {
+                    'task_id': current_task_id,
+                    'threat_ids': [item.get('id') for item in scored_candidates],
+                    'highest_priority_threat_id': highest.get('id'),
+                }
+                context = (session_state.get('ai_decision_contexts') or {}).get(str(current_task_id))
+                if isinstance(context, dict) and context.get('task_type') == 'SA_THREAT_RESPONSE':
+                    threat_ids = session_state['sa_threat_truth']['threat_ids']
+                    highest_id = session_state['sa_threat_truth']['highest_priority_threat_id']
+                    bound_decision = bind_task_decision_selection(
+                        context.get('ai_decision') or {},
+                        correct_pool=[highest_id] if highest_id is not None else [],
+                        incorrect_pool=[
+                            threat_id for threat_id in threat_ids
+                            if str(threat_id) != str(highest_id)
+                        ],
+                        correct_pool_empty_reason='highest_priority_pool_empty',
+                        incorrect_pool_empty_reason='single_threat_no_incorrect_pool',
+                    )
+                    context['ai_decision'] = bound_decision
+                    emergency_msg['ai_decision'] = bound_decision
         else:
             # 回退到传统协议
             legacy_threats = [

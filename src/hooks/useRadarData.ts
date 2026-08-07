@@ -1428,6 +1428,9 @@ const useRadarData = (
       agentStore.initializeFromServer(message);
     } else if (message.type === 'SAEmergency') {
       console.log('[useRadarData] Received SAEmergency:', message);
+      if (message.ai_decision) {
+        agentStore.setCurrentAIDecision(message.ai_decision);
+      }
       // 检查是否是增强协议的紧急事件
       if (message.updated_threats) {
         console.log('[useRadarData] 处理增强SAEmergency升级事件:', message.updated_threats.length, '个威胁');

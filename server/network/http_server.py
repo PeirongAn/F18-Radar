@@ -111,6 +111,7 @@ class HTTPServer:
         self.app.router.add_post('/api/questionnaire', self.questionnaire_submit_handler)
         self.app.router.add_get('/api/questionnaire/context', self.questionnaire_context_handler)
         self.app.router.add_get('/api/trust-history', self.trust_history_handler)
+        self.app.router.add_get('/api/ai-accuracy', self.ai_accuracy_handler)
 
         # 眼动追踪路由
         self.app.router.add_get('/tobii/test-ui', self.tobii_test_ui_handler)
@@ -698,6 +699,38 @@ class HTTPServer:
         except Exception as e:
             self.logger.error(f"读取信任历史失败: {e}", exc_info=True)
             return web.json_response({"ok": False, "msg": str(e)}, status=500)
+
+    async def ai_accuracy_handler(self, request: web.Request) -> web.Response:
+        """GET /api/ai-accuracy?task_group_id=<id>&include_decisions=0|1."""
+        raw_group_id = request.query.get('task_group_id')
+        if raw_group_id is None or not str(raw_group_id).strip():
+            return web.json_response(
+                {"ok": False, "error": "task_group_id_required"}, status=400
+            )
+        try:
+            task_group_id = int(raw_group_id)
+            if task_group_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"ok": False, "error": "task_group_id_invalid"}, status=400
+            )
+        include_raw = str(request.query.get('include_decisions', '0')).strip().lower()
+        if include_raw not in {'0', '1', 'false', 'true'}:
+            return web.json_response(
+                {"ok": False, "error": "include_decisions_invalid"}, status=400
+            )
+        include_decisions = include_raw in {'1', 'true'}
+        try:
+            result = db_manager.get_ai_accuracy(task_group_id, include_decisions)
+        except Exception as exc:
+            self.logger.error("Failed to query AI accuracy: %s", exc, exc_info=True)
+            return web.json_response({"ok": False, "msg": str(exc)}, status=500)
+        if result is None:
+            return web.json_response(
+                {"ok": False, "error": "task_group_not_found"}, status=404
+            )
+        return web.json_response({"ok": True, **result})
 
     async def questionnaire_context_handler(self, request: web.Request) -> web.Response:
         """Return the authoritative completed task context for questionnaire display.

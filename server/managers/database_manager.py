@@ -32,6 +32,8 @@ class DatabaseManager:
         self._pending_operation_keys: Set[Tuple[Any, ...]] = set()
         self._shutdown_lock = threading.Lock()
         self._shutdown_requested = False
+        self._db_ready = threading.Event()
+        self._db_start_error: Optional[Exception] = None
         self._start_db_worker()
         atexit.register(self._cleanup_db_thread)
 
@@ -142,16 +144,30 @@ class DatabaseManager:
         """启动数据库工作线程"""
         self.db_thread = threading.Thread(target=self._db_worker, daemon=True)
         self.db_thread.start()
+        if not self._db_ready.wait(timeout=5.0):
+            raise TimeoutError("Timed out while starting the database worker")
+        if self._db_start_error is not None:
+            raise RuntimeError("Failed to start the database worker") from self._db_start_error
     
     def _db_worker(self) -> None:
         """在后台线程中同步处理所有数据库写入操作"""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        conn.execute('PRAGMA journal_mode=WAL;')
+        try:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=5.0)
+            conn.execute('PRAGMA journal_mode=WAL;')
+        except Exception as exc:
+            self._db_start_error = exc
+            self._db_ready.set()
+            self.logger.error("Failed to start DB worker: %s", exc, exc_info=True)
+            return
+        self._db_ready.set()
         self.logger.info("DB worker thread started, connection in WAL mode.")
         
         while True:
+            result_queue = None
             try:
-                sql, params = self.writer_queue.get(timeout=1)
+                item = self.writer_queue.get(timeout=1)
+                sql, params = item[0], item[1]
+                result_queue = item[2] if len(item) > 2 else None
                 
                 if sql is None:  # 停止信号
                     self.logger.info("DB worker thread received shutdown signal.")
@@ -159,11 +175,15 @@ class DatabaseManager:
                     
                 conn.execute(sql, params)
                 conn.commit()
+                if result_queue is not None:
+                    result_queue.put((True, None))
                 
             except queue.Empty:
                 continue
             except Exception as e:
                 self.logger.error(f"Failed to execute DB operation: {e}", exc_info=True)
+                if result_queue is not None:
+                    result_queue.put((False, e))
                 
         try:
             conn.commit()
@@ -211,6 +231,17 @@ class DatabaseManager:
     def execute_async(self, sql: str, params: tuple) -> None:
         """异步执行SQL语句"""
         self.writer_queue.put((sql, params))
+
+    def execute_sync(self, sql: str, params: tuple, timeout: float = 5.0) -> None:
+        """Queue a write and wait until the database worker commits it."""
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+        self.writer_queue.put((sql, params, result_queue))
+        try:
+            succeeded, error = result_queue.get(timeout=timeout)
+        except queue.Empty as exc:
+            raise TimeoutError("Timed out waiting for database write confirmation") from exc
+        if not succeeded:
+            raise RuntimeError("Database write failed") from error
 
     def build_task_setting_key(
         self,
@@ -408,11 +439,16 @@ class DatabaseManager:
             self.logger.warning("查询 task_run 失败: task_id=%s error=%s", task_id, exc)
             return None
     
-    def record_operation(self, operation: Dict[str, Any], is_practice: bool) -> None:
+    def record_operation(
+        self,
+        operation: Dict[str, Any],
+        is_practice: bool,
+        wait_for_commit: bool = False,
+    ) -> bool:
         """记录用户操作"""
         if is_practice:
             self.logger.debug(f"练习模式，跳过操作记录: {operation.get('operationType')}")
-            return
+            return True
 
         # 从parameters中提取is_correct值
         parameters = operation.get('parameters', {})
@@ -431,7 +467,7 @@ class DatabaseManager:
             with self._operation_lock:
                 if operation_key in self._pending_operation_keys:
                     self.logger.info(f"跳过重复操作记录: task_id={task_id}, operation={operation_type}")
-                    return
+                    return True
                 try:
                     with self.get_connection() as conn:
                         cursor = conn.cursor()
@@ -451,7 +487,7 @@ class DatabaseManager:
                             )
                         if cursor.fetchone():
                             self.logger.info(f"跳过已存在操作记录: task_id={task_id}, operation={operation_type}")
-                            return
+                            return True
                 except Exception as e:
                     self.logger.warning(f"检查 user_operations 重复记录失败，将继续写入: {e}")
                 self._pending_operation_keys.add(operation_key)
@@ -482,7 +518,17 @@ class DatabaseManager:
             operation.get('event_owner'),
             is_correct_str
         )
-        self.execute_async(sql, params)
+        try:
+            if wait_for_commit:
+                self.execute_sync(sql, params)
+            else:
+                self.execute_async(sql, params)
+        except Exception:
+            if operation_key:
+                with self._operation_lock:
+                    self._pending_operation_keys.discard(operation_key)
+            raise
+        return True
 
     @staticmethod
     def _extract_trust_events(parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1080,6 +1126,11 @@ class DatabaseManager:
                     is_ai_active BOOLEAN,
                     is_practice BOOLEAN,
                     progress_key TEXT,
+                    ai_probability_min REAL,
+                    ai_probability_max REAL,
+                    sampled_ai_probability REAL,
+                    ai_probability_seed INTEGER,
+                    ai_accuracy_algorithm TEXT,
                     config_json TEXT,
                     raw_message_json TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1109,6 +1160,11 @@ class DatabaseManager:
             "is_ai_active": "BOOLEAN",
             "is_practice": "BOOLEAN",
             "progress_key": "TEXT",
+            "ai_probability_min": "REAL",
+            "ai_probability_max": "REAL",
+            "sampled_ai_probability": "REAL",
+            "ai_probability_seed": "INTEGER",
+            "ai_accuracy_algorithm": "TEXT",
             "config_json": "TEXT",
             "raw_message_json": "TEXT",
             "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
@@ -2244,6 +2300,194 @@ class DatabaseManager:
             if not task_run or task_run.get("group_id") is None:
                 return None
             return int(task_run["group_id"])
+
+    def save_task_group_ai_accuracy(self, group_id: int, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist a group sample once and return the authoritative stored values."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM task_groups WHERE group_id = ?", (group_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise KeyError(f"task_group {group_id} does not exist")
+            columns = [description[0] for description in cursor.description]
+            group = dict(zip(columns, row))
+            if all(group.get(name) is not None for name in (
+                "ai_probability_min", "ai_probability_max", "sampled_ai_probability",
+                "ai_probability_seed", "ai_accuracy_algorithm",
+            )):
+                return group
+
+            config = self._parse_json_object(group.get("config_json"))
+            config["ai_accuracy"] = dict(context)
+            probability_range = context["probability_range"]
+            cursor.execute(
+                """
+                UPDATE task_groups
+                SET ai_probability_min = ?, ai_probability_max = ?,
+                    sampled_ai_probability = ?, ai_probability_seed = ?,
+                    ai_accuracy_algorithm = ?, config_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE group_id = ? AND sampled_ai_probability IS NULL
+                """,
+                (
+                    probability_range[0], probability_range[1],
+                    context["sampled_probability"], context["probability_seed"],
+                    context["algorithm_version"], json.dumps(config, ensure_ascii=False),
+                    group_id,
+                ),
+            )
+            conn.commit()
+            cursor.execute("SELECT * FROM task_groups WHERE group_id = ?", (group_id,))
+            saved = cursor.fetchone()
+            saved_columns = [description[0] for description in cursor.description]
+            return dict(zip(saved_columns, saved))
+
+    def get_ai_accuracy(self, group_id: int, include_decisions: bool = False) -> Optional[Dict[str, Any]]:
+        """Aggregate authoritative AI selections for one Radar/SA task group."""
+        group = self.get_task_group(group_id)
+        if not group:
+            return None
+        task_type = group.get("task_type")
+        operation_type = {
+            "RADAR_TARGETING": "target_selected",
+            "SA_THREAT_RESPONSE": "threat_clicked",
+        }.get(task_type)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT task_id, task_seq, status
+                FROM task_runs WHERE group_id = ?
+                ORDER BY COALESCE(task_seq, 2147483647), task_id
+                """,
+                (group_id,),
+            )
+            runs = [dict(zip(("task_id", "task_seq", "status"), row)) for row in cursor.fetchall()]
+            operations = []
+            if operation_type:
+                cursor.execute(
+                    """
+                    SELECT u.id, u.task_id, u.timestamp, u.parameters, u.is_correct
+                    FROM user_operations u
+                    JOIN task_runs r ON r.task_id = u.task_id
+                    WHERE r.group_id = ? AND u.operation_type = ?
+                      AND LOWER(IFNULL(u.event_owner, '')) = 'ai'
+                    ORDER BY u.task_id, u.id
+                    """,
+                    (group_id, operation_type),
+                )
+                operations = [
+                    dict(zip(("id", "task_id", "timestamp", "parameters", "is_correct"), row))
+                    for row in cursor.fetchall()
+                ]
+
+        by_task: Dict[int, Dict[str, Any]] = {}
+        duplicate_task_ids: List[int] = []
+        for operation in operations:
+            task_id = int(operation["task_id"])
+            if task_id in by_task:
+                if task_id not in duplicate_task_ids:
+                    duplicate_task_ids.append(task_id)
+                continue
+            parameters = self._parse_json_object(operation.get("parameters"))
+            correct_raw = operation.get("is_correct")
+            if correct_raw not in ("true", "false"):
+                continue
+            by_task[task_id] = {
+                **operation,
+                "parameters": parameters,
+                "is_correct": correct_raw == "true",
+            }
+
+        correct_count = sum(1 for item in by_task.values() if item["is_correct"])
+        incorrect_count = len(by_task) - correct_count
+        actual_accuracy = correct_count / len(by_task) if by_task else None
+        sampled_probability = group.get("sampled_ai_probability")
+        sampled_probability = float(sampled_probability) if sampled_probability is not None else None
+        expected_task_ids = [int(run["task_id"]) for run in runs]
+        missing_task_ids = [task_id for task_id in expected_task_ids if task_id not in by_task]
+        expected_task_count = self._safe_int(group.get("expected_task_count")) or len(runs)
+        uncreated_task_count = max(expected_task_count - len(runs), 0)
+        algorithm_version = group.get("ai_accuracy_algorithm") or "legacy_untracked"
+        persisted_accuracy = self._parse_json_object(group.get("config_json")).get("ai_accuracy")
+        if not isinstance(persisted_accuracy, dict):
+            persisted_accuracy = {}
+        semantic_mismatch_task_ids: List[int] = []
+        for task_id, item in by_task.items():
+            audit = item["parameters"].get("ai_decision")
+            if not isinstance(audit, dict):
+                continue
+            selected_pool = audit.get("selected_pool")
+            actual_selection = audit.get("actual_selection")
+            expected_target_id = audit.get("expected_target_id")
+            pool_matches = (
+                isinstance(selected_pool, list)
+                and actual_selection is not None
+                and str(actual_selection) in {str(value) for value in selected_pool}
+            )
+            exact_target_matches = (
+                expected_target_id is None
+                or str(actual_selection) == str(expected_target_id)
+            )
+            if not pool_matches or not exact_target_matches:
+                semantic_mismatch_task_ids.append(task_id)
+        audit_complete = bool(
+            algorithm_version != "legacy_untracked"
+            and not missing_task_ids
+            and uncreated_task_count == 0
+            and not duplicate_task_ids
+            and not semantic_mismatch_task_ids
+            and all(isinstance(item["parameters"].get("ai_decision"), dict) for item in by_task.values())
+        )
+
+        result: Dict[str, Any] = {
+            "task_group_id": int(group_id),
+            "task_type": task_type,
+            "user_id": group.get("user_id"),
+            "status": group.get("status"),
+            "ai_level": persisted_accuracy.get("ai_level") or group.get("autonomy_level"),
+            "difficulty": persisted_accuracy.get("difficulty") or self.normalize_difficulty_value(group.get("difficulty")),
+            "algorithm_version": algorithm_version,
+            "probability_range": (
+                [float(group["ai_probability_min"]), float(group["ai_probability_max"])]
+                if group.get("ai_probability_min") is not None and group.get("ai_probability_max") is not None
+                else None
+            ),
+            "probability_seed": group.get("ai_probability_seed"),
+            "probability_random": persisted_accuracy.get("probability_random"),
+            "sampled_probability": sampled_probability,
+            "expected_task_count": expected_task_count,
+            "task_run_count": len(runs),
+            "valid_decision_count": len(by_task),
+            "correct_count": correct_count,
+            "incorrect_count": incorrect_count,
+            "actual_accuracy": actual_accuracy,
+            "deviation_from_sampled_probability": (
+                actual_accuracy - sampled_probability
+                if actual_accuracy is not None and sampled_probability is not None else None
+            ),
+            "missing_task_ids": missing_task_ids,
+            "missing_task_count": len(missing_task_ids) + uncreated_task_count,
+            "uncreated_task_count": uncreated_task_count,
+            "duplicate_task_ids": duplicate_task_ids,
+            "semantic_mismatch_task_ids": semantic_mismatch_task_ids,
+            "semantic_mismatch_count": len(semantic_mismatch_task_ids),
+            "audit_complete": audit_complete,
+        }
+        if include_decisions:
+            seq_by_task = {int(run["task_id"]): run.get("task_seq") for run in runs}
+            result["decisions"] = [
+                {
+                    "task_id": task_id,
+                    "task_seq": seq_by_task.get(task_id),
+                    "timestamp": item.get("timestamp"),
+                    "is_correct": item["is_correct"],
+                    "ai_decision": item["parameters"].get("ai_decision"),
+                }
+                for task_id, item in sorted(by_task.items(), key=lambda pair: (seq_by_task.get(pair[0]) or 0, pair[0]))
+            ]
+        return result
 
     def find_active_task_group(self, user_id: str, task_type: str,
                                progress_key: str = None, difficulty: str = None,

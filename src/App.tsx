@@ -27,6 +27,12 @@ interface TargetSelectParams {
   event_owner?: 'AI' | 'manual';
   action?: 'select' | 'reset';
   extra?: Record<string, unknown>;
+  ai_decision_outcome?: {
+    selected_pool: string[];
+    fallback_reason: string | null;
+    selection_protocol: string;
+    expected_target_id: string | null;
+  };
 }
 
 type TaskType = 'RADAR_TARGETING' | 'SA_THREAT_RESPONSE' | 'PLATFORM_CONTROL' | 'WEAPON_FIRING';
@@ -852,6 +858,7 @@ const MainApp: React.FC = observer(() => {
       if (params.iffMode !== undefined) payload.iff_mode = params.iffMode;
       if (params.externalTargetsTimestamp != null) payload.receive_timestamp = params.externalTargetsTimestamp;
       if (params.extra) payload.extra = params.extra;
+      if (params.ai_decision_outcome) payload.ai_decision_outcome = params.ai_decision_outcome;
       if (!isManualRepeatOfAITarget || action !== 'select') {
         sendMessage?.(payload);
       }

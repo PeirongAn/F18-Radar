@@ -24,6 +24,14 @@ from services.trust_control import (
     resolve_human_final_selection,
 )
 from services.ai_accuracy_curve import resolve_curve
+from services.ai_accuracy import (
+    AIAccuracyConfigError,
+    SELECTION_PROTOCOL_VERSION,
+    bind_task_decision_selection,
+    build_group_accuracy,
+    build_task_decision,
+    group_accuracy_from_row,
+)
 
 class MessageHandler:
     """消息处理器，负责处理客户端消息和业务逻辑"""
@@ -163,6 +171,171 @@ class MessageHandler:
                 'mark task run retried failed: old_task_id=%s new_task_id=%s error=%s',
                 old_task_id, new_task_id, exc, exc_info=True,
             )
+    def _prepare_ai_accuracy(
+        self,
+        session_state: Dict[str, Any],
+        *,
+        current_scenario: Dict[str, Any],
+        user_id: str,
+        task_type: str,
+        task_group_id: Optional[int],
+        task_id: int,
+        task_seq: Optional[int],
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Create or reload the group sample, then derive this task's decision."""
+        if not current_scenario.get("is_ai_active"):
+            return None, None
+        if task_group_id is None:
+            raise AIAccuracyConfigError("AI task is missing task_group_id")
+        ai_level = str(current_scenario.get("ai_level_name") or "").strip()
+        difficulty = str(current_scenario.get("difficulty_name") or "").strip().lower()
+        group_accuracy = None
+        if session_state.get("is_practice", False):
+            practice_contexts = session_state.setdefault("practice_ai_accuracy_contexts", {})
+            group_accuracy = practice_contexts.get(str(task_group_id))
+            if group_accuracy is None:
+                group_accuracy = build_group_accuracy(
+                    config_manager.get_config(),
+                    user_id=user_id,
+                    task_type=task_type,
+                    task_group_id=int(task_group_id),
+                    ai_level=ai_level,
+                    difficulty=difficulty,
+                )
+                practice_contexts[str(task_group_id)] = group_accuracy
+        else:
+            group = db_manager.get_task_group(int(task_group_id))
+            group_accuracy = group_accuracy_from_row(group or {})
+        if group_accuracy is None:
+            proposed = build_group_accuracy(
+                config_manager.get_config(),
+                user_id=user_id,
+                task_type=task_type,
+                task_group_id=int(task_group_id),
+                ai_level=ai_level,
+                difficulty=difficulty,
+            )
+            group = db_manager.save_task_group_ai_accuracy(int(task_group_id), proposed)
+            group_accuracy = group_accuracy_from_row(group)
+        if group_accuracy is None:
+            raise AIAccuracyConfigError("persisted AI accuracy context is incomplete")
+        normalized_task_seq = int(task_seq or 1)
+        decision = build_task_decision(
+            group_accuracy,
+            task_id=int(task_id),
+            task_seq=normalized_task_seq,
+            task_type=task_type,
+        )
+        contexts = session_state.setdefault("ai_decision_contexts", {})
+        contexts[str(task_id)] = {
+            "ai_accuracy": group_accuracy,
+            "ai_decision": decision,
+            "task_type": task_type,
+        }
+        return group_accuracy, decision
+
+    def _get_ai_decision_context(
+        self, session_state: Dict[str, Any], task_id: Any, task_type: str
+    ) -> Optional[Dict[str, Any]]:
+        context = (session_state.get("ai_decision_contexts") or {}).get(str(task_id))
+        if isinstance(context, dict) and context.get("task_type") == task_type:
+            return context
+        return None
+
+    def _bind_ai_decision_selection(
+        self,
+        session_state: Dict[str, Any],
+        task_id: Any,
+        task_type: str,
+        *,
+        correct_pool: List[Any],
+        incorrect_pool: List[Any],
+        correct_pool_empty_reason: str,
+        incorrect_pool_empty_reason: str,
+    ) -> Optional[Dict[str, Any]]:
+        context = self._get_ai_decision_context(session_state, task_id, task_type)
+        if not context:
+            return None
+        bound = bind_task_decision_selection(
+            context.get("ai_decision") or {},
+            correct_pool=correct_pool,
+            incorrect_pool=incorrect_pool,
+            correct_pool_empty_reason=correct_pool_empty_reason,
+            incorrect_pool_empty_reason=incorrect_pool_empty_reason,
+        )
+        context["ai_decision"] = bound
+        return bound
+
+    @staticmethod
+    def _validate_ai_selection_submission(
+        decision_context: Dict[str, Any],
+        message: Dict[str, Any],
+        selected_id: Any,
+    ) -> Optional[Tuple[str, str, Optional[str]]]:
+        decision = decision_context.get("ai_decision") or {}
+        expected_id = decision.get("expected_target_id")
+        expected_text = str(expected_id) if expected_id is not None else None
+        if not expected_text:
+            return (
+                "ai_decision_target_unavailable",
+                "The server has no authoritative target for this task.",
+                None,
+            )
+        outcome = message.get("ai_decision_outcome")
+        if not isinstance(outcome, dict) or outcome.get("selection_protocol") != SELECTION_PROTOCOL_VERSION:
+            return (
+                "ai_decision_protocol_mismatch",
+                "The frontend AI-selection protocol is missing or outdated. Refresh the task page.",
+                expected_text,
+            )
+        if str(outcome.get("expected_target_id")) != expected_text:
+            return (
+                "ai_decision_protocol_mismatch",
+                "The frontend AI decision does not match the current server decision.",
+                expected_text,
+            )
+        if str(selected_id) != expected_text:
+            return (
+                "ai_decision_target_mismatch",
+                "The submitted AI target does not match the authoritative server target.",
+                expected_text,
+            )
+        return None
+
+    def _build_ai_decision_audit(
+        self,
+        context: Optional[Dict[str, Any]],
+        message: Dict[str, Any],
+        *,
+        selected_id: Any,
+        is_correct: bool,
+        selected_pool: Optional[List[Any]] = None,
+        fallback_reason: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not context:
+            return None
+        group = dict(context.get("ai_accuracy") or {})
+        decision = dict(context.get("ai_decision") or {})
+        outcome = message.get("ai_decision_outcome")
+        if not isinstance(outcome, dict):
+            outcome = {}
+        use_client_outcome = selected_pool is None
+        if use_client_outcome:
+            selected_pool = outcome.get("selected_pool")
+        if not isinstance(selected_pool, list):
+            selected_pool = []
+        selected_pool = [str(item) for item in selected_pool if item is not None]
+        if fallback_reason is None and use_client_outcome:
+            fallback_reason = outcome.get("fallback_reason")
+        audit = {
+            **group,
+            **decision,
+            "selected_pool": selected_pool,
+            "fallback_reason": str(fallback_reason) if fallback_reason else None,
+            "actual_selection": str(selected_id) if selected_id is not None else None,
+            "is_correct": bool(is_correct),
+        }
+        return audit
 
     def _task_run_config(
         self,
@@ -977,6 +1150,25 @@ class MessageHandler:
                 task_type, task_id,
             )
         self._set_current_task(task_type, task_id, task_started_at_ms, task_setting_key)
+        try:
+            ai_accuracy, ai_decision = self._prepare_ai_accuracy(
+                session_state,
+                current_scenario=current_scenario,
+                user_id=user_id,
+                task_type=task_type,
+                task_group_id=task_group_id,
+                task_id=task_id,
+                task_seq=task_seq,
+            )
+        except AIAccuracyConfigError as exc:
+            self.logger.error("Invalid AI accuracy configuration: %s", exc)
+            return [{
+                "type": "ai_accuracy_config_invalid",
+                "task_type": task_type,
+                "task_group_id": task_group_id,
+                "message": str(exc),
+                "timestamp": int(time.time() * 1000),
+            }]
         self._ensure_unified_task_run(
             task_id,
             task_type,
@@ -1035,6 +1227,22 @@ class MessageHandler:
         self._store_trust_task_snapshot(
             session_state, task_id, task_type, radar_targets, radar_ground_truth
         )
+        if ai_decision:
+            ai_decision = self._bind_ai_decision_selection(
+                session_state,
+                task_id,
+                task_type,
+                correct_pool=[
+                    target.get('id') for target in radar_targets
+                    if target.get('type') == 'army'
+                ],
+                incorrect_pool=[
+                    target.get('id') for target in radar_targets
+                    if target.get('type') != 'army'
+                ],
+                correct_pool_empty_reason='enemy_pool_empty',
+                incorrect_pool_empty_reason='friendly_pool_empty',
+            )
 
         # 启动眼动追踪（有 Tobii 时生效，否则静默跳过）
         self._gaze_start(task_id, user_id=user_id, task_name=task_type, task_source=event_owner)
@@ -1056,6 +1264,9 @@ class MessageHandler:
         init_response["trust_control"] = self._build_trust_control_state(
             task_group_id, task_type, current_scenario, user_id
         )
+        if ai_accuracy and ai_decision:
+            init_response["ai_accuracy"] = ai_accuracy
+            init_response["ai_decision"] = ai_decision
         if platform_meta:
             init_response["platform_task"] = platform_meta
         self._log_task_count_notice(
@@ -1206,32 +1417,125 @@ class MessageHandler:
         print("消息类型: target_selected")
         target_id = message.get('target_id')
         iff_mode = message.get('iff_mode', False)
-        
-        targets = target_manager.get_targets()
-        is_enemy = any(target['id'] == target_id and target['type'] == 'army' for target in targets)
-        
+        if message.get('action', 'select') == 'reset' or not target_id:
+            return []
         task_id = self._get_current_task_id('RADAR_TARGETING')
-        if not session_state.get('is_practice', False) and task_id:
-            operation = {
-                'task_id': task_id,
-                'operationType': 'target_selected',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'receive_timestamp': message.get('receive_timestamp'),
-                'isActive': not iff_mode,
-                'parameters': {
-                    'target_id': target_id,
-                    'action': message.get('action', 'select'),
-                    'iff_mode': iff_mode,
-                    'is_enemy': is_enemy,
-                    'is_correct': (is_enemy and not iff_mode) or False,
-                    'extra': message.get('extra', {})
-                },
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner
+        message_task_id = message.get('task_id')
+        response_timestamp = int(time.time() * 1000)
+
+        def failed(
+            reason: str,
+            detail: str = '',
+            expected_target_id: Optional[str] = None,
+        ) -> List[Dict[str, Any]]:
+            response = {
+                'type': 'target_selected_record_failed',
+                'task_id': message_task_id if message_task_id is not None else task_id,
+                'target_id': target_id,
+                'reason': reason,
+                'message': detail,
+                'timestamp': response_timestamp,
             }
-            db_manager.record_operation(operation, session_state.get('is_practice', False))
-        else:
-            print("练习模式，跳过 target_selected 数据库记录。")
+            if expected_target_id is not None:
+                response['expected_target_id'] = expected_target_id
+            return [response]
+
+        if not task_id:
+            return failed('missing_active_task', 'No active radar task is available.')
+        if message_task_id is not None and str(message_task_id) != str(task_id):
+            return failed('stale_task', 'The target selection belongs to another radar task.')
+
+        targets = target_manager.get_targets()
+        selected_target = next((target for target in targets if target.get('id') == target_id), None)
+        if not selected_target:
+            return failed('invalid_target', 'The selected target is not part of the current radar task.')
+        is_enemy = selected_target.get('type') == 'army'
+        is_ai_selection = str(client_event_owner or '').strip().lower() == 'ai'
+        decision_context = self._get_ai_decision_context(session_state, task_id, 'RADAR_TARGETING')
+        if is_ai_selection and not decision_context:
+            return failed('missing_ai_decision_context', 'The server has no AI decision for this task.')
+        if is_ai_selection:
+            validation_error = self._validate_ai_selection_submission(
+                decision_context,
+                message,
+                target_id,
+            )
+            if validation_error:
+                return failed(*validation_error)
+        audit_pool = []
+        audit_fallback_reason = None
+        if decision_context:
+            decision = decision_context.get('ai_decision') or {}
+            audit_pool = list(decision.get('selected_pool') or [])
+            audit_fallback_reason = decision.get('fallback_reason')
+
+        existing_selection = session_state.get('radar_ai_selection')
+        if is_ai_selection and isinstance(existing_selection, dict) and str(existing_selection.get('task_id')) == str(task_id):
+            if existing_selection.get('target_id') != target_id:
+                return failed('selection_conflict', 'Another AI target has already been recorded for this task.')
+            return [{
+                'type': 'target_selected_recorded',
+                'task_id': task_id,
+                'target_id': target_id,
+                'persisted': bool(existing_selection.get('persisted')),
+                'duplicate': True,
+                'timestamp': response_timestamp,
+            }]
+
+        persisted = not session_state.get('is_practice', False)
+        is_correct = bool(is_enemy and not iff_mode)
+        parameters = {
+            'target_id': target_id,
+            'action': message.get('action', 'select'),
+            'iff_mode': iff_mode,
+            'is_enemy': is_enemy,
+            'is_correct': is_correct,
+            'extra': message.get('extra', {})
+        }
+        ai_decision_audit = self._build_ai_decision_audit(
+            decision_context,
+            message,
+            selected_id=target_id,
+            is_correct=is_correct,
+            selected_pool=audit_pool,
+            fallback_reason=audit_fallback_reason,
+        ) if is_ai_selection else None
+        if ai_decision_audit:
+            parameters['ai_decision'] = ai_decision_audit
+        operation = {
+            'task_id': task_id,
+            'operationType': 'target_selected',
+            'timestamp': message.get('timestamp', response_timestamp),
+            'receive_timestamp': message.get('receive_timestamp'),
+            'isActive': not iff_mode,
+            'parameters': parameters,
+            'user_id': message.get('user_id') or self.current_session.get('user_id', ''),
+            'event_owner': client_event_owner
+        }
+        try:
+            db_manager.record_operation(
+                operation,
+                session_state.get('is_practice', False),
+                wait_for_commit=persisted,
+            )
+        except Exception as exc:
+            self.logger.error(
+                'Failed to persist target_selected: task_id=%s target_id=%s error=%s',
+                task_id,
+                target_id,
+                exc,
+                exc_info=True,
+            )
+            return failed('database_write_failed', str(exc))
+
+        if is_ai_selection:
+            session_state['radar_ai_selection'] = {
+                'task_id': task_id,
+                'target_id': target_id,
+                'event_owner': 'AI',
+                'persisted': persisted,
+                'timestamp': operation['timestamp'],
+            }
 
         self._physio_marker("target_selected", message, session_state, {
             "operation": "target_selected",
@@ -1239,47 +1543,148 @@ class MessageHandler:
             "target_id": target_id,
             "iff_mode": iff_mode,
             "is_enemy": is_enemy,
-            "is_correct": (is_enemy and not iff_mode) or False,
+            "is_correct": is_correct,
         })
         
         return []
     
-    async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any], 
+    async def _handle_threat_clicked(self, message: Dict[str, Any], session_state: Dict[str, Any],
                                    client_event_owner: str) -> List[Dict[str, Any]]:
-        """处理威胁点击消息"""
-        print("消息类型: threat_clicked")
-
+        """Record an SA selection with server-owned truth and AI audit context."""
         task_id = self._get_current_task_id('SA_THREAT_RESPONSE')
-        if not session_state.get('is_practice', False) and task_id:
-            operation = {
-                'task_id': task_id,
-                'operationType': 'threat_clicked',
-                'timestamp': message.get('timestamp', int(time.time() * 1000)),
-                'isActive': True,
-                'receive_timestamp': message.get('receive_timestamp'),
-                'parameters': {
-                    'threat_id': message.get('threat_id'),
-                    'label': message.get('label'),
-                    'priority': message.get('priority'),
-                    'is_highest_priority': message.get('is_highest_priority'),
-                    'is_correct': message.get('is_highest_priority', False),
-                    'correct_answer': message.get('correct_answer'),
-                    'extra': message.get('extra', {})
-                },
-                'user_id': message.get('user_id', ''),
-                'event_owner': client_event_owner
+        threat_id = message.get('threat_id')
+        message_task_id = message.get('task_id')
+        is_ai_selection = str(client_event_owner or '').strip().lower() == 'ai'
+        response_timestamp = int(time.time() * 1000)
+
+        def failed(
+            reason: str,
+            detail: str = '',
+            expected_target_id: Optional[str] = None,
+        ) -> List[Dict[str, Any]]:
+            response = {
+                'type': 'threat_clicked_record_failed',
+                'task_id': message_task_id if message_task_id is not None else task_id,
+                'threat_id': threat_id,
+                'reason': reason,
+                'message': detail,
+                'timestamp': response_timestamp,
             }
-            db_manager.record_operation(operation, session_state.get('is_practice', False))
-        else:
-            print("练习模式，跳过 threat_clicked 数据库记录。")
+            if expected_target_id is not None:
+                response['expected_target_id'] = expected_target_id
+            return [response]
+
+        if not task_id or not threat_id:
+            return failed('missing_active_task_or_threat') if is_ai_selection else []
+        if message_task_id is not None and str(message_task_id) != str(task_id):
+            return failed('stale_task', 'The selection belongs to another SA task.')
+        truth = session_state.get('sa_threat_truth') or {}
+        valid_ids = truth.get('threat_ids') or []
+        if valid_ids and threat_id not in valid_ids:
+            return failed('invalid_threat', 'The selected threat is not part of the current SA task.')
+        highest_id = truth.get('highest_priority_threat_id')
+        is_correct = (
+            str(threat_id) == str(highest_id)
+            if highest_id is not None
+            else bool(message.get('is_highest_priority', False))
+        )
+        decision_context = self._get_ai_decision_context(session_state, task_id, 'SA_THREAT_RESPONSE')
+        if is_ai_selection and not decision_context:
+            return failed('missing_ai_decision_context', 'The server has no AI decision for this task.')
+        if is_ai_selection:
+            validation_error = self._validate_ai_selection_submission(
+                decision_context,
+                message,
+                threat_id,
+            )
+            if validation_error:
+                return failed(*validation_error)
+        audit_pool = []
+        audit_fallback_reason = None
+        if decision_context:
+            decision = decision_context.get('ai_decision') or {}
+            audit_pool = list(decision.get('selected_pool') or [])
+            audit_fallback_reason = decision.get('fallback_reason')
+
+        existing_selection = session_state.get('sa_ai_selection')
+        if is_ai_selection and isinstance(existing_selection, dict) and str(existing_selection.get('task_id')) == str(task_id):
+            if existing_selection.get('threat_id') != threat_id:
+                return failed('selection_conflict', 'Another AI threat has already been recorded for this task.')
+            return [{
+                'type': 'threat_clicked_recorded',
+                'task_id': task_id,
+                'threat_id': threat_id,
+                'persisted': bool(existing_selection.get('persisted')),
+                'duplicate': True,
+                'timestamp': response_timestamp,
+            }]
+
+        parameters = {
+            'threat_id': threat_id,
+            'label': message.get('label'),
+            'priority': message.get('priority'),
+            'is_highest_priority': is_correct,
+            'is_correct': is_correct,
+            'correct_answer': highest_id or message.get('correct_answer'),
+            'extra': message.get('extra', {})
+        }
+        ai_decision_audit = self._build_ai_decision_audit(
+            decision_context,
+            message,
+            selected_id=threat_id,
+            is_correct=is_correct,
+            selected_pool=audit_pool,
+            fallback_reason=audit_fallback_reason,
+        ) if is_ai_selection else None
+        if ai_decision_audit:
+            parameters['ai_decision'] = ai_decision_audit
+        operation = {
+            'task_id': task_id,
+            'operationType': 'threat_clicked',
+            'timestamp': message.get('timestamp', response_timestamp),
+            'isActive': True,
+            'receive_timestamp': message.get('receive_timestamp'),
+            'parameters': parameters,
+            'user_id': message.get('user_id') or self.current_session.get('user_id', ''),
+            'event_owner': client_event_owner
+        }
+        persisted = not session_state.get('is_practice', False)
+        try:
+            db_manager.record_operation(
+                operation,
+                session_state.get('is_practice', False),
+                wait_for_commit=persisted and is_ai_selection,
+            )
+        except Exception as exc:
+            self.logger.error(
+                'Failed to persist threat_clicked: task_id=%s threat_id=%s error=%s',
+                task_id, threat_id, exc, exc_info=True,
+            )
+            return failed('database_write_failed', str(exc))
+
+        if is_ai_selection:
+            session_state['sa_ai_selection'] = {
+                'task_id': task_id,
+                'threat_id': threat_id,
+                'persisted': persisted,
+                'timestamp': operation['timestamp'],
+            }
 
         self._physio_marker("threat_clicked", message, session_state, {
             "operation": "threat_clicked",
             "task_type": "SA_THREAT_RESPONSE",
-            "threat_id": message.get("threat_id"),
-            "is_highest_priority": message.get("is_highest_priority"),
+            "threat_id": threat_id,
+            "is_highest_priority": is_correct,
         })
-        
+        if is_ai_selection:
+            return [{
+                'type': 'threat_clicked_recorded',
+                'task_id': task_id,
+                'threat_id': threat_id,
+                'persisted': persisted,
+                'duplicate': False,
+                'timestamp': response_timestamp,
+            }]
         return []
 
     async def _handle_task_exit_request(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1669,6 +2074,25 @@ class MessageHandler:
                 task_type, task_id,
             )
         self._set_current_task(task_type, task_id, task_started_at_ms, task_setting_key)
+        try:
+            ai_accuracy, ai_decision = self._prepare_ai_accuracy(
+                session_state,
+                current_scenario=current_scenario,
+                user_id=user_id,
+                task_type=task_type,
+                task_group_id=task_group_id,
+                task_id=task_id,
+                task_seq=task_seq,
+            )
+        except AIAccuracyConfigError as exc:
+            self.logger.error("Invalid AI accuracy configuration: %s", exc)
+            return [{
+                "type": "ai_accuracy_config_invalid",
+                "task_type": task_type,
+                "task_group_id": task_group_id,
+                "message": str(exc),
+                "timestamp": int(time.time() * 1000),
+            }]
         self.current_session[f'{task_type}_scenario'] = current_scenario
         self._ensure_unified_task_run(
             task_id,
@@ -1746,6 +2170,26 @@ class MessageHandler:
                 [threat.to_dict() for threat in threat_result.threats],
                 threat_result.highest_priority_threat_id,
             )
+            session_state['sa_threat_truth'] = {
+                'task_id': task_id,
+                'threat_ids': [threat.id for threat in threat_result.threats],
+                'highest_priority_threat_id': threat_result.highest_priority_threat_id,
+            }
+            if ai_decision:
+                threat_ids = session_state['sa_threat_truth']['threat_ids']
+                highest_id = session_state['sa_threat_truth']['highest_priority_threat_id']
+                ai_decision = self._bind_ai_decision_selection(
+                    session_state,
+                    task_id,
+                    task_type,
+                    correct_pool=[highest_id] if highest_id is not None else [],
+                    incorrect_pool=[
+                        threat_id for threat_id in threat_ids
+                        if str(threat_id) != str(highest_id)
+                    ],
+                    correct_pool_empty_reason='highest_priority_pool_empty',
+                    incorrect_pool_empty_reason='single_threat_no_incorrect_pool',
+                )
             
             # 创建增强威胁消息
             enhanced_response = message_protocol.create_enhanced_threats_message(
@@ -1762,6 +2206,11 @@ class MessageHandler:
             enhanced_response["trust_control"] = self._build_trust_control_state(
                 task_group_id, task_type, current_scenario, user_id
             )
+            if ai_accuracy and ai_decision:
+                enhanced_response['ai_accuracy'] = ai_accuracy
+                enhanced_response['ai_decision'] = ai_decision
+            if platform_meta:
+                enhanced_response['platform_task'] = platform_meta
             
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用
@@ -1812,6 +2261,26 @@ class MessageHandler:
             # 使用传统协议
             print("[MessageHandler] 使用传统协议生成威胁")
             threats = threat_manager.generate_sa_threats(current_scenario['difficulty_config'])
+            highest_id = threats[0].get('id') if threats else None
+            session_state['sa_threat_truth'] = {
+                'task_id': task_id,
+                'threat_ids': [threat.get('id') for threat in threats],
+                'highest_priority_threat_id': highest_id,
+            }
+            if ai_decision:
+                threat_ids = session_state['sa_threat_truth']['threat_ids']
+                ai_decision = self._bind_ai_decision_selection(
+                    session_state,
+                    task_id,
+                    task_type,
+                    correct_pool=[highest_id] if highest_id is not None else [],
+                    incorrect_pool=[
+                        threat_id for threat_id in threat_ids
+                        if str(threat_id) != str(highest_id)
+                    ],
+                    correct_pool_empty_reason='highest_priority_pool_empty',
+                    incorrect_pool_empty_reason='single_threat_no_incorrect_pool',
+                )
             
             response = {
                 'type': 'sa_task_updated',
@@ -1828,6 +2297,11 @@ class MessageHandler:
             response["trust_control"] = self._build_trust_control_state(
                 task_group_id, task_type, current_scenario, user_id
             )
+            if ai_accuracy and ai_decision:
+                response['ai_accuracy'] = ai_accuracy
+                response['ai_decision'] = ai_decision
+            if platform_meta:
+                response['platform_task'] = platform_meta
 
             if websocket:
                 # 设置当前任务ID到会话状态，供威胁管理器使用

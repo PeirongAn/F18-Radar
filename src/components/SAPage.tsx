@@ -21,6 +21,7 @@ import {
   createSaThreatLabelOrderState,
   getSaThreatBaseLabel,
 } from '../utils/saThreatLabels';
+import { selectSAThreat } from '../utils/aiAccuracyDecision';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
@@ -407,6 +408,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     taskKey: '',
     orderState: createSaThreatLabelOrderState(),
   });
+  const aiDecisionOutcomeRef = useRef<{
+    selected_pool: string[];
+    fallback_reason: string | null;
+    selection_protocol: string;
+    expected_target_id: string | null;
+  } | null>(null);
   const attentionIntervalRef = useRef<number | null>(null);
   const attentionTimeoutRef = useRef<number | null>(null);
   const [highestThreatAttentionVisible, setHighestThreatAttentionVisible] = useState(false);
@@ -1829,6 +1836,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       
       sendMessage({
         type: 'threat_clicked',
+        task_id: getCurrentSATaskId(),
         threat_id: threat.id,
         label: threatLabel,
         priority: originalPriority,
@@ -1839,6 +1847,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         event_owner: eventOwner,
         operation_type: 'icon_click', // 标识这是通过图标点击的操作
         extra: buildThreatTrustLogExtra(),
+        ai_decision_outcome: eventOwner === 'AI' ? aiDecisionOutcomeRef.current : undefined,
       });
     }
     
@@ -1848,7 +1857,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
       onAddMessage('sa_threat', `${actor} 选择威胁：${displayThreatLabel}，优先级：${priorityText}，等待确认`);
     }
-  }, [getCurrentHighestPriorityThreat, getSaThreatDisplayLabel, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra, unifiedTrustCandidates, unifiedTrustTrial.recordHumanSelection]);
+  }, [getCurrentHighestPriorityThreat, getCurrentSATaskId, getSaThreatDisplayLabel, onAddMessage, sendMessage, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra, unifiedTrustCandidates, unifiedTrustTrial.recordHumanSelection]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -2001,47 +2010,23 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const getBestThreat = useCallback(() => {
     if (threatsWithScore.length === 0) return null;
 
-    const level = agentStore.currentAILevel;
-    const probabilities = agentStore.currentAILevelConfig?.decision_probabilities || [1.0];
-    
-    // 根据配置生成准确率（从正确池子选择的概率）
-    let accuracy = 1.0; // 默认值
-    if (probabilities.length === 1) {
-      // 只有一个值，直接使用
-      accuracy = probabilities[0];
-    } else if (probabilities.length >= 2) {
-      // 有两个或多个值，第一个是最小值，第二个是最大值，在范围内随机生成
-      const min = probabilities[0];
-      const max = probabilities[1];
-      accuracy = parseFloat((Math.random() * (max - min) + min).toFixed(2));
+    const decision = agentStore.currentAIDecision;
+    if (!decision || String(decision.task_id) !== String(getCurrentSATaskId())) {
+      console.warn('[AI Agent] Waiting for the server-owned AI decision context.');
+      return null;
     }
-    
-    // 根据准确率决定选择：正确池子 vs 错误池子
-    const randomChoice = Math.random();
-    let choiceIndex = 0;
-    
-    if (randomChoice <= accuracy) {
-      // 从正确池子选择：选择最佳威胁（排序第一的）
-      choiceIndex = 0;
-    } else {
-      // 从错误池子选择：选择非最佳威胁
-      if (threatsWithScore.length > 1) {
-        choiceIndex = Math.floor(Math.random() * (threatsWithScore.length - 1)) + 1;
-      } else {
-        // 如果只有一个威胁，即使要选错误的，也只能选这个
-        choiceIndex = 0;
-      }
-    }
-    
-    const bestThreatInfo = threatsWithScore[choiceIndex];
-
-    if (!bestThreatInfo) return null;
-    
-    console.log(`[AI Agent] Level: ${level}, Accuracy: ${accuracy}, Choice Index: ${choiceIndex}, Threat: ${bestThreatInfo.threat.label || bestThreatInfo.threat.type}`);
-    console.log(`[gazerelation] AI选择最有目标中`);
-    // 返回被选中威胁的原始对象，因为 handleThreatIconClick 需要它
-    return bestThreatInfo.threat;
-  }, [threatsWithScore, agentStore.currentAILevel, agentStore.currentAILevelConfig]);
+    const outcome = selectSAThreat(
+      threatsWithScore.map(item => item.threat),
+      decision,
+    );
+    aiDecisionOutcomeRef.current = {
+      selected_pool: outcome.selectedPool,
+      fallback_reason: outcome.fallbackReason,
+      selection_protocol: outcome.selectionProtocol,
+      expected_target_id: outcome.expectedTargetId,
+    };
+    return outcome.selected ?? null;
+  }, [threatsWithScore, agentStore.currentAIDecision, getCurrentSATaskId]);
 
   // 智能体自动处理临机事件
   useAIAgent({
