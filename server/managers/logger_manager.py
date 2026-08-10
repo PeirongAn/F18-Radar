@@ -8,6 +8,7 @@ import os
 import sys
 from datetime import datetime
 from typing import Optional
+from runtime_paths import LOG_DIR
 
 # 尝试导入colorama，如果失败则使用无颜色版本
 try:
@@ -115,8 +116,7 @@ class LoggerManager:
         """创建文件处理器"""
         try:
             # 确保日志目录存在，固定写到 server/logs，避免受启动目录影响
-            server_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            log_dir = os.path.join(server_dir, "logs")
+            log_dir = str(LOG_DIR)
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
             

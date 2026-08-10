@@ -28,3 +28,8 @@ radar_env/
 server/venv/
 server/data/
 server/.env
+
+# Portable Windows packaging outputs
+release/
+build/pyinstaller-dist/
+build/pyinstaller-portable/

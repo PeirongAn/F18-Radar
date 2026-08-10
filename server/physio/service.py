@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from glob import glob
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
+from runtime_paths import DATA_DIR
 
 try:
     import pylsl as _pylsl
@@ -19,11 +20,10 @@ except Exception:
     _pylsl = None
 
 
-SERVER_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_VENDOR_ROOT = r"D:\hengzhi\data"
-DEFAULT_DB_PATH = SERVER_DIR / "data" / "physio" / "experiment_data.sqlite3"
-DEFAULT_EXPORT_DIR = SERVER_DIR / "data" / "physio" / "exports"
-DEFAULT_RAW_DIR = SERVER_DIR / "data" / "physio" / "raw"
+DEFAULT_DB_PATH = DATA_DIR / "physio" / "experiment_data.sqlite3"
+DEFAULT_EXPORT_DIR = DATA_DIR / "physio" / "exports"
+DEFAULT_RAW_DIR = DATA_DIR / "physio" / "raw"
 DEFAULT_STREAMS = ["ppg", "eda", "acc", "gyro", "hr", "skt", "env", "o2"]
 DEFAULT_LSL_STREAMS = ["ppg_ori", "ppg_filter", "eda", "hr", "o2", "skt", "env", "acc", "gyro", "mark"]
 SAMPLE_HEADER = [

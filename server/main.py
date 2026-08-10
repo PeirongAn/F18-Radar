@@ -22,6 +22,9 @@ if __name__ == "__main__":
 from env_loader import load_server_env
 load_server_env()
 
+from runtime_paths import DATA_DIR, RUNTIME_HOME, WEB_DIR, ensure_writable_directories
+ensure_writable_directories()
+
 from managers import config_manager, db_manager, info, warning, error
 from network import websocket_server
 from joystick.joystick_event_handler import JoystickEventHandler
@@ -39,10 +42,9 @@ _gaze_svc = None  # 全局 GazeService 实例，供 main() finally 块清理
 _physio_svc = None
 
 # 眼动数据存储目录（相对本文件）
-_SERVER_DIR = os.path.dirname(__file__)
-_RADAR_DB_PATH = os.path.join(_SERVER_DIR, "data", "radar_operations.db")
-_GAZE_DATA_DIR = os.path.join(_SERVER_DIR, "data", "gaze")
-_PHYSIO_DB_PATH = os.path.join(_SERVER_DIR, "data", "physio", "experiment_data.sqlite3")
+_RADAR_DB_PATH = str(DATA_DIR / "radar_operations.db")
+_GAZE_DATA_DIR = str(DATA_DIR / "gaze")
+_PHYSIO_DB_PATH = str(DATA_DIR / "physio" / "experiment_data.sqlite3")
 _PHYSIO_START_STATUS_TIMEOUT_SEC = float(os.getenv("PHYSIO_START_STATUS_TIMEOUT_SEC", "5"))
 _PHYSIO_NO_LIVE_SAMPLE_WARNING = "No live samples in the current vendor CSV session"
 _PHYSIO_OPTIONAL_LSL_STREAMS = {"mark"}
@@ -274,9 +276,9 @@ def setup_static_directory(static_dir=None):
     """设置静态文件目录"""
     if static_dir:
         if not os.path.isabs(static_dir):
-            static_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), static_dir))
+            static_dir = os.path.abspath(os.path.join(str(RUNTIME_HOME), static_dir))
     else:
-        static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'dist')
+        static_dir = str(WEB_DIR)
     
     info(f"静态文件目录设置为: {static_dir}", "main")
     

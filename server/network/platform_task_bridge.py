@@ -11,6 +11,7 @@ import time as _time
 from typing import Any, Dict, List, Optional, Tuple
 
 from managers import config_manager, db_manager, generate_task_id, get_logger
+from runtime_paths import CONFIG_DIR
 
 logger = get_logger("platform_task")
 
@@ -32,7 +33,7 @@ _WEB_KIND_BY_TASK_TYPE = {
     "SA_THREAT_RESPONSE": "sa",
 }
 
-PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "public"))
+PUBLIC_DIR = str(CONFIG_DIR)
 INIT_CONFIG_PATH = os.path.join(PUBLIC_DIR, "init_config.json")
 
 

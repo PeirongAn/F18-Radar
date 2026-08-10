@@ -2,6 +2,7 @@ import json
 import os
 from typing import Dict, Any
 from .logger_manager import get_logger
+from runtime_paths import CONFIG_DIR
 
 class ConfigManager:
     """配置管理器，负责加载和管理系统配置"""
@@ -13,9 +14,7 @@ class ConfigManager:
     
     def load_config(self) -> None:
         """加载配置文件"""
-        script_dir = os.path.dirname(__file__)
-        config_path = os.path.join(script_dir, '..', '..', 'public', 'agent_level.json')
-        config_path = os.path.abspath(config_path)
+        config_path = str(CONFIG_DIR / 'agent_level.json')
         
         try:
             with open(config_path, 'r', encoding='utf-8') as f:

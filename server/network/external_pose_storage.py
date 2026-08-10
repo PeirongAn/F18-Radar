@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from managers import db_manager, get_logger
+from runtime_paths import DATA_DIR, RUNTIME_HOME
 
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_ROOT = SERVER_DIR / "data" / "external_pose" / "raw"
+DEFAULT_ROOT = DATA_DIR / "external_pose" / "raw"
 SUPPORTED_TASK_TYPES = {"PLATFORM_CONTROL", "WEAPON_FIRING"}
 SUPPORTED_SIDES = {"Our", "Enemy"}
 MAX_RECENT_SNAPSHOT_IDS = 100_000
@@ -60,7 +61,7 @@ def _storage_root(raw_path: Optional[str] = None) -> Path:
         return path
     parts = path.parts
     if parts and parts[0].lower() == "server":
-        return SERVER_DIR.parent / path
+        return RUNTIME_HOME / path
     return SERVER_DIR / path
 
 

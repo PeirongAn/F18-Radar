@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from managers import config_manager, target_manager, db_manager, get_logger
+from runtime_paths import WEB_DIR
 from core import message_handler
 from network.netlog import (
     duration_ms,
@@ -34,7 +35,7 @@ class HTTPServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8080, static_dir: str = None):
         self.host = host
         self.port = port
-        self.static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'dist')
+        self.static_dir = static_dir or str(WEB_DIR)
         self.logger = get_logger("http_server")
         self.app = web.Application(middlewares=[self._interface_log_middleware])
         self._routes_setup = False
@@ -133,6 +134,7 @@ class HTTPServer:
         """设置静态文件路由"""
         if os.path.exists(self.static_dir):
             # 添加静态文件路由
+            self.app.router.add_get('/', self.index_handler)
             self.app.router.add_static('/', self.static_dir, name='static', show_index=False)
             
             # 添加SPA fallback处理器 - 对于所有未找到的路由，返回index.html

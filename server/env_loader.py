@@ -12,7 +12,13 @@ from pathlib import Path
 
 def load_server_env(env_path: str | os.PathLike[str] | None = None) -> None:
     server_dir = Path(__file__).resolve().parent
-    path = Path(env_path) if env_path is not None else server_dir / ".env"
+    configured_path = os.environ.get("F18_RADAR_ENV_FILE", "").strip()
+    if env_path is not None:
+        path = Path(env_path)
+    elif configured_path:
+        path = Path(configured_path)
+    else:
+        path = server_dir / ".env"
     if not path.exists():
         return
 
