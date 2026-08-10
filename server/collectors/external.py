@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .storage import ExternalCollectorDatabase
+from runtime_paths import DATA_DIR, RUNTIME_HOME
 
 JsonDict = Dict[str, Any]
 SERVER_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_DB_PATH = SERVER_DIR / "data" / "external_collectors" / "collector_records.sqlite3"
+DEFAULT_DB_PATH = DATA_DIR / "external_collectors" / "collector_records.sqlite3"
 
 
 def _env_enabled(name: str, default: bool = False) -> bool:
@@ -476,7 +477,7 @@ def _resolve_db_path(raw_path: Optional[str]) -> str:
         return str(path)
     parts = path.parts
     if parts and parts[0].lower() == "server":
-        return str(SERVER_DIR.parent / path)
+        return str(RUNTIME_HOME / path)
     return str(SERVER_DIR / path)
 
 

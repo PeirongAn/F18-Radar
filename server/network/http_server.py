@@ -25,6 +25,7 @@ from network.netlog import (
     remote_from_request,
     should_log_http,
 )
+from runtime_paths import WEB_DIR
 
 class HTTPServer:
     """HTTP服务器，同时支持静态文件服务和WebSocket连接"""
@@ -32,7 +33,7 @@ class HTTPServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8080, static_dir: str = None):
         self.host = host
         self.port = port
-        self.static_dir = static_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'dist')
+        self.static_dir = static_dir or str(WEB_DIR)
         self.logger = get_logger("http_server")
         self.app = web.Application(middlewares=[self._interface_log_middleware])
         self._routes_setup = False
@@ -132,6 +133,9 @@ class HTTPServer:
         """设置静态文件路由"""
         if os.path.exists(self.static_dir):
             # 添加静态文件路由
+            # Register the exact root before the static prefix. Otherwise
+            # aiohttp returns 403 for a disabled directory listing.
+            self.app.router.add_get('/', self.index_handler)
             self.app.router.add_static('/', self.static_dir, name='static', show_index=False)
             
             # 添加SPA fallback处理器 - 对于所有未找到的路由，返回index.html

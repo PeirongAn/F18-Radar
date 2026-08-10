@@ -8,6 +8,7 @@ import time
 from contextlib import contextmanager
 from typing import Dict, Any, List, Optional, Set, Tuple
 from .logger_manager import get_logger
+from runtime_paths import DATA_DIR
 
 class DatabaseManager:
     """数据库管理器，负责数据库连接、初始化和异步写入"""
@@ -20,8 +21,7 @@ class DatabaseManager:
     def __init__(self, db_path: str = ''):
         if db_path == '':
             # 根据当前文件位置确定数据库路径
-            current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            db_path = os.path.join(current_dir, 'data', 'radar_operations.db')
+            db_path = str(DATA_DIR / 'radar_operations.db')
         self.db_path = db_path
         self.writer_queue = queue.Queue()
         self.db_thread: Optional[threading.Thread] = None

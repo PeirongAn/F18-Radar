@@ -29,10 +29,11 @@ from typing import Dict, Any
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from managers import get_logger
+from runtime_paths import CONFIG_DIR
 
 logger = get_logger("external_config")
 
-PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'public'))
+PUBLIC_DIR = str(CONFIG_DIR)
 INIT_CONFIG_PATH = os.path.join(PUBLIC_DIR, 'init_config.json')
 AGENT_LEVEL_PATH = os.path.join(PUBLIC_DIR, 'agent_level.json')
 
