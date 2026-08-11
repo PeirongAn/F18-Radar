@@ -1,0 +1,5 @@
+﻿name=F18-Radar-0.1.0-test-win-x64
+version=0.1.0-test
+built_at=2026-08-07 17:11:15 +08:00
+python=3.10
+platform=windows-x64

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>雷达目标敌我识别策略</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; padding: 20px; line-height: 1.6; color: #333; background-color: #fdfdfd; padding-top: 80px; /* 为返回按钮留出空间 */ }
+        .container { max-width: 800px; margin: auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h1, h2 { color: #1a1a1a; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 30px; }
+        h1 { font-size: 2em; }
+        p, li { color: #444; font-size: 1.1em; }
+        .formula-box { background-color: #e9f5ff; border: 2px solid #b3d7ff; padding: 20px; margin: 25px 0; border-radius: 8px; font-size: 1.2em; color: #0056b3; }
+        .formula-box code { font-family: 'Share Tech Mono', 'Consolas', monospace; font-weight: bold; }
+        .weight-emphasis { font-weight: bold; color: #0056b3; }
+        .highlight { color: #d9534f; font-weight: bold; }
+        .summary { background-color: #fcf8e3; border-left: 5px solid #f0ad4e; padding: 15px; margin-top: 20px; border-radius: 4px; }
+        .dimension { margin-bottom: 25px; padding-left: 20px; border-left: 3px solid #ccc; }
+        .dimension h3 { color: #007bff; margin-top: 0; }
+        .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: #007bff;
+            color: white;
+            padding: 10px 18px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+        .back-button:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>雷达目标敌我自动识别策略</h1>
+        <p>
+            在雷达初次探测到一批未知目标时，为了能够快速评估战场态势，系统会执行一套自动的敌我识别程序。该程序的核心是为每个未知目标计算一个 <strong class="highlight">“威胁分数” (Threat Score)</strong>，并以此作为判定的主要依据。
+        </p>
+
+        <h2>核心评估维度</h2>
+        <p>
+            威胁分数的计算是动态且复杂的，它综合了两个关键维度：目标的<strong>距离</strong>和<strong>飞行航向</strong>。
+        </p>
+
+        <div class="dimension">
+            <h3>1. 距离分数 (Distance Score)</h3>
+            <p>
+                这是一个非常直观的指标：目标离我机越近，其潜在威胁就越大。距离分数是一个归一化的值（0到1之间），距离越近，分数越高。
+            </p>
+        </div>
+
+        <div class="dimension">
+            <h3>2. 航向分数 (Heading Score)</h3>
+            <p>
+                这个维度评估的是目标的飞行意图，采用连续变化的威胁评估模型。系统基于目标的绝对航向角度计算威胁分数。
+            </p>
+            <ul>
+                <li><strong class="highlight">0度（正北方向）</strong>：威胁分数最低（-1），表示目标正在远离或处于低威胁状态</li>
+                <li><strong class="highlight">180度（正南方向）</strong>：威胁分数最高（+1），表示目标处于最高威胁状态</li>
+                <li><strong class="highlight">90度和270度（东西方向）</strong>：威胁分数为中等（0），表示目标处于中等威胁状态</li>
+                <li>威胁分数使用余弦函数连续变化：<code>航向分数 = -cos(航向角度)</code></li>
+            </ul>
+        </div>
+
+        <h2>加权计分与最终判定</h2>
+        <p>
+            系统在综合评估时，为这两个维度分配了不同的重要性权重，以构建一个更全面的威胁模型。
+        </p>
+        <div class="formula-box">
+            <code>总威胁分数 = (距离分数 * <span class="weight-emphasis">90%</span>) + (航向分数 * <span class="weight-emphasis">10%</span>)</code>
+        </div>
+        <p>
+            这个公式表明，在当前策略下，我们认为目标的 <strong class="highlight">距离依然是最重要的因素</strong>，但其飞行航向的威胁程度也占有相当大的比重。航向评分采用连续变化模型，能够更精确地反映不同方向的威胁水平。
+        </p>
+
+        <h2>连续威胁评估模型</h2>
+        <p>
+            新的航向评分系统摒弃了传统的分段评分方式，采用数学函数实现威胁值的平滑过渡：
+        </p>
+        <div class="formula-box">
+            <code>航向分数 = -cos(航向角度)</code>
+        </div>
+        <p>
+            这种连续变化的模型具有以下优势：
+        </p>
+        <ul>
+            <li><strong>平滑过渡</strong>：威胁值在-1到+1之间连续变化，避免了突变</li>
+            <li><strong>对称性</strong>：东西方向（90°/270°）威胁值相等，符合战术逻辑</li>
+            <li><strong>极值明确</strong>：正北（0°）威胁最小，正南（180°）威胁最大</li>
+            <li><strong>数学稳定</strong>：基于余弦函数，计算结果稳定可靠</li>
+        </ul>
+
+        <div class="summary">
+            <h2>最终识别规则</h2>
+            <p>
+                在计算出所有未知目标的"总威胁分数"后，系统会将它们从高到低进行排序。
+            </p>
+            <p>
+                最终，<strong>得分最高的2个目标将被自动识别为"敌机"(Enemy/Army)</strong>，并以相应的符号在雷达上标出。其余所有目标则被识别为"友机"(Friend)。
+            </p>
+        </div>
+    </div>
+</body>
+</html> 

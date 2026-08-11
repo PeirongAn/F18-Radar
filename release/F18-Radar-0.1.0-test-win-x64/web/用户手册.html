@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JF-17雷达系统模拟器 - 用户操作手册</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        
+        .layout {
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        .sidebar {
+            width: 280px;
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        
+        .sidebar h2 {
+            color: #ecf0f1;
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #34495e;
+            padding-bottom: 10px;
+        }
+        
+        .sidebar ol {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        
+        .sidebar li {
+            margin: 0;
+            padding: 0;
+        }
+        
+        .sidebar a {
+            display: block;
+            color: #bdc3c7;
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        .sidebar a:hover {
+            background-color: #34495e;
+            color: #3498db;
+            transform: translateX(5px);
+        }
+        
+        .sidebar a.active {
+            background-color: #3498db;
+            color: white;
+        }
+        
+        .content {
+            flex: 1;
+            margin-left: 280px;
+            padding: 0;
+        }
+        
+        .container {
+            background-color: white;
+            padding: 40px;
+            margin: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 1000px;
+        }
+        
+        .sidebar-toggle {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 1001;
+            font-size: 16px;
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        
+        h2 {
+            color: #34495e;
+            margin-top: 40px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+        
+        h3 {
+            color: #2980b9;
+            margin-top: 30px;
+        }
+        
+        h4 {
+            color: #8e44ad;
+            margin-top: 25px;
+        }
+        
+        .toc {
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+        
+        .toc h2 {
+            margin-top: 0;
+            border-bottom: none;
+            color: #2c3e50;
+        }
+        
+        .toc ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .toc li {
+            margin: 8px 0;
+        }
+        
+        .toc a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        
+        .toc a:hover {
+            text-decoration: underline;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: white;
+        }
+        
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        
+        th {
+            background-color: #3498db;
+            color: white;
+            font-weight: bold;
+        }
+        
+        tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+            color: #e74c3c;
+        }
+        
+        pre {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        pre code {
+            background-color: transparent;
+            color: #ecf0f1;
+        }
+        
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+        
+        li {
+            margin: 8px 0;
+        }
+        
+        strong {
+            color: #2c3e50;
+        }
+        
+        .highlight {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        
+        .warning {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        
+        .image-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        .image-container img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .image-caption {
+            font-style: italic;
+            color: #666;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        
+        .section-divider {
+            border-top: 1px solid #bdc3c7;
+            margin: 40px 0;
+        }
+        
+        .back-to-top {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #3498db;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 50%;
+            text-decoration: none;
+            font-weight: bold;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            transition: background-color 0.3s;
+        }
+        
+        .back-to-top:hover {
+            background-color: #2980b9;
+        }
+        
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+            
+            .sidebar.open {
+                transform: translateX(0);
+            }
+            
+            .sidebar-toggle {
+                display: block;
+            }
+            
+            .content {
+                margin-left: 0;
+            }
+            
+            .container {
+                margin: 10px;
+                padding: 20px;
+            }
+            
+            table {
+                font-size: 14px;
+            }
+            
+            th, td {
+                padding: 8px;
+            }
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid #ecf0f1;
+            color: #7f8c8d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+    
+    <div class="layout">
+        <div class="sidebar" id="sidebar">
+            <h2>目录</h2>
+            <ol>
+                <li><a href="#系统概述">系统概述</a></li>
+                <li><a href="#登录与初始设置">登录与初始设置</a></li>
+                <li><a href="#雷达目标识别任务">雷达目标识别任务</a></li>
+                <li><a href="#sa威胁应对任务">SA威胁应对任务</a></li>
+                <li><a href="#ai智能助手使用">AI智能助手使用</a></li>
+                <li><a href="#任务记录与进度显示">任务记录与进度显示</a></li>
+                <li><a href="#快捷键参考">快捷键参考</a></li>
+                <li><a href="#常见问题解答">常见问题解答</a></li>
+            </ol>
+        </div>
+        
+        <div class="content">
+            <div class="container">
+                <h1 id="top">JF-17雷达系统模拟器 - 用户操作手册</h1>
+                
+                <div class="section-divider"></div>
+
+                <h2 id="系统概述">系统概述</h2>
+                <p>JF-17雷达系统模拟器是一个飞行器雷达操作练习系统，提供仿真的雷达操作体验。</p>
+
+                <h3>主要任务类型</h3>
+                <ul>
+                    <li><strong>雷达目标识别任务</strong>：空对空雷达探测、跟踪和识别目标</li>
+                    <li><strong>SA威胁应对任务</strong>：态势感知和威胁评估练习</li>
+                </ul>
+
+                <h3>模式说明</h3>
+                <ul>
+                    <li><strong>练习模式</strong>：无限次练习，熟悉操作流程</li>
+                    <li><strong>正式模式</strong>：正式评估，记录操作成绩</li>
+                </ul>
+
+                <div class="section-divider"></div>
+
+                <h2 id="登录与初始设置">登录与初始设置</h2>
+
+                <h3>启动系统</h3>
+                <ol>
+                    <li>打开浏览器，访问系统地址</li>
+                    <li>等待系统加载完成</li>
+                </ol>
+
+                <h3>用户登录</h3>
+                <ol>
+                    <li>
+                        <strong>输入用户ID</strong>
+                        <ul>
+                            <li>输入你的用户标识（用于记录和识别）</li>
+                            <li>例如：<code>张三_001</code> 或 <code>pilot_001</code></li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>选择AI助手</strong>
+                        <ul>
+                            <li>✅ <strong>启用AI助手</strong>：系统会提供智能操作建议和自动化功能</li>
+                            <li>❌ <strong>不启用AI助手</strong>：完全手动操作模式</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>选择任务类型</strong>
+                        <ul>
+                            <li><strong>雷达任务</strong>：进入雷达目标识别练习</li>
+                            <li><strong>SA任务</strong>：进入威胁应对练习</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>选择练习模式</strong>
+                        <ul>
+                            <li><strong>练习模式</strong>：用于学习和熟悉操作</li>
+                            <li><strong>正式模式</strong>：用于考核评估</li>
+                        </ul>
+                    </li>
+                    <li><strong>点击"开始"</strong>进入练习界面</li>
+                </ol>
+
+                <div class="section-divider"></div>
+
+                <h2 id="雷达目标识别任务">雷达目标识别任务</h2>
+
+                <h3>任务目标</h3>
+                <p>在雷达屏幕上发现、锁定并识别空中目标，判断敌我属性。</p>
+
+                <h3>界面介绍</h3>
+
+                <h4>主要显示区域</h4>
+                <ul>
+                    <li><strong>雷达显示屏</strong>：中央圆形区域，显示目标回波</li>
+                    <li><strong>扫描线</strong>：绿色旋转线，表示雷达扫描方向</li>
+                    <li><strong>TDC光标</strong>：十字形光标，用于选择目标</li>
+                    <li><strong>参数显示</strong>：显示距离、角度、高度等信息</li>
+                </ul>
+
+                <h4>控制面板</h4>
+                <ul>
+                    <li><strong>雷达控制按钮</strong>：开关、模式切换等</li>
+                    <li><strong>IFF按钮</strong>：敌我识别功能</li>
+                    <li><strong>天线控制</strong>：调整雷达仰角</li>
+                </ul>
+
+                <div class="image-container">
+                    <img src="./public/images/radar_setting.png" alt="雷达任务界面">
+                    <div class="image-caption">图1: 雷达任务设置操作</div>
+                </div>
+
+                <h3>操作步骤</h3>
+
+                <h4>1. 系统准备</h4>
+                <ol>
+                    <li>
+                        <strong>检查连接状态</strong>
+                        <ul>
+                            <li>确认右上角显示"已连接"</li>
+                            <li>如显示"未连接"，请等待或刷新页面</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>设置雷达扫描距离</strong>
+                        <ul>
+                            <li>在数组[10,20,40,80] 之间变化</li>
+                            <li>设置方式参考图1</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>设置雷达扫描范围</strong>
+                        <ul>
+                            <li>在数组[15，30，60] 之间变化</li>
+                            <li>设置方式参考图1</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>天线调整</strong>（如有提示）
+                        <ul>
+                            <li>根据屏幕提示调整天线俯仰角</li>
+                            <li>使用鼠标拖拽或按钮控制</li>
+                            <li>调整到目标角度后确认</li>
+                            <li>按键 b 图1中左侧天线箭头向上移动</li>
+                            <li>按键 t 图1中左侧天线箭头向下移动</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <div class="image-container">
+                    <img src="./public/images/radar_setting.png" alt="雷达任务日志">
+                    <div class="image-caption">图2: 雷达任务设置参考</div>
+                </div>
+
+                <h4>2. 目标搜索</h4>
+                <ol>
+                    <li>
+                        <strong>观察雷达屏幕</strong>
+                        <ul>
+                            <li>注意扫描线扫过的区域</li>
+                            <li>目标会以黄色符号显示</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>目标类型识别</strong>
+                        <ul>
+                            <li><strong>未知目标</strong>：黄色标号，"--"</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h4>3. 目标锁定</h4>
+                <p><strong>方法：TDC光标锁定</strong></p>
+                <ul>
+                    <li>参考<a href="#目标识别算法">目标识别算法</a>选择锁定目标</li>
+                    <li>使用方向键控制TDC光标移动</li>
+                    <li>将光标移动到目标位置</li>
+                    <li>按 <code>Enter</code> 键锁定目标</li>
+                </ul>
+
+                <h4>4. 敌我识别（IFF）</h4>
+                <ol>
+                    <li>
+                        <strong>激活IFF系统</strong>
+                        <ul>
+                            <li>锁定目标后，点击"IFF"按钮</li>
+                            <li>注意任务需要在开启IFF之前完成</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>等待识别结果</strong>
+                        <ul>
+                            <li>系统处理中会显示加载状态</li>
+                            <li>识别完成后显示结果</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>查看识别结果</strong>
+                        <ul>
+                            <li><strong>友机</strong>：显示绿色友好标识</li>
+                            <li><strong>敌机</strong>：显示红色敌对标识</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h4>5. 任务完成</h4>
+                <ol>
+                    <li>
+                        <strong>查看操作日志</strong>
+                        <ul>
+                            <li>右侧面板显示所有操作记录</li>
+                            <li>包括锁定时间、识别结果等</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>激活IFF系统</strong>
+                        <ul>
+                            <li>查看识别结果</li>
+                            <li>进入下一次任务</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h3 id="目标识别算法">目标识别算法</h3>
+
+                <h4>算法概述</h4>
+                <p>系统采用基于威胁分数的自动敌我识别策略。当雷达探测到一批未知目标时，系统会为每个目标计算"威胁分数"，并以此作为敌我判定的主要依据。</p>
+
+                <h4>核心评估维度</h4>
+                <p><strong>1. 距离分数 (Distance Score)</strong></p>
+                <ul>
+                    <li>目标离本机越近，威胁越大</li>
+                    <li>距离分数为归一化值（0-1之间）</li>
+                    <li>距离越近，分数越高</li>
+                </ul>
+
+                <p><strong>2. 航向分数 (Heading Score)</strong></p>
+                <ul>
+                    <li>评估目标的飞行意图和威胁程度</li>
+                    <li>基于目标绝对航向角度计算</li>
+                    <li>采用连续变化的威胁评估模型</li>
+                </ul>
+
+                <h4>航向威胁评分规则</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>航向角度</th>
+                            <th>威胁分数</th>
+                            <th>威胁状态</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>0°（正北）</td>
+                            <td>-1</td>
+                            <td>最低威胁（远离状态）</td>
+                        </tr>
+                        <tr>
+                            <td>90°/270°（东西）</td>
+                            <td>0</td>
+                            <td>中等威胁</td>
+                        </tr>
+                        <tr>
+                            <td>180°（正南）</td>
+                            <td>+1</td>
+                            <td>最高威胁（接近状态）</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p><strong>计算公式：</strong> <code>航向分数 = -cos(航向角度)</code></p>
+
+                <h4>加权计分算法</h4>
+                <p>系统使用加权平均方式综合两个维度：</p>
+
+                <pre><code>总威胁分数 = (距离分数 × 90%) + (航向分数 × 10%)</code></pre>
+
+                <p><strong>权重说明：</strong></p>
+                <ul>
+                    <li><strong>距离因素</strong>占90%：距离是最重要的威胁判定因素</li>
+                    <li><strong>航向因素</strong>占10%：目标飞行方向作为辅助判定</li>
+                </ul>
+
+                <h4>最终识别规则</h4>
+                <ol>
+                    <li><strong>威胁排序</strong>：系统将所有未知目标按总威胁分数从高到低排序</li>
+                    <li><strong>敌我判定</strong>：得分最高的2个目标被识别为"敌机"（红色标识）</li>
+                    <li><strong>友机标识</strong>：其余所有目标被识别为"友机"（绿色标识）</li>
+                </ol>
+
+                <div class="section-divider"></div>
+
+                <h2 id="sa威胁应对任务">SA威胁应对任务</h2>
+
+                <h3>任务目标</h3>
+                <p>观察态势感知显示屏，识别各类威胁，评估威胁优先级，制定应对策略。</p>
+
+                <h3>界面介绍</h3>
+
+                <h4>显示区域</h4>
+                <ul>
+                    <li><strong>圆形显示区</strong>：主要威胁显示区域</li>
+                    <li><strong>威胁图标</strong>：不同颜色和形状代表不同威胁类型</li>
+                    <li><strong>本机位置</strong>：显示区域底部中心点</li>
+                    <li><strong>方向指示</strong>：E/S/W/N方向标记</li>
+                </ul>
+
+                <h4>威胁类型图标</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>威胁类型</th>
+                            <th>图标颜色</th>
+                            <th>威胁等级</th>
+                            <th>说明</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Primary Air</td>
+                            <td>🔴 红色</td>
+                            <td>高</td>
+                            <td>主要空中威胁</td>
+                        </tr>
+                        <tr>
+                            <td>Secondary Air</td>
+                            <td>🟡 黄色</td>
+                            <td>中</td>
+                            <td>次要空中威胁</td>
+                        </tr>
+                        <tr>
+                            <td>Primary Anti-Aircraft Artillery</td>
+                            <td>🔴 红色</td>
+                            <td>高</td>
+                            <td>主要防空炮威胁</td>
+                        </tr>
+                        <tr>
+                            <td>Secondary Anti-Aircraft Artillery</td>
+                            <td>🟡 黄色</td>
+                            <td>中</td>
+                            <td>次要防空炮威胁</td>
+                        </tr>
+                        <tr>
+                            <td>Primary Naval</td>
+                            <td>🔴 红色</td>
+                            <td>高</td>
+                            <td>主要海上威胁</td>
+                        </tr>
+                        <tr>
+                            <td>Secondary Naval</td>
+                            <td>🟡 黄色</td>
+                            <td>中</td>
+                            <td>次要海上威胁</td>
+                        </tr>
+                        <tr>
+                            <td>Missile Up/Down</td>
+                            <td>🔴 红色</td>
+                            <td>极高</td>
+                            <td>导弹威胁</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>控制面板</h4>
+                <ul>
+                    <li><strong>查看结果</strong>：显示威胁优先级排序</li>
+                    <li><strong>Next按钮</strong>：进行下一次任务</li>
+                </ul>
+
+                <h3>操作步骤</h3>
+
+                <h4>1. 态势观察</h4>
+                <ol>
+                    <li>
+                        <strong>整体扫视</strong>
+                        <ul>
+                            <li>快速浏览整个显示区域</li>
+                            <li>识别所有可见威胁的位置和类型</li>
+                            <li>注意威胁的分布模式</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>威胁分类</strong>
+                        <ul>
+                            <li><strong>红色图标</strong>：高威胁，需要优先关注</li>
+                            <li><strong>黄色图标</strong>：中等威胁，次要关注</li>
+                            <li><strong>导弹图标</strong>：极高威胁，需要优先关注</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h4>2. 威胁分析</h4>
+                <ol>
+                    <li>
+                        <strong>距离评估</strong>
+                        <ul>
+                            <li>分析前确认"临机事件"已经发生，如图3</li>
+                            <li>观察威胁与本机的相对距离</li>
+                            <li>距离越近，威胁等级越高</li>
+                            <li>注意最近的威胁目标</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>类型优先级</strong>
+                        <ul>
+                            <li><strong>导弹威胁</strong>：最高优先级</li>
+                            <li><strong>Primary威胁</strong>：高优先级</li>
+                            <li><strong>Secondary威胁</strong>：中等优先级</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <div class="image-container">
+                    <img src="./public/images/sa_ref.png" alt="临机事件提示">
+                    <div class="image-caption">图3: SA日志项说明</div>
+                </div>
+
+                <h4>3. 威胁选择</h4>
+                <ol>
+                    <li>
+                        <strong>选择最具威胁项</strong>
+                        <ul>
+                            <li>点击对应图标，图4效果</li>
+                            <li>注意临机事件未发生，点击无效</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <div class="image-container">
+                    <img src="./public/images/sa_select.png" alt="SA任务操作">
+                    <div class="image-caption">图4: SA选择效果展示</div>
+                </div>
+
+                <h4>4. 结果查看</h4>
+                <ol>
+                    <li>
+                        <strong>点击"查看结果"按钮</strong>
+                        <ul>
+                            <li>系统自动计算威胁优先级</li>
+                            <li>显示详细的威胁排序列表</li>
+                        </ul>
+                    </li>
+                    <li>
+                        <strong>威胁列表解读</strong>
+                        <ul>
+                            <li><strong>序号</strong>：威胁优先级排名</li>
+                            <li><strong>类型</strong>：威胁分类</li>
+                            <li><strong>来源</strong>：Primary/Secondary分类</li>
+                            <li><strong>距离</strong>：与本机的距离（像素）</li>
+                            <li><strong>得分</strong>：威胁评分（越高越危险）</li>
+                            <li><strong>优先级</strong>：威胁等级</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h3>威胁评分算法</h3>
+                <p>系统根据以下因素计算威胁得分：</p>
+                <ul>
+                    <li><strong>距离因素</strong> 距离越近得分越高</li>
+                    <li><strong>类型权重</strong>：导弹(242) &gt; Primary(240) &gt; Secondary(200)</li>
+                </ul>
+
+                <p><strong>计算公式</strong>：<code>威胁得分 = 类型权重 ÷ 距离</code></p>
+
+                <h3>操作技巧</h3>
+                <ol>
+                    <li><strong>快速识别</strong>：先看颜色（红>黄），再看距离（近>远）</li>
+                    <li><strong>重点关注</strong>：导弹威胁和红色图标</li>
+                    <li><strong>动态评估</strong>：态势会变化，需要持续观察</li>
+                    <li><strong>优先级原则</strong>：选择最具威胁项</li>
+                </ol>
+
+                <div class="section-divider"></div>
+
+                <h2 id="ai智能助手使用">AI智能助手使用</h2>
+
+                <h3>AI助手功能</h3>
+                <p>当启用AI助手时，系统会提供智能化的操作建议和自动化功能。</p>
+
+                <h3>雷达任务中的AI助手</h3>
+
+                <h4>自动目标选择</h4>
+                <ul>
+                    <li>AI会自动识别最优目标</li>
+                    <li>优先选择距离近、威胁大的目标</li>
+                    <li>用户可以接受或拒绝AI建议（拒绝则重新选择）</li>
+                </ul>
+
+                <h4>自动TDC控制</h4>
+                <ul>
+                    <li>AI可以自动移动TDC光标到目标位置</li>
+                    <li>减少手动操作时间</li>
+                    <li>提高锁定精度</li>
+                </ul>
+
+                <h4>操作建议</h4>
+                <ul>
+                    <li>AI会在屏幕上显示操作提示</li>
+                    <li>用户若觉得不对则重新选择</li>
+                </ul>
+
+                <h3>SA任务中的AI助手</h3>
+
+                <h4>威胁识别建议</h4>
+                <ul>
+                    <li>AI会标记重要威胁</li>
+                    <li>提供威胁优先级建议</li>
+                    <li>辅助用户快速识别关键威胁</li>
+                </ul>
+
+                <h4>策略建议</h4>
+                <ul>
+                    <li>根据威胁分布提供应对建议</li>
+                    <li>推荐最优的处理顺序</li>
+                    <li>帮助制定有效的应对策略</li>
+                </ul>
+
+                <h3>与AI协作技巧</h3>
+                <ol>
+                    <li><strong>学习模式</strong>：观察AI的操作逻辑，学习最佳实践</li>
+                    <li><strong>验证建议</strong>：不要盲从AI，要验证其建议的合理性</li>
+                    <li><strong>手动干预</strong>：必要时可以覆盖AI的选择</li>
+                </ol>
+
+                <div class="section-divider"></div>
+
+                <h2 id="任务记录与进度显示">任务记录与进度显示</h2>
+
+                <h3>任务信息面板</h3>
+                <p>系统左上角显示详细的任务进度和状态信息，帮助用户了解当前练习情况。</p>
+
+                <h3>显示内容说明</h3>
+
+                <h4>基本信息</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>字段</th>
+                            <th>说明</th>
+                            <th>示例</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>模式</strong></td>
+                            <td>当前练习模式</td>
+                            <td><code>练习模式</code> / <code>正式模式</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>难度</strong></td>
+                            <td>任务难度等级</td>
+                            <td><code>低</code> / <code>中等</code> / <code>困难</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>场景类型</strong></td>
+                            <td>当前场景在总场景中的序号</td>
+                            <td><code>2 / 5</code>（当前第2个场景，共5个场景）</td>
+                        </tr>
+                        <tr>
+                            <td><strong>重复进度</strong></td>
+                            <td>当前重复次数和总次数</td>
+                            <td><code>3 / 10</code>（已完成3次，共需10次）</td>
+                        </tr>
+                        <tr>
+                            <td><strong>音频</strong></td>
+                            <td>音频提示状态</td>
+                            <td><code>开启</code> / <code>关闭</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h4>模式说明</h4>
+                <ul>
+                    <li><strong>练习模式</strong>：用于学习和熟悉操作，不计入正式成绩</li>
+                    <li><strong>正式模式</strong>：正式考核模式，操作结果会被记录和评估</li>
+                </ul>
+
+                <h4>难度等级</h4>
+                <ul>
+                    <li><strong>低</strong>：基础难度，目标较少，时间充裕</li>
+                    <li><strong>中等</strong>：标准难度，目标数量适中</li>
+                    <li><strong>困难</strong>：高级难度，目标较多，要求更高的操作精度和速度</li>
+                </ul>
+
+                <h4>场景类型</h4>
+                <ul>
+                    <li>每个任务包含多个不同的场景配置</li>
+                    <li>不同场景有不同的目标分布和威胁配置</li>
+                    <li>系统会按序进行各种场景的练习</li>
+                </ul>
+
+                <h4>重复进度</h4>
+                <ul>
+                    <li>显示当前任务的完成进度</li>
+                    <li>需要完成规定次数才能进入下一阶段</li>
+                    <li>练习模式可以无限重复，正式模式按规定次数进行</li>
+                </ul>
+
+                <h4>音频状态</h4>
+                <ul>
+                    <li><strong>开启</strong>：系统会播放操作提示音和警报声</li>
+                    <li><strong>关闭</strong>：静音模式</li>
+                </ul>
+
+                <h3>策略说明按钮</h3>
+                <p>任务信息面板底部的"策略说明"按钮可以打开详细的操作指导：</p>
+                <ul>
+                    <li><strong>雷达任务</strong>：链接到雷达目标识别策略说明</li>
+                    <li><strong>SA任务</strong>：链接到威胁计算规则说明</li>
+                </ul>
+
+                <div class="section-divider"></div>
+
+                <h2 id="快捷键参考">快捷键参考</h2>
+
+                <h3>雷达任务快捷键</h3>
+
+                <h4>基本操作</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>快捷键</th>
+                            <th>功能</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>方向键</code></td>
+                            <td>控制TDC光标移动</td>
+                        </tr>
+                        <tr>
+                            <td><code>Enter</code></td>
+                            <td>锁定TDC光标位置的目标</td>
+                        </tr>
+                        <tr>
+                            <td><code>按键b</code></td>
+                            <td>雷达天线向上移动</td>
+                        </tr>
+                        <tr>
+                            <td><code>按键t</code></td>
+                            <td>雷达天线向下移动</td>
+                        </tr>
+                        <tr>
+                            <td><code>鼠标单机面板对应按钮</code></td>
+                            <td>设置雷达探测距离和范围</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>SA任务快捷键</h3>
+
+                <h4>基本操作</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>快捷键</th>
+                            <th>功能</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>点击威胁项图标</code></td>
+                            <td>认定当前项为最具威胁项</td>
+                        </tr>
+                        <tr>
+                            <td><code>点击"查看结果"</code></td>
+                            <td>确认结果</td>
+                        </tr>
+                        <tr>
+                            <td><code>点击"Next"</code></td>
+                            <td>直接进入下一次</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <div class="section-divider"></div>
+
+                <h2 id="常见问题解答">常见问题解答</h2>
+
+                <h3>连接问题</h3>
+
+                <div class="highlight">
+                    <p><strong>Q: 右上角显示"未连接"怎么办？</strong></p>
+                    <p>A: 刷新页面重新连接，或联系管理员检查服务器状态</p>
+                </div>
+
+                <div class="highlight">
+                    <p><strong>Q: 系统响应很慢怎么办？</strong></p>
+                    <p>A: 关闭其他浏览器标签页，清除浏览器缓存，检查网络连接</p>
+                </div>
+
+                <h3>雷达任务问题</h3>
+
+                <div class="highlight">
+                    <p><strong>Q: 点击目标没有反应？</strong></p>
+                    <p>A: 确保目标在扫描范围内，尝试使用TDC光标或空格键锁定</p>
+                </div>
+
+                <div class="highlight">
+                    <p><strong>Q: 找不到目标？</strong></p>
+                    <p>A: 等待扫描线扫过更多区域，调整雷达距离范围，检查天线角度</p>
+                </div>
+
+                <h3>SA任务问题</h3>
+
+                <div class="highlight">
+                    <p><strong>Q: 威胁排序不合理？</strong></p>
+                    <p>A: 系统按距离和类型自动排序，可以参考但要结合实际情况判断</p>
+                </div>
+
+                <h3>AI助手问题</h3>
+
+                <div class="highlight">
+                    <p><strong>Q: AI助手没有反应？</strong></p>
+                    <p>A: 确认在登录时已启用AI助手</p>
+                </div>
+
+                <div class="highlight">
+                    <p><strong>Q: AI建议不合理？</strong></p>
+                    <p>A: AI建议仅供参考，用户可以根据实际情况做出自己的判断</p>
+                </div>
+
+                <h3>操作技巧问题</h3>
+
+                <div class="highlight">
+                    <p><strong>Q: 如何判断操作是否正确？</strong></p>
+                    <p>A: 雷达任务点击IFF, SA任务点击查看结果</p>
+                </div>
+
+                <div class="highlight">
+                    <p><strong>Q: 练习模式和正式模式有什么区别？</strong></p>
+                    <p>A: 练习模式可以无限重试，正式模式会记录成绩用于评估</p>
+                </div>
+
+                <div class="footer">
+                    <p>本手册专注于用户操作指导，如需技术支持请联系系统管理员</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <a href="#top" class="back-to-top">↑</a>
+
+    <script>
+        // 侧边栏切换功能
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebar = document.getElementById('sidebar');
+        
+        sidebarToggle.addEventListener('click', function() {
+            sidebar.classList.toggle('open');
+        });
+        
+        // 点击内容区域时关闭侧边栏（移动端）
+        document.querySelector('.content').addEventListener('click', function() {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('open');
+            }
+        });
+        
+        // 添加平滑滚动效果
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth'
+                    });
+                    
+                    // 移动端点击链接后关闭侧边栏
+                    if (window.innerWidth <= 768) {
+                        sidebar.classList.remove('open');
+                    }
+                }
+            });
+        });
+        
+        // 当前页面位置高亮显示
+        function updateActiveLink() {
+            const sections = document.querySelectorAll('h2[id], h3[id]');
+            const sidebarLinks = document.querySelectorAll('.sidebar a');
+            
+            let currentSection = '';
+            sections.forEach(section => {
+                const rect = section.getBoundingClientRect();
+                if (rect.top <= 100) {
+                    currentSection = section.id;
+                }
+            });
+            
+            sidebarLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === '#' + currentSection) {
+                    link.classList.add('active');
+                }
+            });
+        }
+        
+        // 监听滚动事件
+        window.addEventListener('scroll', updateActiveLink);
+        
+        // 控制返回顶部按钮的显示
+        window.addEventListener('scroll', function() {
+            const backToTop = document.querySelector('.back-to-top');
+            if (window.pageYOffset > 300) {
+                backToTop.style.display = 'block';
+            } else {
+                backToTop.style.display = 'none';
+            }
+        });
+        
+        // 初始化当前链接高亮
+        updateActiveLink();
+    </script>
+</body>
+</html>

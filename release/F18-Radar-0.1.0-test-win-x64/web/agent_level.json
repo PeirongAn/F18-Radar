@@ -1,0 +1,118 @@
+{
+  "current_level": "L3",
+  "levels": [
+    {
+      "level": "L1",
+      "desc": "低级智能体，延时最长，自动处理最慢",
+      "threat_select_delay_ms": 1000,
+      "tdc_select_delay_ms": 1000,
+      "decision_probabilities": [
+        0.3,
+        0.5
+      ]
+    },
+    {
+      "level": "L2",
+      "desc": "中级智能体，延时适中",
+      "threat_select_delay_ms": 500,
+      "tdc_select_delay_ms": 500,
+      "decision_probabilities": [
+        0.7,
+        0.9
+      ]
+    },
+    {
+      "level": "L3",
+      "desc": "高级智能体，延时最短，自动处理最快",
+      "threat_select_delay_ms": 100,
+      "tdc_select_delay_ms": 100,
+      "decision_probabilities": [
+        1.0
+      ]
+    }
+  ],
+  "trust_calibration": {
+    "enabled": false,
+    "state": {
+      "sensor": "normal",
+      "threat": "normal"
+    },
+    "sensor": {
+      "high_confidence": 0.85,
+      "low_confidence_min": 0.6,
+      "low_confidence_max": 0.7,
+      "candidate_gap_threshold": 0.1,
+      "unconfirmed_timeout_ms": 5000,
+      "consecutive_reject_threshold": 2,
+      "direct_accept_threshold": 2,
+      "window_size": 5,
+      "hysteresis": 1,
+      "latency_threshold_ms": 4500,
+      "require_evidence_before_confirm": true,
+      "min_truth_coverage": 0.5,
+      "unwarranted_reject_threshold": 2,
+      "unwarranted_accept_threshold": 1
+    },
+    "threat": {
+      "score_gap_threshold": 0.1,
+      "data_delay_ms": 1800,
+      "unconfirmed_timeout_ms": 5000,
+      "consecutive_reject_threshold": 2,
+      "direct_accept_threshold": 2,
+      "window_size": 5,
+      "hysteresis": 1,
+      "latency_threshold_ms": 4500,
+      "require_evidence_before_submit": true,
+      "min_truth_coverage": 0.5,
+      "unwarranted_reject_threshold": 2,
+      "unwarranted_accept_threshold": 1
+    },
+    "display": {
+      "show_explanation_panel": true,
+      "show_candidate_comparison": true,
+      "show_data_quality_bar": true,
+      "show_capability_boundary": true,
+      "block_one_click_on_low_confidence": true
+    }
+  },
+  "game_settings": {
+    "current_difficulty": "low",
+    "audio_enabled": true,
+    "max_repetitions": 1,
+    "practice_repetitions": 1,
+    "difficulty_levels": {
+      "high": {
+        "name": "高",
+        "threat_count": 10,
+        "target_count": 10
+      },
+      "medium": {
+        "name": "中",
+        "threat_count": 8,
+        "target_count": 8
+      },
+      "low": {
+        "name": "低",
+        "threat_count": 5,
+        "target_count": 5
+      }
+    },
+    "execution_order": {
+      "difficulty_order": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "level_order": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "audio_options": [
+        true,
+        false
+      ]
+    }
+  },
+  "tdcServer": "ws://localhost:8765"
+}
