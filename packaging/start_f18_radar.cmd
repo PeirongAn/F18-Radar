@@ -24,8 +24,8 @@ if not exist "%F18_ROOT%web\index.html" (
   exit /b 1
 )
 
-start "" /b powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%F18_ROOT%tools\open_when_ready.ps1"
 echo F18 Radar is starting at http://127.0.0.1:8080
+echo Open this address manually in a browser when needed.
 echo Close this window or press Ctrl+C to stop the service.
 echo Logs: %F18_ROOT%logs
 echo.

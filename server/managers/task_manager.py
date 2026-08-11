@@ -491,7 +491,7 @@ class TaskScenarioManager:
         if overlay.get('difficulty_display') is not None:
             self.current_scenario['external_difficulty_display'] = overlay.get('difficulty_display')
 
-        for key in ('is_ai_active', 'ai_level_name', 'ai_level_config', 'audio_enabled'):
+        for key in ('is_ai_active', 'control_mode', 'ai_level_name', 'ai_level_config', 'audio_enabled'):
             if key in overlay:
                 self.current_scenario[key] = overlay[key]
         if overlay.get('autonomy_level') is not None:
@@ -543,6 +543,7 @@ class TaskScenarioManager:
         )
         rep_info['engine_difficulty'] = self.current_scenario.get('difficulty_name')
         rep_info['is_ai_active'] = self.current_scenario.get('is_ai_active')
+        rep_info['control_mode'] = self.current_scenario.get('control_mode')
         rep_info['autonomy_level'] = (
             self.current_scenario.get('autonomy_level')
             or self.current_scenario.get('ai_level_name')

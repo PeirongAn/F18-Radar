@@ -6,6 +6,12 @@ import React, {
   forwardRef,
   useImperativeHandle,
 } from 'react';
+import {
+  isQuestionnaireAnswerValid,
+  resolveQuestionnaireQuestions,
+  type ManualQuestionnaireConfig,
+  type QuestionnaireQuestion,
+} from '../utils/questionnaireQuestions';
 
 /* ─────────────────────────────────────────────────────────────
    Types
@@ -17,6 +23,7 @@ export interface RepetitionInfo {
   total: number;
   difficulty?: string;
   is_ai_active?: boolean;
+  control_mode?: string;
   autonomy_level?: string;
   is_practice?: boolean;
   scenario_index?: number;
@@ -33,18 +40,13 @@ interface AllRepetitionInfos {
   WEAPON_FIRING: RepetitionInfo | 'ALL_COMPLETED' | null;
 }
 
-interface QuestionItem {
-  id: number;
-  text: string;
-  options?: string[];
-}
-
 interface QuestionnaireConfig {
   title?: string;
   instruction?: string;
   taskTitles?: Partial<Record<TaskType, string>>;
   scales?: string[];
-  questions: QuestionItem[];
+  questions: QuestionnaireQuestion[];
+  manualQuestionnaire?: ManualQuestionnaireConfig;
   difficultyLabels?: Record<string, string>;
   autonomyLabels?: Record<string, string>;
   taskTypeLabels?: Partial<Record<TaskType, string>>;
@@ -55,10 +57,12 @@ export interface QuestionnaireSubmitData {
   userId: string;
   repetitionCurrent: number;
   repetitionTotal: number;
+  taskGroupId?: number;
   answers: Record<number, number>;
   taskInfo: {
     difficulty?: string;
     autonomyLevel?: string;
+    controlMode?: string;
     isPractice?: boolean;
   };
   timestamp: number;
@@ -118,6 +122,27 @@ const DEFAULT_CONFIG: QuestionnaireConfig = {
       options: ['完全不紧张', '非常轻微', '较轻', '中等', '较强', '很强', '极度紧张'],
     },
   ],
+  manualQuestionnaire: {
+    taskTypes: [
+      'RADAR_TARGETING',
+      'SA_THREAT_RESPONSE',
+      'PLATFORM_CONTROL',
+      'WEAPON_FIRING',
+    ],
+    questionIds: [4, 5, 6],
+    additionalQuestions: [
+      {
+        id: 7,
+        text: '你认为当前你在这类任务中的总体正确率大约是____%。',
+        type: 'number',
+        min: 0,
+        max: 100,
+        step: 1,
+        suffix: '%',
+        placeholder: '请输入 0–100',
+      },
+    ],
+  },
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -254,24 +279,32 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
     /* ── Submit ── */
     const handleSubmit = useCallback(() => {
       if (!config) return;
-      const allAnswered = config.questions.every(q => answers[q.id] !== undefined);
+      const infoObj = getInfoForTask(currentTaskType);
+      const questions = resolveQuestionnaireQuestions(
+        config.questions,
+        config.manualQuestionnaire,
+        infoObj?.control_mode,
+        currentTaskType,
+      );
+      const allAnswered = questions.every(q => isQuestionnaireAnswerValid(q, answers[q.id]));
       if (!allAnswered) {
         setValidationError(true);
         return;
       }
 
       setIsSubmitting(true);
-      const infoObj = getInfoForTask(currentTaskType);
 
       const data: QuestionnaireSubmitData = {
         taskType: currentTaskType,
         userId,
         repetitionCurrent: infoObj?.current ?? 0,
         repetitionTotal: infoObj?.total ?? 0,
+        taskGroupId: infoObj?.task_group_id,
         answers,
         taskInfo: {
           difficulty: infoObj?.difficulty,
           autonomyLevel: infoObj?.autonomy_level,
+          controlMode: infoObj?.control_mode,
           isPractice: infoObj?.is_practice,
         },
         timestamp: Date.now(),
@@ -295,6 +328,13 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     /* ── Derive display values ── */
     const scales = config.scales ?? DEFAULT_CONFIG.scales!;
+    const currentInfo = getInfoForTask(currentTaskType);
+    const questions = resolveQuestionnaireQuestions(
+      config.questions,
+      config.manualQuestionnaire,
+      currentInfo?.control_mode,
+      currentTaskType,
+    );
 
     const FALLBACK_TASK_LABELS: Record<string, string> = {
       RADAR_TARGETING: '传感器任务', SA_THREAT_RESPONSE: '威胁排序任务',
@@ -306,9 +346,9 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
 
     const modalTitle =
       config.taskTitles?.[currentTaskType] ?? config.title ?? '座舱认知状态问卷';
-    const answeredCount = Object.keys(answers).length;
-    const progressPercent = config.questions.length > 0
-      ? Math.round((answeredCount / config.questions.length) * 100)
+    const answeredCount = questions.filter(q => isQuestionnaireAnswerValid(q, answers[q.id])).length;
+    const progressPercent = questions.length > 0
+      ? Math.round((answeredCount / questions.length) * 100)
       : 0;
 
     if (!isVisible) return null;
@@ -449,7 +489,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                   fontSize: '14px',
                 }}
               >
-                ⚠ 请完成所有题目的评分后再提交。
+                ⚠ 请完成所有题目的作答后再提交。
               </div>
             )}
 
@@ -460,8 +500,8 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 gap: '12px',
               }}
             >
-              {config.questions.map(q => {
-                const isAnswered = answers[q.id] !== undefined;
+              {questions.map((q, questionIndex) => {
+                const isAnswered = isQuestionnaireAnswerValid(q, answers[q.id]);
                 const isMissing = validationError && !isAnswered;
 
                 return (
@@ -497,22 +537,61 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                           fontVariantNumeric: 'tabular-nums',
                         }}
                       >
-                        {q.id}
+                        {questionIndex + 1}
                       </span>
                       <div style={{ color: '#172033', fontSize: '15px', lineHeight: 1.55, fontWeight: 600 }}>
                         {q.text}
                       </div>
                     </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(7, minmax(115px, 1fr))',
-                        gap: '8px',
-                        overflowX: 'auto',
-                        paddingBottom: '2px',
-                      }}
-                    >
-                      {scales.map((scale, scaleIdx) => {
+                    {q.type === 'number' ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <input
+                          type="number"
+                          min={q.min}
+                          max={q.max}
+                          step={q.step ?? 1}
+                          value={answers[q.id] ?? ''}
+                          placeholder={q.placeholder}
+                          onChange={event => {
+                            const rawValue = event.target.value;
+                            if (rawValue === '') {
+                              setAnswers(prev => {
+                                const next = { ...prev };
+                                delete next[q.id];
+                                return next;
+                              });
+                              return;
+                            }
+                            handleAnswer(q.id, Number(rawValue));
+                          }}
+                          style={{
+                            width: '220px',
+                            maxWidth: '100%',
+                            padding: '11px 12px',
+                            border: `1px solid ${isMissing ? '#fb923c' : '#b9c7d6'}`,
+                            borderRadius: '8px',
+                            color: '#172033',
+                            background: '#f8fafc',
+                            fontSize: '15px',
+                            outline: 'none',
+                            ...fontBase,
+                          }}
+                        />
+                        <span style={{ color: '#334155', fontSize: '15px', fontWeight: 700 }}>
+                          {q.suffix}
+                        </span>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(7, minmax(115px, 1fr))',
+                          gap: '8px',
+                          overflowX: 'auto',
+                          paddingBottom: '2px',
+                        }}
+                      >
+                        {scales.map((scale, scaleIdx) => {
                         const value = scaleIdx + 1;
                         const checked = answers[q.id] === value;
                         const optionLabel = q.options?.[scaleIdx] ?? scale;
@@ -552,8 +631,9 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                             </span>
                           </label>
                         );
-                      })}
-                    </div>
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -581,7 +661,7 @@ const QuestionnaireModal = forwardRef<QuestionnaireModalHandle, QuestionnaireMod
                 />
               </div>
               <span style={{ minWidth: '110px', textAlign: 'right' }}>
-                已完成：{answeredCount} / {config.questions.length} 题
+                已完成：{answeredCount} / {questions.length} 题
               </span>
             </div>
 

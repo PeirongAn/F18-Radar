@@ -705,7 +705,14 @@ class HTTPServer:
         """
         user_id = str(request.query.get('userId') or request.query.get('user_id') or '').strip()
         task_type = str(request.query.get('taskType') or request.query.get('task_type') or '').strip()
-        context = db_manager.resolve_questionnaire_task_context(user_id, task_type)
+        task_group_id = request.query.get('taskGroupId') or request.query.get('task_group_id')
+        control_mode = request.query.get('controlMode') or request.query.get('control_mode')
+        context = db_manager.resolve_questionnaire_task_context(
+            user_id,
+            task_type,
+            submitted_task_group_id=task_group_id,
+            control_mode=control_mode,
+        )
         if context.get('task_id') is None:
             return web.json_response({"ok": False, "msg": "no completed task context found"}, status=404)
 
@@ -718,6 +725,7 @@ class HTTPServer:
             "taskType": context.get('task_type') or task_type,
             "difficulty": context.get('difficulty'),
             "autonomyLevel": context.get('autonomy_level'),
+            "controlMode": context.get('control_mode'),
             "isPractice": bool(context.get('is_practice')),
             "isAIActive": context.get('is_ai_active'),
             "experimentNo": context.get('repetition_current'),
