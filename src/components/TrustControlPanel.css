@@ -5,7 +5,7 @@
   --trust-muted: #7e9f89;
   --trust-line: rgba(91, 146, 107, 0.2);
   --trust-surface: rgba(5, 22, 13, 0.94);
-  flex: 0 1 76%;
+  flex: 0 1 82%;
   min-height: 300px;
   overflow-y: auto;
   border-bottom: 1px solid var(--trust-line);
@@ -14,7 +14,6 @@
     linear-gradient(180deg, rgba(5, 23, 14, 0.98), rgba(3, 14, 8, 0.98));
   color: var(--trust-text);
   font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  scrollbar-gutter: stable;
 }
 
 .trust-panel--support {
@@ -23,7 +22,7 @@
 }
 
 .trust-section {
-  padding: 14px 18px;
+  padding: 11px 18px;
   border-bottom: 1px solid var(--trust-line);
 }
 
@@ -40,7 +39,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 7px;
 }
 
 .trust-eyebrow {
@@ -80,7 +79,7 @@
     inset 3px 0 0 var(--trust-accent),
     inset 0 1px 0 rgba(217, 255, 231, 0.05),
     0 12px 28px rgba(0, 10, 5, 0.28);
-  padding: 14px 15px 13px 18px;
+  padding: 11px 15px 10px 18px;
 }
 
 .trust-hero::after {
@@ -104,7 +103,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 7px;
 }
 
 .trust-hero-label {
@@ -142,7 +141,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .trust-hero-name {
@@ -169,7 +168,7 @@
 .trust-observation {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
+  gap: 5px 7px;
   margin: 0;
 }
 
@@ -181,7 +180,7 @@
 
 .trust-observation__label {
   display: block;
-  margin: 0 0 3px;
+  margin: 0 0 2px;
   color: #6f8d79;
   font-size: 10px;
   font-weight: 500;
@@ -228,7 +227,7 @@
 .trust-candidate-header {
   border-bottom: 1px solid rgba(72, 126, 88, 0.25);
   background: rgba(12, 36, 21, 0.6);
-  padding: 7px 10px;
+  padding: 5px 10px;
   color: #668372;
   font-size: 10px;
   font-weight: 600;
@@ -237,9 +236,9 @@
 
 .trust-candidate-row {
   position: relative;
-  min-height: 41px;
+  min-height: 34px;
   border-bottom: 1px solid rgba(56, 91, 66, 0.18);
-  padding: 7px 10px;
+  padding: 5px 10px;
   color: #90ac99;
   font-family: "Share Tech Mono", "Microsoft YaHei", monospace;
   font-size: 11px;
@@ -293,7 +292,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 7px;
+  margin-bottom: 5px;
 }
 
 .trust-accuracy-title {
@@ -312,7 +311,7 @@
 
 .trust-chart {
   position: relative;
-  height: 68px;
+  height: 58px;
   overflow: hidden;
   border: 1px solid rgba(44, 105, 93, 0.28);
   border-radius: 5px;
@@ -322,7 +321,7 @@
 
 .trust-empty {
   display: flex;
-  min-height: 54px;
+  min-height: 42px;
   align-items: center;
   justify-content: center;
   color: #56715e;
@@ -330,23 +329,66 @@
   letter-spacing: 0.05em;
 }
 
+.trust-detail-card {
+  border: 1px solid rgba(105, 216, 255, 0.58);
+  border-radius: 6px;
+  background:
+    linear-gradient(100deg, rgba(47, 152, 196, 0.12), rgba(47, 152, 196, 0.025) 68%),
+    rgba(3, 20, 25, 0.7);
+  box-shadow:
+    inset 3px 0 0 #69d8ff,
+    0 0 16px rgba(34, 156, 205, 0.08);
+  padding: 7px 11px 8px 14px;
+}
+
+.trust-detail-card--review {
+  border-color: rgba(145, 232, 245, 0.72);
+  box-shadow:
+    inset 3px 0 0 #91e8f5,
+    0 0 18px rgba(105, 216, 255, 0.12);
+}
+
+.trust-detail-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+
 .trust-detail-name {
-  margin-bottom: 9px;
   color: #e1f6e7;
   font-size: 15px;
   font-weight: 600;
+}
+
+.trust-detail-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgba(105, 216, 255, 0.52);
+  border-radius: 3px;
+  background: rgba(48, 147, 188, 0.15);
+  padding: 3px 7px;
+  color: #aeefff;
+  font-family: "Share Tech Mono", "Microsoft YaHei", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 .trust-review-status {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 7px;
   border-top: 1px solid rgba(78, 132, 91, 0.22);
-  padding-top: 9px;
+  padding-top: 6px;
   color: #779784;
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.35;
+}
+
+.trust-section--detail .trust-observation {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .trust-review-status::before {

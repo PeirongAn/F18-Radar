@@ -29,6 +29,30 @@ interface ObservationItem {
   value: string;
 }
 
+interface VisibleCandidateRow {
+  candidate: TrustCandidate;
+  sourceIndex: number | null;
+}
+
+const visibleCandidateRows = (
+  candidates: TrustCandidate[],
+  aiRecommendation: TrustCandidate | null,
+  limit = 5,
+): VisibleCandidateRow[] => {
+  const indexedRows = candidates.map((candidate, sourceIndex) => ({ candidate, sourceIndex }));
+  const aiSourceIndex = aiRecommendation
+    ? candidates.findIndex(candidate => candidate.id === aiRecommendation.id)
+    : -1;
+  const aiRow = aiRecommendation
+    ? [{ candidate: aiRecommendation, sourceIndex: aiSourceIndex >= 0 ? aiSourceIndex : null }]
+    : [];
+  const remainingRows = indexedRows.filter(row => row.candidate.id !== aiRecommendation?.id);
+  const enemyRows = remainingRows.filter(row => row.candidate.type === 'army' || row.candidate.id.startsWith('enemy'));
+  const otherRows = remainingRows.filter(row => row.candidate.type !== 'army' && !row.candidate.id.startsWith('enemy'));
+
+  return [...aiRow, ...enemyRows, ...otherRows].slice(0, limit);
+};
+
 const ObservationGrid: React.FC<{ candidate: TrustCandidate | null; compact?: boolean }> = ({ candidate, compact = false }) => {
   const items: ObservationItem[] = [
     { label: '方位', value: `${numberValue(candidate?.azimuthDeg)}°` },
@@ -158,6 +182,7 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
   const support = control.ui_mode === 'trust_support';
   const isSaTask = snapshot.taskType === 'SA_THREAT_RESPONSE';
   const detailCandidate = manualReviewActive ? manualReviewCandidate : focusedCandidate;
+  const candidateRows = visibleCandidateRows(candidates, aiRecommendation);
   const renderObservation = (candidate: TrustCandidate | null, compact = false) => (
     isSaTask
       ? <ThreatObservationGrid candidate={candidate} compact={compact} />
@@ -188,51 +213,61 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
         </div>
       </section>
 
-      <section className="trust-section" data-gaze-aoi="right_candidate_list">
-        <div className="trust-section-heading">
-          <span className="trust-eyebrow">候选目标优先级</span>
-          <span className="trust-count">{Math.min(candidates.length, 5)} / {candidates.length}</span>
-        </div>
-        <div className="trust-candidate-table">
-          <div className="trust-candidate-header" aria-hidden="true">
-            <span>序</span>
-            <span>目标</span>
-            <span>{isSaTask ? '威胁类别' : '方位'}</span>
-            <span>{isSaTask ? '中心距离' : '距离'}</span>
-            <span>更新时间</span>
+      {!isSaTask && (
+        <section className="trust-section" data-gaze-aoi="right_candidate_list">
+          <div className="trust-section-heading">
+            <span className="trust-eyebrow">候选目标</span>
+            <span className="trust-count">{candidateRows.length} / {Math.max(candidates.length, candidateRows.length)}</span>
           </div>
-          {candidates.slice(0, 5).map((candidate, index) => {
-            const recommended = candidate.id === aiRecommendation?.id;
-            return (
-              <div
-                className={`trust-candidate-row${recommended ? ' trust-candidate-row--recommended' : ''}`}
-                data-recommended={recommended ? 'true' : 'false'}
-                key={candidate.id}
-              >
-                <span className="trust-candidate-rank">{String(index + 1).padStart(2, '0')}</span>
-                <span className="trust-candidate-name">
-                  {displayName(candidate)}
-                  {recommended && <span className="trust-candidate-badge">AI 推荐</span>}
-                </span>
-                <span>{isSaTask ? candidate.categoryLabel ?? '--' : `${numberValue(candidate.azimuthDeg)}°`}</span>
-                <span>{isSaTask ? numberValue(candidate.distance) : `${numberValue(candidate.distanceNm ?? candidate.distance)} NM`}</span>
-                <span>{dataTime(candidate)}</span>
-              </div>
-            );
-          })}
-          {candidates.length === 0 && <div className="trust-empty">等待候选目标数据</div>}
-        </div>
-      </section>
+          <div className="trust-candidate-table">
+            <div className="trust-candidate-header" aria-hidden="true">
+              <span>序</span>
+              <span>目标</span>
+              <span>方位</span>
+              <span>距离</span>
+              <span>更新时间</span>
+            </div>
+            {candidateRows.map(({ candidate, sourceIndex }) => {
+              const recommended = candidate.id === aiRecommendation?.id;
+              return (
+                <div
+                  className={`trust-candidate-row${recommended ? ' trust-candidate-row--recommended' : ''}`}
+                  data-recommended={recommended ? 'true' : 'false'}
+                  key={candidate.id}
+                >
+                  <span className="trust-candidate-rank">
+                    {sourceIndex === null ? 'AI' : String(sourceIndex + 1).padStart(2, '0')}
+                  </span>
+                  <span className="trust-candidate-name">
+                    {displayName(candidate)}
+                    {recommended && <span className="trust-candidate-badge">AI 推荐</span>}
+                  </span>
+                  <span>{`${numberValue(candidate.azimuthDeg)}°`}</span>
+                  <span>{`${numberValue(candidate.distanceNm ?? candidate.distance)} NM`}</span>
+                  <span>{dataTime(candidate)}</span>
+                </div>
+              );
+            })}
+            {candidates.length === 0 && <div className="trust-empty">等待候选目标数据</div>}
+          </div>
+        </section>
+      )}
 
-      <section className="trust-section trust-section--secondary" data-gaze-aoi="right_detail">
+      <section className="trust-section trust-section--secondary trust-section--detail" data-gaze-aoi="right_detail">
         <div className="trust-section-heading">
           <span className="trust-eyebrow">{manualReviewActive ? '人工复核 · AI 推荐目标' : 'TDC 聚焦详情'}</span>
         </div>
         {detailCandidate ? (
-          <>
-            <div className="trust-detail-name">{displayName(detailCandidate)}</div>
-            {renderObservation(detailCandidate, true)}
-          </>
+          <div
+            className={`trust-detail-card${manualReviewActive ? ' trust-detail-card--review' : ''}`}
+            data-detail-role={manualReviewActive ? 'manual-review' : 'tdc-focus'}
+          >
+            <div className="trust-detail-name-row">
+              <div className="trust-detail-name">{displayName(detailCandidate)}</div>
+              <span className="trust-detail-badge">{manualReviewActive ? '人工复核' : 'TDC 聚焦'}</span>
+            </div>
+            {renderObservation(detailCandidate)}
+          </div>
         ) : <div className="trust-empty">移动 TDC 聚焦目标后自动显示</div>}
         <div className={`trust-review-status${
           manualReviewFeedback.status === 'active'

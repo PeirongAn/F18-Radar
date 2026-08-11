@@ -85,6 +85,9 @@ describe('TrustControlPanel radar evidence', () => {
     expect(markup).toContain('当前推荐');
     expect(markup).toContain('高优先级');
     expect(markup).toContain('data-recommended="true"');
+    expect(markup).toContain('data-gaze-aoi="right_candidate_list"');
+    expect(markup).toContain('候选目标');
+    expect(markup).not.toContain('候选目标优先级');
     expect(markup).not.toContain('enemy-1');
     expect(markup).not.toContain('army');
     expect(markup).not.toContain('0.99');
@@ -109,6 +112,56 @@ describe('TrustControlPanel radar evidence', () => {
     expect(markup).not.toContain('75%（3/4）');
   });
 
+  it('keeps the AI-selected sensor target visible when it falls outside the first five candidates', () => {
+    const candidates = Array.from({ length: 7 }, (_, index) => ({
+      ...candidate,
+      id: `target-${index + 1}`,
+      label: `目标${index + 1}`,
+      displayNumber: index + 1,
+      azimuthDeg: 10 + index,
+      type: index % 2 === 0 && index !== 6 ? 'friend' : 'army',
+    }));
+    const markup = renderToStaticMarkup(
+      <TrustControlPanel snapshot={{
+        ...snapshot,
+        aiRecommendation: candidates[6],
+        candidates,
+        focusedCandidate: candidates[1],
+        manualReviewActive: false,
+        manualReviewCandidate: null,
+      }} />,
+    );
+
+    const candidateMarkup = markup.slice(
+      markup.indexOf('data-gaze-aoi="right_candidate_list"'),
+      markup.indexOf('data-gaze-aoi="right_detail"'),
+    );
+    expect(candidateMarkup).toContain('目标7');
+    expect(candidateMarkup).toContain('<span class="trust-candidate-rank">07</span>');
+    expect(candidateMarkup).toContain('data-recommended="true"');
+    expect(candidateMarkup.indexOf('目标7')).toBeLessThan(candidateMarkup.indexOf('目标2'));
+    expect(candidateMarkup.indexOf('目标2')).toBeLessThan(candidateMarkup.indexOf('目标4'));
+    expect(candidateMarkup.indexOf('目标4')).toBeLessThan(candidateMarkup.indexOf('目标6'));
+    expect(candidateMarkup.indexOf('目标6')).toBeLessThan(candidateMarkup.indexOf('目标1'));
+    expect(candidateMarkup).not.toContain('目标3');
+  });
+
+  it('frames the shared TDC focus detail with a distinct blue target marker', () => {
+    const markup = renderToStaticMarkup(
+      <TrustControlPanel snapshot={{
+        ...snapshot,
+        focusedCandidate: { ...candidate, id: 'enemy-2', displayNumber: 2, label: '目标2' },
+        manualReviewActive: false,
+        manualReviewCandidate: null,
+      }} />,
+    );
+
+    expect(markup).toContain('data-detail-role="tdc-focus"');
+    expect(markup).toContain('trust-detail-card');
+    expect(markup).toContain('TDC 聚焦');
+    expect(markup).toContain('目标2');
+  });
+
   it('renders SA candidate observations with SA fields instead of empty radar fields', () => {
     const saCandidate = {
       ...candidate,
@@ -127,7 +180,8 @@ describe('TrustControlPanel radar evidence', () => {
       aiRecommendation: saCandidate,
       candidates: [saCandidate],
       focusedCandidate: saCandidate,
-      manualReviewCandidate: saCandidate,
+      manualReviewActive: false,
+      manualReviewCandidate: null,
       groundTruthId: saCandidate.id,
     };
     const markup = renderToStaticMarkup(<TrustControlPanel snapshot={saSnapshot} />);
@@ -135,6 +189,10 @@ describe('TrustControlPanel radar evidence', () => {
     expect(markup).toContain('J-11');
     expect(markup).toContain('146.8');
     expect(markup).toContain('324, 188');
+    expect(markup).toContain('data-detail-role="tdc-focus"');
+    expect(markup).toContain('TDC 聚焦');
+    expect(markup).not.toContain('data-gaze-aoi="right_candidate_list"');
+    expect(markup).not.toContain('候选目标优先级');
     expect(markup).not.toContain('PrimaryAir-1001');
   });
 });
