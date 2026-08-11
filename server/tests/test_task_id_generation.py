@@ -551,6 +551,85 @@ def test_platform_and_weapon_questionnaires_without_config_use_latest_matching_g
     assert weapon["autonomy_level"] == "L2"
 
 
+def test_external_questionnaire_context_keeps_control_modes_separate(tmp_path):
+    db_path = tmp_path / "external-questionnaire-control-mode.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, control_mode, is_ai_active, is_practice, config_json
+            ) VALUES (?, ?, 'u1', 'completed', 1, 1, 1, ?, ?, ?, ?, 0, '{}')
+            """,
+            [
+                (51, "PLATFORM_CONTROL", 100, 200, "0", 0),
+                (52, "PLATFORM_CONTROL", 300, 400, "1", 1),
+                (53, "WEAPON_FIRING", 500, 600, "0", 0),
+                (54, "WEAPON_FIRING", 700, 800, "2", 1),
+            ],
+        )
+        conn.commit()
+
+    platform_manual = manager.resolve_questionnaire_task_context(
+        "u1", "PLATFORM_CONTROL", control_mode="0"
+    )
+    platform_ai = manager.resolve_questionnaire_task_context(
+        "u1", "PLATFORM_CONTROL", control_mode="1"
+    )
+    weapon_manual = manager.resolve_questionnaire_task_context(
+        "u1", "WEAPON_FIRING", control_mode="0"
+    )
+    weapon_ai = manager.resolve_questionnaire_task_context(
+        "u1", "WEAPON_FIRING", control_mode="2"
+    )
+
+    assert (platform_manual["task_group_id"], platform_manual["control_mode"]) == (51, "0")
+    assert (platform_ai["task_group_id"], platform_ai["control_mode"]) == (52, "1")
+    assert (weapon_manual["task_group_id"], weapon_manual["control_mode"]) == (53, "0")
+    assert (weapon_ai["task_group_id"], weapon_ai["control_mode"]) == (54, "2")
+
+
+def test_external_questionnaire_context_falls_back_to_legacy_group_less_run(tmp_path):
+    db_path = tmp_path / "external-questionnaire-legacy-run.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    config = {
+        "task_category": "platform_control",
+        "normalized": {
+            "task_type": "PLATFORM_CONTROL",
+            "platform_task_id": "u1",
+            "default_control_mode": "0",
+            "control_mode": "0",
+            "include_ai": False,
+            "is_practice": False,
+        },
+        "overall_task_id": None,
+        "sub_task_seq": 1,
+    }
+    with manager.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO task_runs (
+                task_id, group_id, task_seq, task_type, user_id, status,
+                expected_subtasks, completed_subtasks, current_subtask_seq,
+                started_at_ms, completed_at_ms, config_json, last_raw_message_json
+            ) VALUES (61, NULL, 1, 'PLATFORM_CONTROL', 'u1', 'completed',
+                      1, 1, 1, 100, 200, ?, '{}')
+            """,
+            (json.dumps(config),),
+        )
+        conn.commit()
+
+    context = manager.resolve_questionnaire_task_context("u1", "PLATFORM_CONTROL")
+
+    assert context["task_id"] == 61
+    assert context["control_mode"] == "0"
+    assert context["is_ai_active"] is False
+
+
 def test_find_active_task_group_uses_same_progress_key_only(tmp_path):
     db_path = tmp_path / "active-task-group.db"
     manager = make_sync_database_manager(db_path)

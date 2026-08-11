@@ -1523,6 +1523,31 @@ class MessageHandler:
             or repetition_info.get("task_group_id")
         )
 
+        # SA creates a fresh scenario for each repetition.  If that transition
+        # drops the in-memory group id, recover it from the canonical task_run
+        # before emitting the final completion event.  The frontend deliberately
+        # ignores group-less completion events to avoid showing stale surveys.
+        if task_group_id is None and current_task_id:
+            try:
+                task_group_id = db_manager.get_task_run_group_id(int(current_task_id))
+            except Exception as e:
+                self.logger.warning(
+                    "recover task_group_id from task_run failed: task_id=%s error=%s",
+                    current_task_id,
+                    e,
+                    exc_info=True,
+                )
+            if task_group_id is not None:
+                repetition_info["task_group_id"] = task_group_id
+                if current_scenario is not None:
+                    current_scenario["task_group_id"] = task_group_id
+                    current_scenario["repetition_info"] = repetition_info
+                self.logger.info(
+                    "Recovered task_group_id=%s from task_run for task_id=%s",
+                    task_group_id,
+                    current_task_id,
+                )
+
         task_id = current_task_id
         if not session_state.get('is_practice', False) and task_id:
             operation = {

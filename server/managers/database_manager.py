@@ -1441,17 +1441,23 @@ class DatabaseManager:
                         """,
                         (user_id, *task_types),
                     )
-                    for group_row in cursor.fetchall():
-                        columns = [description[0] for description in cursor.description]
+                    columns = [description[0] for description in cursor.description]
+                    group_rows = cursor.fetchall()
+                    for group_row in group_rows:
                         context = self._questionnaire_context_from_task_group(dict(zip(columns, group_row)))
                         if normalized_control_mode is None or context.get("control_mode") == normalized_control_mode:
                             return context
-                    return {
-                        "task_type": normalized_task_type,
-                        "user_id": user_id,
-                        "control_mode": normalized_control_mode,
-                        "task_group_id": None,
-                    }
+                    if group_rows:
+                        # Do not cross control modes when task-group history
+                        # exists for this external task identity.  An empty
+                        # task_groups table, however, is a legacy database
+                        # shape; allow the completed task_runs fallback below.
+                        return {
+                            "task_type": normalized_task_type,
+                            "user_id": user_id,
+                            "control_mode": normalized_control_mode,
+                            "task_group_id": None,
+                        }
 
                 # A currently active task group is the authority for the
                 # questionnaire display. It retains the configuration even
@@ -1667,6 +1673,15 @@ class DatabaseManager:
                 return None
             columns = [description[0] for description in cursor.description]
             return dict(zip(columns, row))
+
+    def get_task_run_group_id(self, task_id: int) -> Optional[int]:
+        """Return the durable task-group identity for a task run, if recorded."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            task_run = self._load_task_run_by_id(cursor, task_id)
+            if not task_run or task_run.get("group_id") is None:
+                return None
+            return int(task_run["group_id"])
 
     def save_task_group_ai_accuracy(self, group_id: int, context: Dict[str, Any]) -> Dict[str, Any]:
         """Persist a group sample once and return the authoritative stored values."""
@@ -1913,7 +1928,8 @@ class DatabaseManager:
                         expected_subtasks: int = 1, started_at_ms: int = None,
                         config_json: str = None, raw_message_json: str = None,
                         group_id: int = None, task_seq: int = None,
-                        reactivate: bool = False) -> None:
+                        reactivate: bool = False,
+                        replace_config: bool = False) -> None:
         """Ensure task_runs is the canonical lifecycle row for every task."""
         started_at_ms = started_at_ms or int(time.time() * 1000)
         config_json = config_json or "{}"
@@ -1938,7 +1954,7 @@ class DatabaseManager:
                     "task_type = ?",
                     "user_id = ?",
                     "expected_subtasks = COALESCE(expected_subtasks, ?)",
-                    "config_json = COALESCE(config_json, ?)",
+                    "config_json = ?" if replace_config else "config_json = COALESCE(config_json, ?)",
                     "last_raw_message_json = ?",
                     "updated_at = CURRENT_TIMESTAMP",
                 ]

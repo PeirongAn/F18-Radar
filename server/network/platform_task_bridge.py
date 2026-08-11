@@ -1700,23 +1700,75 @@ def _handle_external_task(
                 active = _active_from_task_run(run, category, raw_fields, normalized)
                 _active_external_tasks[key] = active
                 tid = active["task_id"]
-                if run.get("task_seq") is None:
-                    # Legacy overall rows were created before task_seq was
-                    # populated. Repair them while restoring the active task.
-                    restored_seq = int(active.get("current_subtask_seq") or 0) or 1
-                    db_manager.update_task_run_progress(
-                        task_id=tid,
-                        task_seq=restored_seq,
-                    )
+                # A legacy external run can exist without its task_groups row
+                # (or without group_id/overall_task_id).  The questionnaire
+                # resolver is group-based, so repair that durable identity as
+                # part of restoring the run.  The new full overall packet is
+                # authoritative for mode/difficulty/autonomy; stale stored
+                # sub_start defaults must not replace it.
+                group_id = int(run.get("group_id") or active.get("overall_task_id") or tid)
+                restored_seq = int(active.get("current_subtask_seq") or run.get("task_seq") or 0) or 1
+                expected = max(expected, int(active.get("completed_subtasks") or 0), restored_seq)
+                normalized["overall_task_id"] = group_id
+                active.update({
+                    "overall_task_id": group_id,
+                    "expected_subtasks": expected,
+                    "current_subtask_seq": restored_seq,
+                    "task_name": normalized.get("task_name"),
+                    "gender": normalized.get("gender"),
+                    "raw": copy.deepcopy(raw_fields),
+                    "normalized": copy.deepcopy(normalized),
+                })
+                repaired_config = _json_dump({
+                    **_task_run_config(category, raw_fields, normalized),
+                    "overall_task_id": group_id,
+                    "sub_task_seq": restored_seq,
+                })
+                db_manager.ensure_task_group(
+                    group_id=group_id,
+                    task_type=task_type,
+                    user_id=user_id,
+                    expected_task_count=expected,
+                    started_at_ms=int(run.get("started_at_ms") or ts),
+                    config_json=_json_dump(_task_run_config(category, raw_fields, normalized)),
+                    raw_message_json=raw,
+                    difficulty=normalized.get("difficulty_key") or normalized.get("difficulty_display"),
+                    autonomy_level=normalized.get("current_level") or normalized.get("ai_autonomy_level"),
+                    control_mode=normalized.get("control_mode") or normalized.get("default_control_mode"),
+                    is_ai_active=normalized.get("include_ai"),
+                    is_practice=normalized.get("is_practice"),
+                    progress_key=category,
+                    reactivate=True,
+                )
+                db_manager.ensure_task_run(
+                    task_id=tid,
+                    group_id=group_id,
+                    task_seq=restored_seq,
+                    task_type=task_type,
+                    user_id=user_id,
+                    expected_subtasks=1,
+                    started_at_ms=int(run.get("started_at_ms") or ts),
+                    config_json=repaired_config,
+                    raw_message_json=raw,
+                    replace_config=True,
+                )
+                db_manager.update_task_group_progress(
+                    group_id=group_id,
+                    current_task_seq=restored_seq,
+                    completed_task_count=int(active.get("completed_subtasks") or 0),
+                    status="active",
+                    raw_message_json=raw,
+                )
                 logger.info(
                     "[REMOTE_TASK_COUNT] external overall task_start resumed "
-                    "category=%s task_type=%s entry_mode=%s user=%s task_id=%s "
+                    "category=%s task_type=%s entry_mode=%s user=%s task_id=%s group_id=%s "
                     "completed=%s current_seq=%s total=%s",
                     category,
                     task_type,
                     normalized.get("entry_mode"),
                     user_id,
                     tid,
+                    group_id,
                     active.get("completed_subtasks"),
                     active.get("current_subtask_seq"),
                     active.get("expected_subtasks"),

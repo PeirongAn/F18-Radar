@@ -70,6 +70,22 @@ class FakeDb:
             return
         self.groups[group_id].update({key: value for key, value in kwargs.items() if value is not None})
 
+    def ensure_task_run(self, **kwargs):
+        task_id = kwargs["task_id"]
+        replace_config = kwargs.pop("replace_config", False)
+        if task_id not in self.runs:
+            self.create_task_run(**kwargs)
+            return
+        run = self.runs[task_id]
+        for key, value in kwargs.items():
+            if value is None or key in ("reactivate",):
+                continue
+            if key == "config_json" and not replace_config and run.get("config_json"):
+                continue
+            run[key] = value
+        if kwargs.get("reactivate"):
+            run["status"] = "active"
+
     def update_task_run_progress(self, task_id, **kwargs):
         run = self.runs[task_id]
         for key, value in kwargs.items():
@@ -724,6 +740,34 @@ def test_overall_task_start_resumes_unfinished_task(monkeypatch):
     assert fake_db.runs[43]["status"] == "active"
     assert fake_db.runs[43]["task_seq"] == 2
     assert fake_db.events[-1]["event_type"] == "sub_start"
+
+
+def test_overall_resume_repairs_legacy_group_and_uses_current_mode(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    bridge._handle_external_task(overall_start("1"), "platform_control")
+    legacy_run = fake_db.runs[42]
+    legacy_config = json.loads(legacy_run["config_json"])
+    legacy_config["overall_task_id"] = None
+    legacy_config["normalized"]["overall_task_id"] = None
+    legacy_run["group_id"] = None
+    legacy_run["config_json"] = json.dumps(legacy_config, ensure_ascii=False)
+    fake_db.groups.clear()
+    bridge._active_external_tasks.clear()
+
+    current = overall_start("1")
+    current["DefaultControlMode"] = "0"
+    current["AIAutonomyLeve"] = "3"
+    current["Difficulty"] = "3"
+    replies = bridge._handle_external_task(current, "platform_control")
+
+    repaired_config = json.loads(fake_db.runs[42]["config_json"])
+    assert replies[0]["task_id"] == 42
+    assert fake_db.runs[42]["group_id"] == 42
+    assert fake_db.groups[42]["control_mode"] == "0"
+    assert fake_db.groups[42]["is_ai_active"] is False
+    assert repaired_config["overall_task_id"] == 42
+    assert repaired_config["normalized"]["control_mode"] == "0"
+    assert repaired_config["normalized"]["difficulty_raw"] == "3"
 
 
 def test_extra_overall_task_start_while_active_is_ignored(monkeypatch):

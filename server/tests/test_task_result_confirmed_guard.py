@@ -539,6 +539,58 @@ def test_sa_task_group_completion_returns_its_group_id():
     assert result[0]["task_group_id"] == 902
 
 
+def test_sa_task_group_completion_recovers_group_id_from_task_run(monkeypatch):
+    handler = MessageHandler()
+    task_manager = FakeTaskManager()
+    task_manager.current_scenario = {
+        "repetition_info": {
+            "current": 2,
+            "total": 2,
+            "is_ai_active": False,
+            "is_practice": False,
+        },
+        "is_ai_active": False,
+    }
+    handler.current_session.update(
+        {
+            "task_id": 70,
+            "task_started_at_ms": int(time.time() * 1000) - 5000,
+            "user_id": "ANPEIRONG08",
+        }
+    )
+    recovered_task_ids = []
+
+    def get_task_run_group_id(task_id):
+        recovered_task_ids.append(task_id)
+        return 903
+
+    monkeypatch.setattr(
+        message_handler_module.db_manager,
+        "get_task_run_group_id",
+        get_task_run_group_id,
+    )
+
+    result = asyncio.run(
+        handler._handle_task_result_confirmed(
+            {
+                "type": "task_result_confirmed",
+                "task_type": "SA_THREAT_RESPONSE",
+                "task_id": 70,
+                "user_id": "ANPEIRONG08",
+                "timestamp": int(time.time() * 1000),
+            },
+            {"sa_task_manager": task_manager, "is_practice": True},
+        )
+    )
+
+    assert recovered_task_ids == [70]
+    assert result[0]["type"] == "all_tasks_completed"
+    assert result[0]["task_group_id"] == 903
+    assert result[0]["is_ai_active"] is False
+    assert task_manager.current_scenario["task_group_id"] == 903
+    assert task_manager.current_scenario["repetition_info"]["task_group_id"] == 903
+
+
 def test_stale_antenna_confirmation_is_ignored_after_task_reset():
     handler = MessageHandler()
     handler.current_session.update({
