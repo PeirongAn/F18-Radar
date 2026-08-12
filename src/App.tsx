@@ -13,6 +13,10 @@ import agentStore, { type ControlMode, normalizeControlMode } from './stores/Age
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
 import { canShowFormalQuestionnaire } from './utils/questionnairePolicy';
+import {
+  getTaskGroupIdFromMessage,
+  isCompletionForActiveTaskGroup,
+} from './utils/taskGroupCompletion';
 import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
 interface TargetSelectParams {
   targetId: string | undefined;
@@ -603,13 +607,16 @@ const MainApp: React.FC = observer(() => {
 
   const showQuestionnaireForTask = useCallback((taskType: TaskType, source?: any) => {
     if (!canShowQuestionnaire(taskType, source)) return;
-    const completedTaskGroupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
+    const completedTaskGroupId = getTaskGroupIdFromMessage(source);
     const activeTaskGroupId = activeTaskGroupIdRef.current[taskType];
+    const requiresTaskGroupIdentity = taskType === 'RADAR_TARGETING' || taskType === 'SA_THREAT_RESPONSE';
+    const isStaleLegacyCompletion = completedTaskGroupId !== null
+      && activeTaskGroupId !== undefined
+      && completedTaskGroupId !== activeTaskGroupId;
     if (
-      completedTaskGroupId !== undefined &&
-      completedTaskGroupId !== null &&
-      activeTaskGroupId !== undefined &&
-      String(completedTaskGroupId) !== activeTaskGroupId
+      requiresTaskGroupIdentity
+        ? !isCompletionForActiveTaskGroup(source, activeTaskGroupId)
+        : isStaleLegacyCompletion
     ) {
       console.warn('[App] Ignored stale task-group completion:', {
         taskType,
@@ -637,13 +644,16 @@ const MainApp: React.FC = observer(() => {
   }, [canShowQuestionnaire, getCompletionKey]);
 
   const showCompletionNoticeForTask = useCallback((taskType: TaskType, source?: any) => {
-    const completedTaskGroupId = source?.task_group_id ?? source?.repetition_info?.task_group_id;
+    const completedTaskGroupId = getTaskGroupIdFromMessage(source);
     const activeTaskGroupId = activeTaskGroupIdRef.current[taskType];
+    const requiresTaskGroupIdentity = taskType === 'RADAR_TARGETING' || taskType === 'SA_THREAT_RESPONSE';
+    const isStaleLegacyCompletion = completedTaskGroupId !== null
+      && activeTaskGroupId !== undefined
+      && completedTaskGroupId !== activeTaskGroupId;
     if (
-      completedTaskGroupId !== undefined &&
-      completedTaskGroupId !== null &&
-      activeTaskGroupId !== undefined &&
-      String(completedTaskGroupId) !== activeTaskGroupId
+      requiresTaskGroupIdentity
+        ? !isCompletionForActiveTaskGroup(source, activeTaskGroupId)
+        : isStaleLegacyCompletion
     ) return;
     if (canShowQuestionnaire(taskType, source)) return;
     const key = getCompletionKey(taskType, source);
@@ -1042,13 +1052,16 @@ const MainApp: React.FC = observer(() => {
   }, [radarStore]);
 
   const handleRadarTaskCompleted = useCallback(() => {
+    const taskGroupId = getTaskGroupId('RADAR_TARGETING');
+    if (!taskGroupId) return;
     const source = {
+      task_group_id: taskGroupId,
       is_ai_active: agentStore.isAIActive,
       is_practice: radarStore.isPractice,
     };
     showQuestionnaireForTask('RADAR_TARGETING', source);
     showCompletionNoticeForTask('RADAR_TARGETING', source);
-  }, [radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
+  }, [getTaskGroupId, radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
 
   /* ── SA 最后一项结果确认后，才允许显示已暂存的任务组问卷 ── */
   const handleSAResultConfirmed = useCallback(() => {
