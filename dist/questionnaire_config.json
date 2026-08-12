@@ -59,6 +59,37 @@
       "id": 6,
       "text": "请评价你在本轮任务过程中感到紧张或不安的程度。",
       "options": ["完全不紧张", "非常轻微", "较轻", "中等", "较强", "很强", "极度紧张"]
+    },
+    {
+      "id": 8,
+      "text": "你认为当前智能辅助系统在这类任务中的总体正确率大约是____%",
+      "type": "number",
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "suffix": "%",
+      "placeholder": "请输入 0–100"
     }
-  ]
+  ],
+  "manualQuestionnaire": {
+    "taskTypes": [
+      "RADAR_TARGETING",
+      "SA_THREAT_RESPONSE",
+      "PLATFORM_CONTROL",
+      "WEAPON_FIRING"
+    ],
+    "questionIds": [4, 5, 6],
+    "additionalQuestions": [
+      {
+        "id": 7,
+        "text": "你认为当前你在这类任务中的总体正确率大约是____%。",
+        "type": "number",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "suffix": "%",
+        "placeholder": "请输入 0–100"
+      }
+    ]
+  }
 }
