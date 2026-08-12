@@ -15,6 +15,7 @@ import { useTrustTrial } from '../hooks/useTrustTrial';
 import { useTrustTrialPublisher } from '../hooks/useTrustTrialPublisher';
 import type { TrustCandidate, TrustTrialSnapshot } from '../types/trustControl';
 import { normalizeTimestampMs } from '../utils/trustCalibration';
+import { hasAuthoritativeRadarTaskIdentity } from '../utils/radarTaskIdentity';
 
 // 雷达范围值数组
 const RADAR_RANGES = [10, 20, 40, 80];
@@ -643,7 +644,12 @@ const Radar: React.FC<RadarProps> = (({
 
   // Effect for AI to automatically select a target and move TDC
   useEffect(() => {
-    if (!agentStore.isAIActive || !agentStore.currentAILevelConfig || !isStarted) {
+    if (
+      !agentStore.isAIActive ||
+      !agentStore.currentAILevelConfig ||
+      !isStarted ||
+      !hasAuthoritativeRadarTaskIdentity(taskId, missionInitSettings)
+    ) {
       return;
     }
 
@@ -777,6 +783,7 @@ const Radar: React.FC<RadarProps> = (({
     isStarted,
     radarStore.targetDisplayPositions,
     taskId,
+    missionInitSettings,
     trustCandidates,
   ]);
 
@@ -1283,7 +1290,6 @@ const Radar: React.FC<RadarProps> = (({
             onTrustTdcCandidate={handleTrustTdcCandidate}
             trustFocusRadius={trustControl?.sensor_focus_radius_px ?? 30}
             trustAiRecommendationId={trustTrial.snapshot.aiRecommendation?.id}
-            trustGlowActive={trustTrial.snapshot.glowActive}
             trustManualReviewActive={trustTrial.snapshot.manualReviewActive}
             trustDisplayNumbers={displayNumberRef.current.values}
             trustFocusedTargetId={trustTrial.snapshot.focusedCandidate?.id}

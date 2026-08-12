@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Group, Line, Rect, Text } from 'react-konva';
 import UnknownTarget, { UnknownTargetData } from './UnknownTarget';
+import { isPersistentRadarAiHighlight } from '../utils/radarTargetMarker';
 import { SensorTrustDecision } from '../types/trustCalibration';
 
 /**
@@ -58,7 +59,6 @@ interface UnknownTargetManagerProps {
   range?: number;
   sensorTrustDecision?: SensorTrustDecision;
   trustAiRecommendationId?: string;
-  trustGlowActive?: boolean;
   trustManualReviewActive?: boolean;
   trustDisplayNumbers?: Map<string, number>;
   trustFocusedTargetId?: string;
@@ -118,7 +118,6 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
   range = 20,
   sensorTrustDecision,
   trustAiRecommendationId,
-  trustGlowActive = false,
   trustManualReviewActive = false,
   trustDisplayNumbers,
   trustFocusedTargetId,
@@ -174,7 +173,13 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
             : '#d6b84a';
         const isReview = sensorTrustDecision?.controlLevel === 'review';
         const displayPosition = target.position;
-        const showTrustGlow = trustGlowActive && trustAiRecommendationId === target.id;
+        // The AI recommendation is a persistent identity marker for this trial.
+        // Transient trust-glow telemetry must not remove it when the operator
+        // focuses or selects a different target.
+        const showAiRecommendationHighlight = isPersistentRadarAiHighlight(
+          target.id,
+          trustAiRecommendationId,
+        );
         const showManualReviewPulse = trustManualReviewActive && trustAiRecommendationId === target.id;
         const displayNumber = trustDisplayNumbers?.get(target.id);
         const showDisplayNumber = displayNumber !== undefined && (
@@ -186,21 +191,6 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
           <React.Fragment key={target.id}>
             {showManualReviewPulse && displayPosition && (
               <ManualReviewPulse x={displayPosition.x} y={displayPosition.y} />
-            )}
-            {showTrustGlow && displayPosition && (
-              <Rect
-                x={displayPosition.x - 28}
-                y={displayPosition.y - 28}
-                width={56}
-                height={56}
-                stroke="#69d8ff"
-                strokeWidth={2}
-                cornerRadius={8}
-                dash={[8, 4]}
-                shadowColor="#69d8ff"
-                shadowBlur={16}
-                opacity={0.9}
-              />
             )}
             {showDisplayNumber && displayPosition && (
               <Text
@@ -243,7 +233,8 @@ export const UnknownTargetManager: React.FC<UnknownTargetManagerProps> = ({
             <UnknownTarget
               data={{
                 ...target,
-                selected: target.id === selectedTargetId
+                selected: target.id === selectedTargetId,
+                aiHighlighted: showAiRecommendationHighlight,
               }}
               color={targetColor}
               framePositions={framePositions}

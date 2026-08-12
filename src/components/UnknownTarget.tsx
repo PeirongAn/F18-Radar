@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Group, Line, Text } from 'react-konva';
+import { resolveRadarTargetMarkerStyle } from '../utils/radarTargetMarker';
 import radarStore from '../stores/RadarStore'; // <--- 导入 RadarStore
 
 // 定义未知目标数据接口
@@ -15,6 +16,7 @@ export interface UnknownTargetData {
   trail_length?: number;            // 新增：拖尾长度
   threat_score?: number;            // 后端计算的威胁评分
   distance_nm?: number;             // 新增：原始距离（海里）
+  aiHighlighted?: boolean;
 }
 
 interface UnknownTargetProps {
@@ -56,7 +58,8 @@ const distanceToCategory = (distanceNm: number, range: number): string => {
 
 const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositions, scanAngle = 60, onTargetClick, cognitiveLoad = 'low', range = 20 }) => {
   // 从props解构需要的属性
-  const { id, direction, type, speed, selected, position } = data;
+  const { id, direction, type, speed, selected, aiHighlighted = false, position } = data;
+  const markerStyle = resolveRadarTargetMarkerStyle(color, Boolean(selected), aiHighlighted);
   
   // // 根据scanAngle计算缩放比例
   // const getScale = () => {
@@ -224,11 +227,11 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
            -15, 0  // 顶点
         ]}
         closed={true}
-        fill={selected ? 'white' : color} // 选中时高亮为白色
-        stroke={color}
-        strokeWidth={1}
-        shadowColor={selected ? 'cyan' : 'transparent'} // 选中时发光
-        shadowBlur={selected ? 10 : 0}
+        fill={markerStyle.fill}
+        stroke={markerStyle.stroke}
+        strokeWidth={markerStyle.strokeWidth}
+        shadowColor={markerStyle.shadowColor}
+        shadowBlur={markerStyle.shadowBlur}
       />
 
       {/* 认知负荷信息标签- 临时去掉 - 反向旋转使文字保持水平 */}
@@ -274,4 +277,4 @@ const UnknownTarget: React.FC<UnknownTargetProps> = ({ data, color, framePositio
   );
 };
 
-export default UnknownTarget; 
+export default UnknownTarget;

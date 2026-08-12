@@ -88,7 +88,6 @@ export interface RadarDisplayProps {
   onTrustTdcCandidate?: (targetId: string | null) => void;
   trustFocusRadius?: number;
   trustAiRecommendationId?: string;
-  trustGlowActive?: boolean;
   trustManualReviewActive?: boolean;
   trustDisplayNumbers?: Map<string, number>;
   trustFocusedTargetId?: string;
@@ -133,7 +132,6 @@ const RadarDisplay: React.FC<RadarDisplayProps> = observer(({
   onTrustTdcCandidate,
   trustFocusRadius = 30,
   trustAiRecommendationId,
-  trustGlowActive = false,
   trustManualReviewActive = false,
   trustDisplayNumbers,
   trustFocusedTargetId,
@@ -1127,7 +1125,6 @@ B1: ${button1 ? '按下' : '释放'} (范围) | B2: ${button2 ? '按下' : '释�
               range={range}
               sensorTrustDecision={sensorTrustDecision}
               trustAiRecommendationId={trustAiRecommendationId}
-              trustGlowActive={trustGlowActive}
               trustManualReviewActive={trustManualReviewActive}
               trustDisplayNumbers={trustDisplayNumbers}
               trustFocusedTargetId={trustFocusedTargetId}
