@@ -5,6 +5,7 @@ import agentStore, { ServerAIParameterRecommendation } from '../stores/AgentStor
 import audioManager from '../managers/AudioManager'; // 引入新的全局音频管理器
 import { normalizeTimestampMs } from '../utils/trustCalibration';
 import type { TrustControlState } from '../types/trustControl';
+import { clearTaskCompletionForStart } from '../utils/taskGroupCompletion';
 
 export interface TargetHistory {
   x: number;
@@ -1237,6 +1238,11 @@ const useRadarData = (
       if (message.autostart) {
         const kind = message.normalized.web_task_kind;
         const taskType: 'radar' | 'sa' = kind === 'sa' ? 'sa' : 'radar';
+        const internalTaskType = taskType === 'sa' ? 'SA_THREAT_RESPONSE' : 'RADAR_TARGETING';
+        // This message arrives before init_settings. Clear the old group's
+        // completion now so a user/group switch cannot replay ALL_COMPLETED.
+        setRepetitionInfos(previous => clearTaskCompletionForStart(previous, internalTaskType));
+        setLastTaskGroupCompletion(null);
         const userId = String(message.userId || message.normalized.platform_task_id || '');
         console.log('[useRadarData] platform autostart triggered:', { userId, taskType, includeAI: message.normalized.include_ai });
         const rawTaskNumber = message.normalized.repetition_total_override ?? message.normalized.task_number;
