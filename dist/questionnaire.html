@@ -21,7 +21,9 @@
       justify-content: center;
       padding: 12px;
       overflow: hidden;
+      visibility: hidden;
     }
+    body.ready { visibility: visible; }
 
     /* ── Dialog window ── */
     .dialog {
@@ -566,7 +568,14 @@ async function loadAuthoritativeContext() {
     const response = await fetch(`/api/questionnaire/context?${query.toString()}`, {
       cache: 'no-store',
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      let reason = 'task_incomplete';
+      try {
+        const errorPayload = await response.json();
+        reason = errorPayload?.reason || reason;
+      } catch (_) {}
+      return { state: 'ineligible', reason };
+    }
     const payload = await response.json();
     if (payload?.ok && payload.type === 'questionnaire_context') {
       applyContext({
@@ -574,12 +583,27 @@ async function loadAuthoritativeContext() {
         experimentNo: payload.experimentNo ?? contextData.experimentNo,
         total: payload.total ?? contextData.total,
       });
+      return { state: 'eligible' };
     }
+    return { state: 'ineligible', reason: 'invalid_context' };
   } catch (error) {
-    // URL values remain the final compatibility fallback when the server is
-    // unavailable or no completed task can be resolved.
+    // URL values remain the final compatibility fallback only when the server
+    // itself is unavailable. A server-side ineligible response closes the page.
     console.warn('无法读取服务端任务上下文，使用 URL 兜底值', error);
+    return { state: 'unavailable' };
   }
+}
+
+function closeIneligibleQuestionnaire(reason) {
+  window.close();
+  setTimeout(() => {
+    if (window.closed) return;
+    const message = reason === 'practice_task'
+      ? '练习任务无需填写问卷'
+      : '当前正式任务尚未全部完成，无需填写问卷';
+    document.body.classList.add('ready');
+    document.body.innerHTML = `<div style="font:600 20px 'Microsoft YaHei',sans-serif;color:#334155">${message}</div>`;
+  }, 100);
 }
 
 function createEmptyConfig() {
@@ -882,7 +906,12 @@ function handleSubmit() {
   await loadConfig();
 
   // 3. Prefer the server-side completed task context over URL display fields.
-  await loadAuthoritativeContext();
+  const contextResult = await loadAuthoritativeContext();
+  if (contextResult?.state === 'ineligible') {
+    closeIneligibleQuestionnaire(contextResult.reason);
+    return;
+  }
+  document.body.classList.add('ready');
 
   // 4. Pre-fill answers from URL (e.g. q1=5&q2=3)
   prefillAnswersFromURL();

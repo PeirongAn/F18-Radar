@@ -251,7 +251,8 @@ class GlobalWebSocketManager {
         const difficulty = rawData.normalized?.difficulty_key ?? rawData.raw?.Difficulty;
         const taskNumber = rawData.normalized?.repetition_total_override ?? rawData.normalized?.task_number ?? rawData.raw?.TaskNumber;
         const taskKind = rawData.normalized?.web_task_kind ?? rawData.normalized?.task_type ?? rawData.raw?.TaskName;
-        messageId += '_' + [pid ?? 'unknown', taskKind ?? 'unknown', level ?? 'unknown', difficulty ?? 'unknown', taskNumber ?? 'unknown'].join(':');
+        const taskMode = rawData.normalized?.is_practice ?? rawData.raw?.TaskMode;
+        messageId += '_' + [pid ?? 'unknown', taskKind ?? 'unknown', level ?? 'unknown', difficulty ?? 'unknown', taskNumber ?? 'unknown', taskMode ?? 'unknown'].join(':');
       } else if (rawData.type === 'attention_feedback' && rawData.server_time_ms) {
         messageId += '_' + rawData.server_time_ms;
       }
@@ -1153,6 +1154,7 @@ const useRadarData = (
           autonomyLevel ?? 'unknown',
           message.normalized.difficulty_key ?? message.raw.Difficulty ?? 'unknown',
           taskNumber ?? 'unknown',
+          message.normalized.is_practice ? 'practice' : 'formal',
         ].join(':')}`;
         setPlatformAutoStart({
           userId,

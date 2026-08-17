@@ -700,8 +700,8 @@ class HTTPServer:
     async def questionnaire_context_handler(self, request: web.Request) -> web.Response:
         """Return the authoritative completed task context for questionnaire display.
 
-        URL query parameters other than userId and taskType are ignored.
-        The resolver first uses the current active task group.
+        URL query parameters other than task identity and control mode are ignored.
+        Active, incomplete, and practice task groups are never eligible.
         """
         user_id = str(request.query.get('userId') or request.query.get('user_id') or '').strip()
         task_type = str(request.query.get('taskType') or request.query.get('task_type') or '').strip()
@@ -715,6 +715,13 @@ class HTTPServer:
         )
         if context.get('task_id') is None:
             return web.json_response({"ok": False, "msg": "no completed task context found"}, status=404)
+        if not db_manager.is_questionnaire_context_eligible(context):
+            reason = 'practice_task' if context.get('is_practice') else 'task_incomplete'
+            return web.json_response({
+                "ok": False,
+                "reason": reason,
+                "msg": "questionnaire is only available after a formal task group is completed",
+            }, status=409)
 
         return web.json_response({
             "ok": True,

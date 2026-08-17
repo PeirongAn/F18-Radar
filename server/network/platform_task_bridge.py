@@ -1640,28 +1640,51 @@ def _handle_external_task(
         if action == "task_start" and _is_overall_task_start(message_data):
             if key in _active_external_tasks:
                 active = _active_external_tasks[key]
+                active_normalized = active.get("normalized") or {}
+                if _normalized_task_signature(active_normalized) == _normalized_task_signature(normalized):
+                    logger.warning(
+                        "[REMOTE_TASK_COUNT] ignore duplicate overall task_start while active "
+                        "category=%s user=%s task_id=%s active_keys=%s",
+                        category,
+                        user_id,
+                        active.get("task_id"),
+                        list(_active_external_tasks.keys()),
+                    )
+                    return [{"type": "platform_task_ack", "status": "ignored",
+                             "task_id": active.get("task_id"), "task_type": task_type,
+                             "task_category": category, "entry_mode": "external_lifecycle",
+                             "event_type": "overall_start",
+                             "diagnostics": _external_task_diagnostics(
+                                 message_data,
+                                 category,
+                                 action,
+                                 user_id,
+                                 task_type,
+                                 external_collectors=external_collectors,
+                                 active=active,
+                                 event_role="overall_start_ignored",
+                             )}]
+
                 logger.warning(
-                    "[REMOTE_TASK_COUNT] ignore extra overall task_start while active "
-                    "category=%s user=%s task_id=%s active_keys=%s",
+                    "[REMOTE_TASK_COUNT] replace active task with changed overall config "
+                    "category=%s user=%s old_task_id=%s old_signature=%s new_signature=%s",
                     category,
                     user_id,
                     active.get("task_id"),
-                    list(_active_external_tasks.keys()),
+                    _normalized_task_signature(active_normalized),
+                    _normalized_task_signature(normalized),
                 )
-                return [{"type": "platform_task_ack", "status": "ignored",
-                         "task_id": active.get("task_id"), "task_type": task_type,
-                         "task_category": category, "entry_mode": "external_lifecycle",
-                         "event_type": "overall_start",
-                         "diagnostics": _external_task_diagnostics(
-                             message_data,
-                             category,
-                             action,
-                             user_id,
-                             task_type,
-                             external_collectors=external_collectors,
-                             active=active,
-                             event_role="overall_start_ignored",
-                         )}]
+                _close_external_active_task(
+                    key,
+                    active,
+                    "replaced_by_changed_overall",
+                    message_data,
+                    timestamp_ms=ts,
+                    raw_message_json=raw,
+                    gaze_svc=gaze_svc,
+                    physio_svc=physio_svc,
+                    external_collectors=external_collectors,
+                )
 
             compat_reply = _handle_overall_stop_compat_if_needed(
                 message_data,

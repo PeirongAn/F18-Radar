@@ -1052,16 +1052,13 @@ const MainApp: React.FC = observer(() => {
   }, [radarStore]);
 
   const handleRadarTaskCompleted = useCallback(() => {
-    const taskGroupId = getTaskGroupId('RADAR_TARGETING');
-    if (!taskGroupId) return;
-    const source = {
-      task_group_id: taskGroupId,
-      is_ai_active: agentStore.isAIActive,
-      is_practice: radarStore.isPractice,
-    };
-    showQuestionnaireForTask('RADAR_TARGETING', source);
-    showCompletionNoticeForTask('RADAR_TARGETING', source);
-  }, [getTaskGroupId, radarStore, showQuestionnaireForTask, showCompletionNoticeForTask]);
+    // RadarDisplay reaches this callback from its local repetition counter.
+    // That counter can still contain the previous practice total while a new
+    // formal task is being initialized, so it must never authorize a survey.
+    // The all_tasks_completed message from the server is the sole completion
+    // authority and is handled by lastTaskGroupCompletion above.
+    console.log('[App] Radar local total reached; waiting for server task-group completion.');
+  }, []);
 
   /* ── SA 最后一项结果确认后，才允许显示已暂存的任务组问卷 ── */
   const handleSAResultConfirmed = useCallback(() => {

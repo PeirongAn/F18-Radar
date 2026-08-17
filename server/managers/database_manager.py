@@ -94,6 +94,20 @@ class DatabaseManager:
             return False
         return None
 
+    @classmethod
+    def is_questionnaire_context_eligible(cls, context: Dict[str, Any]) -> bool:
+        """Only completed formal task groups may display or save a questionnaire."""
+        if context.get("task_id") is None or cls._safe_bool(context.get("is_practice")) is True:
+            return False
+
+        if str(context.get("status") or "").strip().lower() != "completed":
+            return False
+        current = cls._safe_int(context.get("repetition_current"))
+        total = cls._safe_int(context.get("repetition_total"))
+        if total is not None and total > 0:
+            return current is not None and current >= total
+        return True
+
     @staticmethod
     def _normalize_control_mode(value: Any, is_ai_active: Any = None) -> Optional[str]:
         if value is not None and str(value).strip() != '':
@@ -1314,6 +1328,7 @@ class DatabaseManager:
             "control_mode": control_mode,
             "is_ai_active": self._safe_bool(include_ai),
             "is_practice": self._safe_bool(is_practice),
+            "status": run.get("status"),
             "repetition_current": run.get("current_subtask_seq") or run.get("completed_subtasks"),
             "repetition_total": run.get("expected_subtasks") or normalized.get("repetition_total_override"),
         }
@@ -1342,6 +1357,7 @@ class DatabaseManager:
             "control_mode": control_mode,
             "is_ai_active": self._safe_bool(group.get("is_ai_active")),
             "is_practice": self._safe_bool(group.get("is_practice")),
+            "status": group.get("status"),
             "repetition_current": group.get("current_task_seq") or group.get("completed_task_count"),
             "repetition_total": group.get("expected_task_count") or normalized.get("repetition_total_override"),
         }
@@ -2264,6 +2280,8 @@ class DatabaseManager:
             control_mode=control_mode,
         )
         resolved_task_group_id = self._safe_int(context.get('task_group_id'))
+        if context.get('task_id') is not None and not self.is_questionnaire_context_eligible(context):
+            raise ValueError("questionnaire is only available after a formal task group is completed")
         is_practice = self._safe_bool(task_info.get('isPractice', task_info.get('is_practice')))
         is_ai_active = self._safe_bool(task_info.get('is_ai_active'))
         if is_ai_active is None:

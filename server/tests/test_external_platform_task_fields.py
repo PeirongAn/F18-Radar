@@ -471,6 +471,40 @@ def test_overall_task_start_creates_and_starts_first_task_once(monkeypatch):
     assert fake_db.events[0]["task_id"] == 42
 
 
+def test_changed_formal_overall_replaces_lingering_practice_context(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    practice = weapon_overall_start("4")
+    practice["TaskMode"] = "0"
+
+    first = bridge._handle_external_task(practice, "weapon_launch")
+    formal = weapon_overall_start("5")
+    second = bridge._handle_external_task(formal, "weapon_launch")
+
+    assert first[0]["status"] == "ok"
+    assert second[0]["status"] == "ok"
+    assert second[0]["task_id"] == 43
+    assert fake_db.runs[42]["status"] == "completed"
+    assert fake_db.events[-2]["event_type"] == "replaced_by_changed_overall"
+    assert fake_db.groups[43]["expected_task_count"] == 5
+    assert fake_db.groups[43]["is_practice"] is False
+    active = bridge._active_external_tasks[("weapon_launch", "DefaultID")]
+    assert active["task_id"] == 43
+    assert active["expected_subtasks"] == 5
+    assert active["normalized"]["is_practice"] is False
+
+
+def test_identical_full_overall_while_active_is_still_ignored(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+
+    first = bridge._handle_external_task(overall_start("3"), "platform_control")
+    duplicate = bridge._handle_external_task(overall_start("3"), "platform_control")
+
+    assert first[0]["task_id"] == 42
+    assert duplicate[0]["status"] == "ignored"
+    assert duplicate[0]["task_id"] == 42
+    assert sorted(fake_db.runs) == [42]
+
+
 def test_web_overlay_entry_semantics_and_task_scoped_pending(monkeypatch):
     setup_bridge(monkeypatch)
 
@@ -507,6 +541,28 @@ def test_web_overlay_entry_semantics_and_task_scoped_pending(monkeypatch):
     assert cached["taskNumber"] == 4
     assert cached["platformTask"]["raw"]["Difficulty"] == sa_overlay()["Difficulty"]
     assert cached["platformTask"]["normalized"] == sa_meta
+
+
+def test_formal_web_overlay_replaces_same_user_practice_total(monkeypatch):
+    setup_bridge(monkeypatch)
+    practice = radar_overlay()
+    practice["TaskMode"] = "0"
+    practice["TaskNumber"] = "4"
+    bridge.apply_platform_task_message(practice)
+
+    formal = radar_overlay()
+    formal["TaskMode"] = "1"
+    formal["TaskNumber"] = "5"
+    normalized = bridge.apply_platform_task_message(formal)
+    overlay, meta = bridge.get_active_overlay_for_task("RadarUser", "RADAR_TARGETING")
+
+    assert normalized["is_practice"] is False
+    assert normalized["repetition_total_override"] == 5
+    assert overlay["repetition_total_override"] == 5
+    assert meta["normalized"]["is_practice"] is False
+    assert meta["normalized"]["repetition_total_override"] == 5
+    assert meta["raw"]["TaskMode"] == "1"
+    assert meta["raw"]["TaskNumber"] == "5"
 
 
 def test_simple_task_start_after_overall_is_ignored_as_duplicate(monkeypatch):

@@ -478,6 +478,60 @@ def test_questionnaire_context_prefers_active_task_group(tmp_path):
     assert context["autonomy_level"] == "L1"
     assert context["repetition_current"] == 2
     assert context["repetition_total"] == 3
+    assert context["status"] == "active"
+    assert manager.is_questionnaire_context_eligible(context) is False
+
+
+def test_questionnaire_context_requires_completed_formal_task_group(tmp_path):
+    db_path = tmp_path / "questionnaire-eligibility.db"
+    manager = make_sync_database_manager(db_path)
+    manager.initialize_database()
+    with manager.get_connection() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_groups (
+                group_id, task_type, user_id, status, expected_task_count,
+                completed_task_count, current_task_seq, started_at_ms,
+                completed_at_ms, difficulty, autonomy_level, is_ai_active,
+                is_practice, config_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
+            """,
+            [
+                (71, "RADAR_TARGETING", "formal-active", "active", 20, 10, 10, 100, None, "high", "L2", 1, 0),
+                (72, "RADAR_TARGETING", "formal-complete", "completed", 20, 20, 20, 200, 300, "high", "L2", 1, 0),
+                (73, "WEAPON_FIRING", "practice-complete", "completed", 10, 10, 10, 400, 500, "high", "L2", 1, 1),
+                (74, "WEAPON_FIRING", "formal-premature", "completed", 20, 10, 10, 600, 700, "high", "L2", 1, 0),
+            ],
+        )
+        conn.commit()
+
+    active = manager.resolve_questionnaire_task_context("formal-active", "RADAR_TARGETING")
+    completed = manager.resolve_questionnaire_task_context(
+        "formal-complete", "RADAR_TARGETING", submitted_task_group_id=72
+    )
+    practice = manager.resolve_questionnaire_task_context(
+        "practice-complete", "WEAPON_FIRING", submitted_task_group_id=73
+    )
+    premature = manager.resolve_questionnaire_task_context(
+        "formal-premature", "WEAPON_FIRING", submitted_task_group_id=74
+    )
+
+    assert manager.is_questionnaire_context_eligible(active) is False
+    assert manager.is_questionnaire_context_eligible(completed) is True
+    assert manager.is_questionnaire_context_eligible(practice) is False
+    assert manager.is_questionnaire_context_eligible(premature) is False
+
+    try:
+        manager.record_questionnaire({
+            "userId": "formal-active",
+            "taskType": "RADAR_TARGETING",
+            "taskGroupId": 71,
+            "answers": {"1": 5},
+        })
+    except ValueError as error:
+        assert "formal task group is completed" in str(error)
+    else:
+        raise AssertionError("active formal task unexpectedly accepted a questionnaire")
 
 
 def test_questionnaire_uses_user_difficulty_and_autonomy_task_group(tmp_path):
