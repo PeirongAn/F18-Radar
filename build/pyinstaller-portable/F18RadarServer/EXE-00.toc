@@ -71,7 +71,7 @@
  [],
  False,
  False,
- 1786348563,
+ 1786935835,
  [('run.exe',
    'D:\\codes\\F18-Radar\\server\\.venv\\lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\run.exe',
    'EXECUTABLE')],

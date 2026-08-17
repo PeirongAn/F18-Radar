@@ -21,7 +21,9 @@
       justify-content: center;
       padding: 12px;
       overflow: hidden;
+      visibility: hidden;
     }
+    body.ready { visibility: visible; }
 
     /* ── Dialog window ── */
     .dialog {
@@ -243,6 +245,29 @@
       font-size: 12px;
       line-height: 1.35;
     }
+    .number-answer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .number-answer input {
+      width: 220px;
+      max-width: 100%;
+      padding: 11px 12px;
+      border: 1px solid #b9c7d6;
+      border-radius: 8px;
+      color: #172033;
+      background: #f8fafc;
+      font-family: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+    .q-card.unanswered .number-answer input { border-color: #fb923c; }
+    .number-suffix {
+      color: #334155;
+      font-size: 15px;
+      font-weight: 700;
+    }
 
     /* ── Progress ── */
     .progress-line {
@@ -376,7 +401,7 @@
     <div class="instruction" id="instructionText" hidden></div>
 
     <!-- Validation error -->
-    <div class="error-banner" id="errorBanner">⚠ 请完成所有题目的评分后再提交。</div>
+    <div class="error-banner" id="errorBanner">⚠ 请完成所有题目的作答后再提交。</div>
 
     <!-- Questions -->
     <div class="loading" id="loadingTip">正在加载问卷...</div>
@@ -407,7 +432,8 @@
    State
 ═══════════════════════════════════════════════════════ */
 let config       = null;
-let answers      = {};   // { questionId: value(1‑5) }
+let answers      = {};   // { questionId: numeric value }
+let activeQuestions = [];
 let contextData  = {};   // filled from URL params or WS
 let ws           = null;
 let wsConnected  = false;
@@ -489,8 +515,11 @@ function sendWS(payload) {
    Apply context (from URL params or WS push)
 ═══════════════════════════════════════════════════════ */
 function applyContext(ctx) {
+  const previousControlMode = String(contextData.controlMode ?? contextData.control_mode ?? '');
   contextData = { ...contextData, ...ctx };
   renderContext();
+  const nextControlMode = String(contextData.controlMode ?? contextData.control_mode ?? '');
+  if (config && previousControlMode !== nextControlMode) buildTable();
 }
 
 function renderContext() {
@@ -539,7 +568,14 @@ async function loadAuthoritativeContext() {
     const response = await fetch(`/api/questionnaire/context?${query.toString()}`, {
       cache: 'no-store',
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      let reason = 'task_incomplete';
+      try {
+        const errorPayload = await response.json();
+        reason = errorPayload?.reason || reason;
+      } catch (_) {}
+      return { state: 'ineligible', reason };
+    }
     const payload = await response.json();
     if (payload?.ok && payload.type === 'questionnaire_context') {
       applyContext({
@@ -547,12 +583,27 @@ async function loadAuthoritativeContext() {
         experimentNo: payload.experimentNo ?? contextData.experimentNo,
         total: payload.total ?? contextData.total,
       });
+      return { state: 'eligible' };
     }
+    return { state: 'ineligible', reason: 'invalid_context' };
   } catch (error) {
-    // URL values remain the final compatibility fallback when the server is
-    // unavailable or no completed task can be resolved.
+    // URL values remain the final compatibility fallback only when the server
+    // itself is unavailable. A server-side ineligible response closes the page.
     console.warn('无法读取服务端任务上下文，使用 URL 兜底值', error);
+    return { state: 'unavailable' };
   }
+}
+
+function closeIneligibleQuestionnaire(reason) {
+  window.close();
+  setTimeout(() => {
+    if (window.closed) return;
+    const message = reason === 'practice_task'
+      ? '练习任务无需填写问卷'
+      : '当前正式任务尚未全部完成，无需填写问卷';
+    document.body.classList.add('ready');
+    document.body.innerHTML = `<div style="font:600 20px 'Microsoft YaHei',sans-serif;color:#334155">${message}</div>`;
+  }, 100);
 }
 
 function createEmptyConfig() {
@@ -565,6 +616,7 @@ function createEmptyConfig() {
     autonomyLabels: {},
     scales: [],
     questions: [],
+    manualQuestionnaire: null,
   };
 }
 
@@ -577,7 +629,37 @@ function normalizeConfig(raw) {
   merged.autonomyLabels = merged.autonomyLabels || {};
   merged.scales = Array.isArray(merged.scales) ? merged.scales : [];
   merged.questions = Array.isArray(merged.questions) ? merged.questions : [];
+  const manual = merged.manualQuestionnaire;
+  merged.manualQuestionnaire = manual && Array.isArray(manual.questionIds)
+    ? {
+        taskTypes: Array.isArray(manual.taskTypes) ? manual.taskTypes : [],
+        questionIds: manual.questionIds,
+        additionalQuestions: Array.isArray(manual.additionalQuestions) ? manual.additionalQuestions : [],
+      }
+    : null;
   return merged;
+}
+
+function resolveQuestions() {
+  const questions = config?.questions || [];
+  const controlMode = String(contextData.controlMode ?? contextData.control_mode ?? '').trim();
+  const taskType = String(contextData.taskType ?? contextData.task_type ?? '').trim();
+  const manual = config?.manualQuestionnaire;
+  if (controlMode !== '0' || !manual) return questions;
+  if (manual.taskTypes?.length && !manual.taskTypes.includes(taskType)) return questions;
+  const includedIds = new Set(manual.questionIds);
+  return [
+    ...questions.filter(question => includedIds.has(question.id)),
+    ...(manual.additionalQuestions || []),
+  ];
+}
+
+function isAnswerValid(question, answer) {
+  if (answer === undefined || !Number.isFinite(answer)) return false;
+  if (question.type !== 'number') return true;
+  if (question.min !== undefined && answer < question.min) return false;
+  if (question.max !== undefined && answer > question.max) return false;
+  return true;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -604,14 +686,18 @@ async function loadConfig() {
 
 function buildTable() {
   const scales    = config.scales || ['1', '2', '3', '4', '5', '6', '7'];
-  const questions = config.questions || [];
+  const questions = resolveQuestions();
+  const previousSignature = activeQuestions.map(question => question.id).join(',');
+  const nextSignature = questions.map(question => question.id).join(',');
+  if (previousSignature && previousSignature !== nextSignature) answers = {};
+  activeQuestions = questions;
 
   // Body
   const list = document.getElementById('qTable');
   list.innerHTML = '';
   document.getElementById('totalCount').textContent = questions.length;
 
-  questions.forEach(q => {
+  questions.forEach((q, questionIndex) => {
     const card = document.createElement('div');
     card.id = `row_${q.id}`;
     card.className = 'q-card';
@@ -621,7 +707,7 @@ function buildTable() {
 
     const number = document.createElement('span');
     number.className = 'q-number';
-    number.textContent = q.id;
+    number.textContent = questionIndex + 1;
     title.appendChild(number);
 
     const titleText = document.createElement('div');
@@ -630,41 +716,61 @@ function buildTable() {
     title.appendChild(titleText);
     card.appendChild(title);
 
-    const grid = document.createElement('div');
-    grid.className = 'option-grid';
+    if (q.type === 'number') {
+      const answerRow = document.createElement('div');
+      answerRow.className = 'number-answer';
+      const input = document.createElement('input');
+      input.type = 'number';
+      if (q.min !== undefined) input.min = q.min;
+      if (q.max !== undefined) input.max = q.max;
+      input.step = q.step ?? 1;
+      input.placeholder = q.placeholder || '';
+      input.addEventListener('input', () => onNumberAnswer(q, input.value));
+      answerRow.appendChild(input);
 
-    scales.forEach((scale, idx) => {
-      const val = idx + 1;
-      const optionLabel = q.options?.[idx] || scale;
-      const lbl = document.createElement('label');
-      lbl.className = 'option-choice';
-      const inp = document.createElement('input');
-      inp.type  = 'radio';
-      inp.name  = `q_${q.id}`;
-      inp.value = val;
-      inp.addEventListener('change', () => onAnswer(q.id, val));
-      lbl.appendChild(inp);
+      const suffix = document.createElement('span');
+      suffix.className = 'number-suffix';
+      suffix.textContent = q.suffix || '';
+      answerRow.appendChild(suffix);
+      card.appendChild(answerRow);
+    } else {
+      const grid = document.createElement('div');
+      grid.className = 'option-grid';
 
-      const optionText = document.createElement('span');
-      optionText.className = 'option-text';
+      scales.forEach((scale, idx) => {
+        const val = idx + 1;
+        const optionLabel = q.options?.[idx] || scale;
+        const lbl = document.createElement('label');
+        lbl.className = 'option-choice';
+        const inp = document.createElement('input');
+        inp.type  = 'radio';
+        inp.name  = `q_${q.id}`;
+        inp.value = val;
+        inp.addEventListener('change', () => onAnswer(q.id, val));
+        lbl.appendChild(inp);
 
-      const scaleText = document.createElement('span');
-      scaleText.className = 'option-scale';
-      scaleText.textContent = scale;
-      optionText.appendChild(scaleText);
+        const optionText = document.createElement('span');
+        optionText.className = 'option-text';
 
-      const labelText = document.createElement('span');
-      labelText.className = 'option-label';
-      labelText.textContent = optionLabel;
-      optionText.appendChild(labelText);
+        const scaleText = document.createElement('span');
+        scaleText.className = 'option-scale';
+        scaleText.textContent = scale;
+        optionText.appendChild(scaleText);
 
-      lbl.appendChild(optionText);
-      grid.appendChild(lbl);
-    });
+        const labelText = document.createElement('span');
+        labelText.className = 'option-label';
+        labelText.textContent = optionLabel;
+        optionText.appendChild(labelText);
 
-    card.appendChild(grid);
+        lbl.appendChild(optionText);
+        grid.appendChild(lbl);
+      });
+
+      card.appendChild(grid);
+    }
     list.appendChild(card);
   });
+  updateProgress();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -683,16 +789,31 @@ function onAnswer(qId, val) {
     });
   }
   // Hide banner if all answered
-  const qs = config.questions || [];
-  if (qs.every(q => answers[q.id] !== undefined)) {
+  if (activeQuestions.every(q => isAnswerValid(q, answers[q.id]))) {
+    document.getElementById('errorBanner').classList.remove('show');
+  }
+  updateProgress();
+}
+
+function onNumberAnswer(question, rawValue) {
+  if (rawValue === '') delete answers[question.id];
+  else answers[question.id] = Number(rawValue);
+
+  const row = document.getElementById(`row_${question.id}`);
+  const valid = isAnswerValid(question, answers[question.id]);
+  if (row) {
+    row.classList.toggle('answered', valid);
+    if (valid) row.classList.remove('unanswered');
+  }
+  if (activeQuestions.every(q => isAnswerValid(q, answers[q.id]))) {
     document.getElementById('errorBanner').classList.remove('show');
   }
   updateProgress();
 }
 
 function updateProgress() {
-  const answeredCount = Object.keys(answers).length;
-  const totalCount = (config?.questions || []).length;
+  const answeredCount = activeQuestions.filter(q => isAnswerValid(q, answers[q.id])).length;
+  const totalCount = activeQuestions.length;
   const progressPercent = totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0;
   document.getElementById('answeredCount').textContent = answeredCount;
   const fill = document.getElementById('progressFill');
@@ -703,8 +824,8 @@ function updateProgress() {
    Submit
 ═══════════════════════════════════════════════════════ */
 function handleSubmit() {
-  const qs = config.questions || [];
-  const unanswered = qs.filter(q => answers[q.id] === undefined);
+  const qs = activeQuestions;
+  const unanswered = qs.filter(q => !isAnswerValid(q, answers[q.id]));
 
   if (unanswered.length > 0) {
     // Show validation error
@@ -785,7 +906,12 @@ function handleSubmit() {
   await loadConfig();
 
   // 3. Prefer the server-side completed task context over URL display fields.
-  await loadAuthoritativeContext();
+  const contextResult = await loadAuthoritativeContext();
+  if (contextResult?.state === 'ineligible') {
+    closeIneligibleQuestionnaire(contextResult.reason);
+    return;
+  }
+  document.body.classList.add('ready');
 
   // 4. Pre-fill answers from URL (e.g. q1=5&q2=3)
   prefillAnswersFromURL();
@@ -796,10 +922,21 @@ function handleSubmit() {
 
 function prefillAnswersFromURL() {
   const p = new URLSearchParams(window.location.search);
-  const qs = config?.questions || [];
+  const qs = activeQuestions;
   qs.forEach(q => {
-    const val = parseInt(p.get(`q${q.id}`));
-    if (!val || val < 1 || val > (config.scales || []).length) return;
+    const rawValue = p.get(`q${q.id}`);
+    if (rawValue === null || rawValue === '') return;
+    const val = Number(rawValue);
+    if (!isAnswerValid(q, val)) return;
+    if (q.type === 'number') {
+      const input = document.querySelector(`#row_${q.id} input[type="number"]`);
+      if (input) {
+        input.value = val;
+        onNumberAnswer(q, String(val));
+      }
+      return;
+    }
+    if (!Number.isInteger(val) || val < 1 || val > (config.scales || []).length) return;
     const radio = document.querySelector(`input[name="q_${q.id}"][value="${val}"]`);
     if (radio) {
       radio.checked = true;
