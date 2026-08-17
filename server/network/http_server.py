@@ -456,7 +456,9 @@ class HTTPServer:
                     if message_type == 'task_exit_request' and isinstance(result, list):
                         for msg_data in result:
                             if isinstance(msg_data, dict) and msg_data.get('type') == 'task_exit_requested':
-                                await websocket_server.broadcast_to_clients_except(msg_data, client_id)
+                                # The requester may be the UE-hosted questionnaire connection,
+                                # so include it in the exit notification broadcast as well.
+                                await websocket_server.broadcast_to_clients_except(msg_data, None)
                         continue
                     
                     # 发送响应

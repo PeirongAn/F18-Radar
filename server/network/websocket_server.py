@@ -382,7 +382,9 @@ class WebSocketServer:
                     if message_type == 'task_exit_request' and isinstance(result, list):
                         for msg in result:
                             if isinstance(msg, dict) and msg.get('type') == 'task_exit_requested':
-                                await self.broadcast_to_clients_except(msg, client_id)
+                                # The requester may also be the client responsible for closing
+                                # the UE task UI, so broadcast the notification to every peer.
+                                await self.broadcast_to_clients_except(msg, None)
                         continue
                     
                     # 检查返回结果类型
