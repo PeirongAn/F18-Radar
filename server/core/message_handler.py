@@ -272,7 +272,12 @@ class MessageHandler:
             current_scenario["task_group_id"] = task_group_id
             repetition_info["task_group_id"] = task_group_id
             current_scenario["repetition_info"] = repetition_info
-        if not task_group_id:
+        # A full platform task_start is a new experiment entry.  Even if the
+        # previous practice group is still active (practice completion is kept
+        # in memory), it must not be reused for the formal entry.  Reusing it
+        # preserves the practice expected_task_count and makes a formal 5-run
+        # group complete at practice run 4.
+        if not task_group_id and not force_new_group:
             try:
                 active_group = db_manager.find_active_task_group(
                     user_id=user_id or "",
@@ -288,8 +293,8 @@ class MessageHandler:
                     task_type, user_id, e,
                     exc_info=True,
                 )
-            if not task_group_id:
-                task_group_id = generate_task_id()
+        if not task_group_id:
+            task_group_id = generate_task_id()
             current_scenario["task_group_id"] = task_group_id
             repetition_info["task_group_id"] = task_group_id
             current_scenario["repetition_info"] = repetition_info
