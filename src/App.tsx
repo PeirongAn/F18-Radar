@@ -11,6 +11,7 @@ import { useStore } from './stores/StoreProvider';
 import agentStore from './stores/AgentStore';
 import { Toaster } from 'react-hot-toast';
 import QuestionnaireModal, { QuestionnaireModalHandle, QuestionnaireSubmitData } from './components/QuestionnaireModal.tsx';
+import { canShowFormalQuestionnaire } from './utils/questionnairePolicy';
 import {
   getTaskGroupIdFromMessage,
   isCompletionForActiveTaskGroup,
@@ -488,7 +489,7 @@ const MainApp: React.FC = observer(() => {
   // 问卷弹出控制：外部可通过 WebSocket 消息 { type:'set_questionnaire_popup', enabled:bool } 修改
   const [enableQuestionnairePopup, setEnableQuestionnairePopup] = useState<boolean>(true);
   const questionnaireRef = useRef<QuestionnaireModalHandle>(null);
-  const questionnaireEligibilityRef = useRef<Record<TaskType, { isAIActive: boolean; isPractice: boolean } | null>>({
+  const questionnaireEligibilityRef = useRef<Record<TaskType, { controlMode?: string; isPractice: boolean } | null>>({
     RADAR_TARGETING: null,
     SA_THREAT_RESPONSE: null,
     PLATFORM_CONTROL: null,
@@ -566,7 +567,7 @@ const MainApp: React.FC = observer(() => {
       }
       lastConcreteRepetitionInfosRef.current[taskType] = info;
       questionnaireEligibilityRef.current[taskType] = {
-        isAIActive: !!(info as any).is_ai_active,
+        controlMode: (info as any).control_mode,
         isPractice: !!(info as any).is_practice,
       };
     });
@@ -574,13 +575,15 @@ const MainApp: React.FC = observer(() => {
 
   const canShowQuestionnaire = useCallback((taskType: TaskType, source?: any) => {
     const fallback = questionnaireEligibilityRef.current[taskType];
-    const isAIActive = typeof source?.is_ai_active === 'boolean'
-      ? source.is_ai_active
-      : fallback?.isAIActive;
+    const controlMode = source?.control_mode ?? source?.repetition_info?.control_mode ?? fallback?.controlMode;
     const isPractice = typeof source?.is_practice === 'boolean'
       ? source.is_practice
       : fallback?.isPractice;
-    return enableQuestionnairePopup && isAIActive === true && isPractice === false;
+    return canShowFormalQuestionnaire({
+      enabled: enableQuestionnairePopup,
+      isPractice,
+      controlMode,
+    });
   }, [enableQuestionnairePopup]);
 
   const getCompletionKey = useCallback((taskType: TaskType, source?: any) => {
@@ -598,7 +601,7 @@ const MainApp: React.FC = observer(() => {
       source?.taskId ??
       concreteInfo?.task_id ??
       taskId ??
-      `${concreteInfo?.current ?? 'unknown'}-${concreteInfo?.total ?? 'unknown'}-${concreteInfo?.difficulty ?? ''}-${concreteInfo?.autonomy_level ?? ''}`;
+      `${concreteInfo?.current ?? 'unknown'}-${concreteInfo?.total ?? 'unknown'}-${concreteInfo?.difficulty ?? ''}-${concreteInfo?.autonomy_level ?? ''}-${concreteInfo?.control_mode ?? ''}`;
     return `${taskType}::${identity}`;
   }, [repetitionInfos, taskId]);
 
@@ -765,7 +768,7 @@ const MainApp: React.FC = observer(() => {
      服务端可发送：
        { type: 'set_questionnaire_popup', enabled: bool }  → 开关自动弹出
        { type: 'show_questionnaire', task_type?: string }  → 兼容旧服务端；
-      只有对应任务类型已完成，且为 AI 正式模式时才会弹出。
+      只有对应任务类型已完成，且为正式模式时才会弹出。
   ───────────────────────────────────────────────── */
   useEffect(() => {
     if (!lastMessage) return;
@@ -779,7 +782,7 @@ const MainApp: React.FC = observer(() => {
     }
   }, [lastMessage, repetitionInfos, handleTaskGroupCompletion]);
 
-  /* ── 每个任务类型完成后：AI正式模式弹问卷；其它模式显示结束提示 ── */
+  /* ── 每个正式任务组完成后弹出问卷，并按控制模式分开关联 ── */
   useEffect(() => {
     if (repetitionInfos.RADAR_TARGETING === 'ALL_COMPLETED') {
       const source = lastMessage?.task_type === 'RADAR_TARGETING' ? lastMessage : undefined;
