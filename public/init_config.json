@@ -15,7 +15,6 @@
       "TaskMode": "1",
       "Difficulty": "3",
       "TaskNumber": "3",
-      "aiprecision": "1",
       "Action": "task_start"
     },
     "normalized": {
@@ -33,7 +32,6 @@
       "difficulty_display": "low",
       "difficulty_raw": "3",
       "task_number": "3",
-      "ai_precision": "1",
       "include_ai": true,
       "manual_control_disabled": false,
       "pure_ai": false,

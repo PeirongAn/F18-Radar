@@ -292,7 +292,6 @@ def _normalize_platform_task_fields(
         "difficulty_display": difficulty_display,
         "difficulty_raw": message.get("Difficulty"),
         "task_number": message.get("TaskNumber"),
-        "ai_precision": message.get("aiprecision"),
         "include_ai": include_ai,
         "manual_control_disabled": manual_control_disabled,
         "pure_ai": manual_control_disabled,
@@ -314,7 +313,6 @@ def _build_external_task_db_fields(normalized: Dict[str, Any]) -> Dict[str, Any]
         "repetition_total_override": normalized.get("repetition_total_override"),
         "is_ai_active": normalized.get("include_ai"),
         "is_practice": normalized.get("is_practice"),
-        "ai_precision": normalized.get("ai_precision"),
     }
 
 
@@ -372,6 +370,12 @@ def _attach_entry_semantics(normalized: Dict[str, Any], category: str, entry_mod
 def apply_platform_task_message(message: Dict[str, Any]) -> Dict[str, Any]:
     """Validate and write radar/SA platform_task data into global pending."""
     global _pending
+    missing_fields = _missing_task_start_fields(message)
+    if missing_fields:
+        raise ValueError(
+            "task_start requires complete non-empty configuration; missing fields: "
+            + ", ".join(missing_fields)
+        )
     raw, normalized = _normalize_platform_task_fields(message)
     category = normalized.get("task_category") or _classify_task_category(message)
     if not _is_web_overlay_category(category):
@@ -613,16 +617,63 @@ _OVERALL_TASK_START_FIELDS = {
     "TaskMode",
     "Difficulty",
     "TaskNumber",
-    "aiprecision",
-    "AIPrecision",
 }
+
+_TASK_START_REQUIRED_FIELD_ALIASES = (
+    ("TaskName", ("TaskName",)),
+    ("ID", ("ID",)),
+    ("Gender", ("Gender",)),
+    ("DefaultControlMode", ("DefaultControlMode",)),
+    ("AIAutonomyLeve", ("AIAutonomyLeve", "AIAutonomyLevel")),
+    ("TaskMode", ("TaskMode",)),
+    ("Difficulty", ("Difficulty",)),
+    ("TaskNumber", ("TaskNumber",)),
+    ("Action", ("Action",)),
+)
 
 def _task_type_for_external_category(category: str) -> str:
     return _task_type_for_category(category)
 
 
+def _non_empty_overall_task_fields(message_data: Dict[str, Any]) -> List[str]:
+    fields: List[str] = []
+    for key in _OVERALL_TASK_START_FIELDS:
+        value = message_data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (dict, list, tuple, set)) and not value:
+            continue
+        fields.append(key)
+    return sorted(fields)
+
+
+def _has_non_empty_value(message_data: Dict[str, Any], aliases: Tuple[str, ...]) -> bool:
+    for key in aliases:
+        if key not in message_data:
+            continue
+        value = message_data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (dict, list, tuple, set)) and not value:
+            continue
+        return True
+    return False
+
+
+def _missing_task_start_fields(message_data: Dict[str, Any]) -> List[str]:
+    return [
+        field_name
+        for field_name, aliases in _TASK_START_REQUIRED_FIELD_ALIASES
+        if not _has_non_empty_value(message_data, aliases)
+    ]
+
+
 def _is_overall_task_start(message_data: Dict[str, Any]) -> bool:
-    return any(key in message_data for key in _OVERALL_TASK_START_FIELDS)
+    return not _missing_task_start_fields(message_data)
 
 
 def _expected_subtasks_from_normalized(normalized: Dict[str, Any]) -> int:
@@ -680,6 +731,7 @@ def _external_task_diagnostics(
         "is_overall_task_start": is_overall,
         "message_keys": keys,
         "overall_fields_present": sorted(key for key in _OVERALL_TASK_START_FIELDS if key in message_data),
+        "overall_fields_non_empty": _non_empty_overall_task_fields(message_data),
         "external_collectors_injected": external_collectors is not None,
         "external_collectors_enabled": bool(getattr(external_collectors, "enabled", False)) if external_collectors is not None else False,
         "external_collector_names": _external_collector_names(external_collectors),
@@ -710,7 +762,6 @@ def _normalized_task_signature(normalized: Dict[str, Any]) -> Dict[str, Any]:
         "difficulty_display": normalized.get("difficulty_display"),
         "difficulty_raw": normalized.get("difficulty_raw"),
         "task_number": normalized.get("task_number"),
-        "ai_precision": normalized.get("ai_precision"),
         "include_ai": normalized.get("include_ai"),
         "is_practice": normalized.get("is_practice"),
         "repetition_total_override": normalized.get("repetition_total_override"),
@@ -1186,6 +1237,14 @@ def _close_external_active_task(
         completed_at_ms=timestamp_ms,
         raw_message_json=raw_message_json,
     )
+    overall_tid = active.get("overall_task_id")
+    if overall_tid is not None:
+        db_manager.update_task_group_progress(
+            group_id=overall_tid,
+            status="completed",
+            completed_at_ms=timestamp_ms,
+            raw_message_json=raw_message_json,
+        )
     if active.get("current_subtask_task_id") or active.get("gaze_task_id"):
         _stop_external_marker_context(
             active,
@@ -1207,106 +1266,6 @@ def _close_external_active_task(
         user_id,
         event_type,
     )
-
-
-def _handle_overall_stop_compat_if_needed(
-    message_data: Dict[str, Any],
-    category: str,
-    user_id: str,
-    task_type: str,
-    raw_fields: Dict[str, Any],
-    normalized: Dict[str, Any],
-    timestamp_ms: int,
-    raw_message_json: str,
-    gaze_svc: Any = None,
-    physio_svc: Any = None,
-) -> Optional[List[Dict[str, Any]]]:
-    active_finder = getattr(db_manager, "find_active_task_run", None)
-    if callable(active_finder) and active_finder(user_id, task_type):
-        # A duplicate overall start can be the reconnect/resume signal for a
-        # later subtask.  Only apply the legacy stop compatibility rule when
-        # the group has no active subtask.
-        return None
-    finder = getattr(db_manager, "find_recent_completed_task_run", None)
-    if not callable(finder):
-        return None
-    recent = finder(user_id, task_type)
-    if not recent:
-        return None
-    recent_config = recent.get("config_json")
-    try:
-        recent_config_obj = json.loads(recent_config) if isinstance(recent_config, str) else recent_config
-    except (TypeError, ValueError):
-        recent_config_obj = {}
-    recent_raw = _config_json_raw(recent.get("config_json"))
-    if recent_raw != raw_fields:
-        return None
-    recent_normalized = _config_json_normalized(recent.get("config_json"))
-    if _normalized_task_signature(recent_normalized) != _normalized_task_signature(normalized):
-        return None
-
-    tid = int(recent["task_id"])
-    payload = _task_run_config(category, raw_fields, normalized)
-    payload["compat_reason"] = "duplicate_identical_overall_start_after_completed_run"
-    db_manager.record_task_event(
-        task_id=tid,
-        task_type=task_type,
-        user_id=user_id,
-        event_type="overall_stop_compat",
-        timestamp_ms=timestamp_ms,
-        payload_json=_json_dump(payload),
-        raw_message_json=raw_message_json,
-    )
-    marker_payload = _external_marker_payload(
-        {
-            "task_id": tid,
-            "task_type": task_type,
-            "task_category": category,
-            "user_id": user_id,
-            "expected_subtasks": recent.get("expected_subtasks"),
-            "completed_subtasks": recent.get("completed_subtasks"),
-            "gaze_task_id": str(tid),
-        },
-        category,
-        "overall_stop_compat",
-        None,
-        message_data,
-        timestamp_ms,
-        {"compat_reason": "duplicate_identical_overall_start_after_completed_run"},
-    )
-    if gaze_svc is not None:
-        try:
-            gaze_svc.record_marker(
-                "overall_stop_compat",
-                payload=marker_payload,
-                task_id=str(tid),
-                user_id=user_id,
-                system_time=timestamp_ms * 1000,
-            )
-        except Exception as e:
-            logger.warning("gaze overall_stop_compat marker failed: %s", e, exc_info=True)
-    if physio_svc is not None:
-        try:
-            physio_svc.marker("overall_stop_compat", marker_payload)
-        except Exception as e:
-            logger.warning("physio overall_stop_compat marker failed: %s", e, exc_info=True)
-    logger.warning(
-        "[REMOTE_TASK_COUNT] compat overall_stop consumed duplicate full task_start "
-        "category=%s user=%s task_id=%s reason=duplicate_identical_overall_start",
-        category,
-        user_id,
-        tid,
-    )
-    return [{
-        "type": "platform_task_ack",
-        "status": "ok",
-        "task_id": tid,
-        "task_type": task_type,
-        "task_category": category,
-        "entry_mode": "external_lifecycle",
-        "event_type": "overall_stop_compat",
-        "compat": True,
-    }]
 
 
 def _handle_external_task_legacy(message_data: Dict[str, Any], category: str) -> List[Dict[str, Any]]:
@@ -1593,13 +1552,25 @@ def _handle_external_task(
     physio_svc: Any = None,
     external_collectors: Any = None,
 ) -> List[Dict[str, Any]]:
+    raw_action = str(message_data.get("Action") or "task_start").strip()
+    action = _normalize_external_action(raw_action)
+    if action == "task_start":
+        missing_fields = _missing_task_start_fields(message_data)
+        if missing_fields:
+            return [{
+                "type": "platform_task_ack",
+                "status": "error",
+                "event_type": "invalid_task_start",
+                "task_category": category,
+                "message": "task_start requires complete non-empty configuration",
+                "missing_fields": missing_fields,
+            }]
+
     user_id = str(message_data.get("ID") or "").strip()
     if not user_id:
         return [{"type": "platform_task_ack", "status": "error",
                  "message": "external task requires non-empty ID"}]
 
-    raw_action = str(message_data.get("Action") or "task_start").strip()
-    action = _normalize_external_action(raw_action)
     ts = int(_time.time() * 1000)
     raw = _json_dump(message_data)
     key = (category, user_id)
@@ -1641,43 +1612,30 @@ def _handle_external_task(
             if key in _active_external_tasks:
                 active = _active_external_tasks[key]
                 active_normalized = active.get("normalized") or {}
-                if _normalized_task_signature(active_normalized) == _normalized_task_signature(normalized):
-                    logger.warning(
-                        "[REMOTE_TASK_COUNT] ignore duplicate overall task_start while active "
-                        "category=%s user=%s task_id=%s active_keys=%s",
-                        category,
-                        user_id,
-                        active.get("task_id"),
-                        list(_active_external_tasks.keys()),
-                    )
-                    return [{"type": "platform_task_ack", "status": "ignored",
-                             "task_id": active.get("task_id"), "task_type": task_type,
-                             "task_category": category, "entry_mode": "external_lifecycle",
-                             "event_type": "overall_start",
-                             "diagnostics": _external_task_diagnostics(
-                                 message_data,
-                                 category,
-                                 action,
-                                 user_id,
-                                 task_type,
-                                 external_collectors=external_collectors,
-                                 active=active,
-                                 event_role="overall_start_ignored",
-                             )}]
-
+                same_signature = (
+                    _normalized_task_signature(active_normalized)
+                    == _normalized_task_signature(normalized)
+                )
+                replacement_event = (
+                    "replaced_by_identical_overall"
+                    if same_signature
+                    else "replaced_by_changed_overall"
+                )
                 logger.warning(
-                    "[REMOTE_TASK_COUNT] replace active task with changed overall config "
-                    "category=%s user=%s old_task_id=%s old_signature=%s new_signature=%s",
+                    "[REMOTE_TASK_COUNT] replace active task with new overall task_start "
+                    "category=%s user=%s old_task_id=%s same_signature=%s "
+                    "old_signature=%s new_signature=%s",
                     category,
                     user_id,
                     active.get("task_id"),
+                    same_signature,
                     _normalized_task_signature(active_normalized),
                     _normalized_task_signature(normalized),
                 )
                 _close_external_active_task(
                     key,
                     active,
-                    "replaced_by_changed_overall",
+                    replacement_event,
                     message_data,
                     timestamp_ms=ts,
                     raw_message_json=raw,
@@ -1685,21 +1643,6 @@ def _handle_external_task(
                     physio_svc=physio_svc,
                     external_collectors=external_collectors,
                 )
-
-            compat_reply = _handle_overall_stop_compat_if_needed(
-                message_data,
-                category,
-                user_id,
-                task_type,
-                raw_fields,
-                normalized,
-                timestamp_ms=ts,
-                raw_message_json=raw,
-                gaze_svc=gaze_svc,
-                physio_svc=physio_svc,
-            )
-            if compat_reply is not None:
-                return compat_reply
 
             old_key, old_active = _find_active_external_task_for_user(user_id, exclude_key=key)
             if old_key and old_active:
@@ -2403,11 +2346,21 @@ async def handle_platform_task_ws(
 ) -> List[Dict[str, Any]]:
     logger.info("RAW platform message: %s",
                 json.dumps(message_data, ensure_ascii=False))
-    if str(message_data.get("Action") or "task_start").strip() == "task_start":
+    action = _normalize_external_action(message_data.get("Action"))
+    if action == "task_start":
         logger.info(
             "TASK_START WebSocket fields: %s",
             json.dumps(message_data, ensure_ascii=False, sort_keys=True),
         )
+        missing_fields = _missing_task_start_fields(message_data)
+        if missing_fields:
+            return [{
+                "type": "platform_task_ack",
+                "status": "error",
+                "event_type": "invalid_task_start",
+                "message": "task_start requires complete non-empty configuration",
+                "missing_fields": missing_fields,
+            }]
 
     category = _classify_task_category(message_data)
     if category in ("platform_control", "weapon_launch"):
