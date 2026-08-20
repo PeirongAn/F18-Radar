@@ -9,11 +9,65 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('SDL_AUDIODRIVER', 'dummy')
 
+import json
 import pygame
 import time
 import threading
 from typing import Dict, Any, Callable, Optional
 from threading import Lock
+
+from runtime_paths import CONFIG_DIR
+
+
+def get_joystick_candidate_priority(
+    name: str,
+    axes: int,
+    buttons: int,
+    hats: int = 0,
+    guid: str = "",
+    preferred_name: str = "",
+    preferred_guid: str = "",
+) -> int:
+    """Rank input devices using an explicit preference, role and capabilities."""
+    normalized_name = (name or "").casefold()
+    normalized_guid = (guid or "").casefold()
+    configured_name = (preferred_name or "").strip().casefold()
+    configured_guid = (preferred_guid or "").strip().casefold()
+
+    if configured_guid and normalized_guid == configured_guid:
+        return -20
+    if configured_name and configured_name in normalized_name:
+        return -10
+    if "throttle" in normalized_name or "油门" in normalized_name:
+        return 100
+    if "joystick" in normalized_name or "游戏杆" in normalized_name:
+        return 0
+    # Some localized Warthog drivers expose only a generic capability-based
+    # name. The hat requirement avoids treating a similarly sized button box
+    # as the flight stick.
+    if axes == 2 and buttons == 19 and hats >= 1:
+        return 1
+    if "warthog" in normalized_name or "thrustmaster" in normalized_name:
+        return 2
+    return 3
+
+
+def load_joystick_device_preference() -> Dict[str, str]:
+    """Load the optional joystick selector from the runtime init config."""
+    config_path = CONFIG_DIR / "init_config.json"
+    try:
+        with config_path.open("r", encoding="utf-8") as config_file:
+            config = json.load(config_file)
+    except (OSError, ValueError, TypeError):
+        return {"name": "", "guid": ""}
+
+    selector = config.get("joystickDevice")
+    if not isinstance(selector, dict):
+        selector = {}
+    return {
+        "name": str(selector.get("name") or config.get("joystickDeviceName") or "").strip(),
+        "guid": str(selector.get("guid") or config.get("joystickDeviceGuid") or "").strip(),
+    }
 
 
 class JoystickWebSocketController:
@@ -39,6 +93,7 @@ class JoystickWebSocketController:
         self.status_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None
 
         self.device_status = "disconnected"
+        self.available_devices = []
         self.last_data_time = 0.0
 
         self.last_joystick_data: Dict[str, Any] = {}
@@ -71,21 +126,39 @@ class JoystickWebSocketController:
             self._notify_status("device_connection_failed", {"message": "未检测到控制器"})
             return False
 
-        # 优先选名称含 "joystick" 的设备，避免误选油门台（throttle）
-        # HOTAS Warthog 套装会同时枚举 Throttle 和 Joystick 两个设备
+        # HOTAS Warthog 套装会同时枚举 Throttle 和 Joystick 两个设备。
+        # 本地化驱动可能只给摇杆显示“2轴/19按钮”等通用名称，因此同时
+        # 使用设备能力识别摇杆，并确保 throttle 始终为最低优先级。
         candidates = []
+        self.available_devices = []
+        preference = load_joystick_device_preference()
         for i in range(count):
             js = pygame.joystick.Joystick(i)
             js.init()
-            name = js.get_name().lower()
-            if "throttle" in name:
-                priority = 2          # 油门台最低优先级
-            elif "joystick" in name:
-                priority = 0          # 摇杆最高优先级
-            elif "warthog" in name or "thrustmaster" in name:
-                priority = 1
-            else:
-                priority = 3
+            name = js.get_name()
+            axes = js.get_numaxes()
+            buttons = js.get_numbuttons()
+            hats = js.get_numhats()
+            get_guid = getattr(js, "get_guid", None)
+            guid = str(get_guid()) if callable(get_guid) else ""
+            priority = get_joystick_candidate_priority(
+                name,
+                axes,
+                buttons,
+                hats,
+                guid,
+                preference["name"],
+                preference["guid"],
+            )
+            self.available_devices.append({
+                "index": i,
+                "name": name,
+                "guid": guid,
+                "axes": axes,
+                "buttons": buttons,
+                "hats": hats,
+                "priority": priority,
+            })
             candidates.append((priority, i, js))
 
         candidates.sort(key=lambda x: x[0])
@@ -96,6 +169,9 @@ class JoystickWebSocketController:
             target.init()
 
         self.joystick = target
+        selected_index = candidates[0][1] if candidates else 0
+        for device in self.available_devices:
+            device["selected"] = device["index"] == selected_index
         self.device_status = "connected"
         self.previous_data = None
 
@@ -103,6 +179,8 @@ class JoystickWebSocketController:
             "message": "操纵杆已连接",
             "device_info": {
                 "name": self.joystick.get_name(),
+                "guid": str(self.joystick.get_guid()) if hasattr(self.joystick, "get_guid") else "",
+                "index": selected_index,
                 "axes": self.joystick.get_numaxes(),
                 "buttons": self.joystick.get_numbuttons(),
                 "hats": self.joystick.get_numhats(),
@@ -249,6 +327,7 @@ class JoystickWebSocketController:
             "device_status": self.device_status,
             "connected": self.device_status == "connected",
             "last_data_time": self.last_data_time,
+            "available_devices": list(self.available_devices),
         }
         if self.joystick:
             info["device_info"] = {
