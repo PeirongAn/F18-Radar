@@ -13,7 +13,15 @@ import { isLastRepetition, formatRepetitionText } from '../utils/repetitionUtils
 import type { ThreatListData } from './ThreatList';
 import { useThreatTrustCalibration } from '../hooks/useThreatTrustCalibration';
 import { ThreatTrustDecision } from '../types/trustCalibration';
-import { canUseSAControl, decideSAButton2Action } from '../utils/saResultReviewPolicy';
+import {
+  canSelectSAThreat,
+  canUseSAControl,
+  canViewSAResult,
+  decideSAButton2Action,
+  hasSAAISelectionForTask,
+  hasSAEmergencyOccurredForTask,
+  shouldOpenSAResultAfterAISelection,
+} from '../utils/saResultReviewPolicy';
 import { selectSAThreat } from '../utils/aiAccuracyDecision';
 // import SAButtons from './SAButtons';
 
@@ -386,6 +394,29 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       ri.is_practice ? 'practice' : 'formal',
     ].join(':');
   }, [saRepetitionInfo, userId, getCurrentSATaskId]);
+  const currentSATaskKey = getCurrentSATaskKey() ?? 'unidentified-current-task';
+  const currentSATaskKeyRef = useRef(currentSATaskKey);
+  currentSATaskKeyRef.current = currentSATaskKey;
+  const [emergencyOccurredTaskKey, setEmergencyOccurredTaskKey] = useState<string | null>(null);
+  const [aiSelectionTaskKey, setAISelectionTaskKey] = useState<string | null>(null);
+  const hasEmergencyOccurred = hasSAEmergencyOccurredForTask({
+    currentTaskKey: currentSATaskKey,
+    emergencyTaskKey: emergencyOccurredTaskKey,
+  });
+  const hasCurrentTaskAISelection = hasSAAISelectionForTask({
+    currentTaskKey: currentSATaskKey,
+    aiSelectionTaskKey,
+  });
+  const canUserViewResult = canViewSAResult({
+    aiActive: agentStore.isAIActive,
+    aiSelectionCompleted: hasCurrentTaskAISelection,
+    eventOwner: 'manual',
+  });
+  const canUserSelectThreat = canSelectSAThreat({
+    manualControlDisabled: agentStore.isManualControlDisabled,
+    emergencyOccurred: hasEmergencyOccurred,
+    eventOwner: 'manual',
+  });
 
   const isAIActive = useMemo(() => {
     const saRepetitionInfo = repetitionInfos['SA_THREAT_RESPONSE'];
@@ -680,10 +711,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   const handleButtonClick = (label: string, eventOwner: 'AI' | 'manual' = 'manual') => {
     if (!canUseSAControl({
       manualControlDisabled: agentStore.isManualControlDisabled,
+      emergencyOccurred: hasEmergencyOccurred,
       label,
       eventOwner,
     })) {
-      console.warn('[SAPage] Manual button operation ignored in pure AI mode.');
+      console.warn('[SAPage] Manual button operation ignored before the emergency event or in pure AI mode.');
       return;
     }
     console.log(`按钮 ${label} 被点击`);
@@ -691,6 +723,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 当点击第3个按钮（查看结果）时，显示选择结果
     if (label === '查看结果') {
+      if (!canViewSAResult({
+        aiActive: agentStore.isAIActive,
+        aiSelectionCompleted: hasCurrentTaskAISelection,
+        eventOwner,
+      })) {
+        console.warn('[SAPage] Result review ignored while the participating AI is still selecting.');
+        return;
+      }
       if (eventOwner !== 'AI' && !agentStore.isManualControlDisabled && threatTrustDecision.blockedOneClick) {
         onAddMessage?.('warning', `信任调控：${threatTrustDecision.primaryMessage}，请先查看证据或人工确认`);
         return;
@@ -905,6 +945,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     
     // 核心修复：重置 MobX store 中的临机事件状态
     radarStore.resetSAEmergency();
+    setEmergencyOccurredTaskKey(null);
+    setAISelectionTaskKey(null);
 
     // 清空系统日志
     if (typeof onClearMessages === 'function') {
@@ -976,6 +1018,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
         lastThreatsLengthRef.current = 0;
         lastEmergencyRef.current = null;
         lastEmergencyReceiveTimestampRef.current = null;
+        setEmergencyOccurredTaskKey(null);
+        setAISelectionTaskKey(null);
         
         // 重置其他状态
         setMissiles([]);
@@ -995,8 +1039,10 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
   // 监听紧急事件变化 - 支持增强协议
   useEffect(() => {
     if (radarData?.emergency) {
+      setEmergencyOccurredTaskKey(currentSATaskKeyRef.current);
       const eventId = JSON.stringify(radarData.emergency);
       if (lastEmergencyRef.current !== eventId) {
+        setAISelectionTaskKey(null);
         const data = radarData.emergency;
         // 记录前端接收SAEmergency的本地时间戳
         const receiveTimestamp = Date.now();
@@ -1554,6 +1600,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       setSaTobiiDebugBbox(null);
       if (aiSelectedThreatRef.current?.id !== currentHighestThreatId) {
         aiSelectedThreatRef.current = null;
+        setAISelectionTaskKey(null);
       }
       lastHighestThreatIdRef.current = currentHighestThreatId;
     }
@@ -1600,9 +1647,13 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
 
   // 点击icon将其加入威胁列表首位但保持原优先级
-  const handleThreatIconClick = useCallback((threat: any, eventOwner: string) => {
-    if (agentStore.isManualControlDisabled && eventOwner !== 'AI') {
-      console.warn('[SAPage] Manual threat selection ignored in pure AI mode.');
+  const handleThreatIconClick = useCallback((threat: any, eventOwner: 'AI' | 'manual') => {
+    if (!canSelectSAThreat({
+      manualControlDisabled: agentStore.isManualControlDisabled,
+      emergencyOccurred: hasEmergencyOccurred,
+      eventOwner,
+    })) {
+      console.warn('[SAPage] Manual threat selection ignored before the emergency event or in pure AI mode.');
       return;
     }
     console.log('[AI Agent] handleThreatIconClick', threat, eventOwner)
@@ -1658,6 +1709,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
     if (eventOwner === 'AI') {
       aiSelectedThreatRef.current = threat;
+      setAISelectionTaskKey(currentSATaskKeyRef.current);
       if (agentStore.isAIActive && beginSATobiiServe.current && !stopAutoStartSaTobiiRef.current) {
         const promptPosition = getThreatPromptPosition(threat);
         if (promptPosition) {
@@ -1699,10 +1751,14 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const priorityText = originalPriority === 'high' ? '高' : originalPriority === 'medium' ? '中' : '低';
       onAddMessage('sa_threat', `${actor} 选择威胁：${threatLabel}，优先级：${priorityText}，等待确认`);
     }
-  }, [getCurrentHighestPriorityThreat, getCurrentSATaskId, getThreatPromptPosition, onAddMessage, sendMessage, startSaTobiiRound, userId, lastEmergencyReceiveTimestampRef, recordThreatSelection, buildThreatTrustLogExtra]);
+  }, [buildThreatTrustLogExtra, getCurrentHighestPriorityThreat, getCurrentSATaskId, getThreatPromptPosition, hasEmergencyOccurred, onAddMessage, recordThreatSelection, sendMessage, startSaTobiiRound, userId, useEnhancedProtocol]);
 
   useEffect(() => {
-    if (!agentStore.requiresHumanConfirmation || !userSelection) return;
+    if (!shouldOpenSAResultAfterAISelection({
+      requiresHumanConfirmation: agentStore.requiresHumanConfirmation,
+      hasSelection: Boolean(userSelection),
+      aiSelectionCompleted: hasCurrentTaskAISelection,
+    })) return;
     const taskKey = getCurrentSATaskKey();
     if (taskKey && completedSATaskKeysRef.current.has(taskKey)) return;
 
@@ -1710,7 +1766,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     handleButtonClick('查看结果', 'AI');
     // handleButtonClick reads the latest task state; the task-key guard prevents duplicates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userSelection, getCurrentSATaskKey]);
+  }, [getCurrentSATaskKey, hasCurrentTaskAISelection, userSelection]);
 
   // 渲染导弹
   const renderMissiles = () => {
@@ -1729,7 +1785,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       const trustStroke = threatTrustDecision.controlLevel === 'review' ? '#ff9a2e' : '#1ca8ff';
 
       return (
-        <Group key={missile.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(missile, 'manual')}>
+        <Group
+          key={missile.id}
+          opacity={isScanned || isSelected ? 1 : 0.36}
+          listening={canUserSelectThreat}
+          onClick={canUserSelectThreat ? () => handleThreatIconClick(missile, 'manual') : undefined}
+        >
           {(isTrustTop || (threatTrustDecision.rankingUnstable && isTrustSecond)) && (
             <Rect
               x={position.x - 26}
@@ -1872,6 +1933,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     setUserSelection(null);
     setShowTaskComplete(false);
     aiSelectedThreatRef.current = null;
+    setAISelectionTaskKey(null);
     const retryTimer = window.setTimeout(() => {
       const retryThreat = getBestThreat();
       if (retryThreat) handleEmergency(retryThreat);
@@ -2268,7 +2330,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
           style={{ width: topContainerWidth, padding: '0 20px', position: 'relative', zIndex: 20 }}
         >
           {topButtons.map(label => (
-            <Button key={label} label={label} onClick={() => handleButtonClick(label)} disabled={label === '查看结果' && agentStore.isAIActive && userSelection?.threat === undefined}/>
+            <Button
+              key={label}
+              label={label}
+              onClick={() => handleButtonClick(label)}
+              disabled={!hasEmergencyOccurred || (label === '查看结果' && !canUserViewResult)}
+            />
           ))}
         </div>
         
@@ -2284,8 +2351,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   label={label}
                   onClick={idx === 1 ? () => {
                     if (agentStore.isManualControlDisabled) return;
+                    setEmergencyOccurredTaskKey(null);
+                    setAISelectionTaskKey(null);
                     if (onResetSA) onResetSA(); else handleResetSA();
                   } : () => handleButtonClick(label)}
+                  disabled={!hasEmergencyOccurred}
                 />
               
               </div>
@@ -2610,7 +2680,12 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                   const showCorrectAnswerFrame = showTaskComplete && isHighestPriority;
                   const showIncorrectSelectionFrame = showTaskComplete && isSelected && !isHighestPriority;
                   return (
-                    <Group key={threat.id} opacity={isScanned || isSelected ? 1 : 0.36} onClick={() => handleThreatIconClick(threat, 'manual')}>
+                    <Group
+                      key={threat.id}
+                      opacity={isScanned || isSelected ? 1 : 0.36}
+                      listening={canUserSelectThreat}
+                      onClick={canUserSelectThreat ? () => handleThreatIconClick(threat, 'manual') : undefined}
+                    >
                       {(isTrustTop || (threatTrustDecision.rankingUnstable && isTrustSecond)) && (
                         <Rect
                           x={position.x  - ICON_SIZE / 2 - 11}
@@ -2732,7 +2807,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
             
             
             {rightButtons.map(label => (
-              <Button key={label} label={label} onClick={() => handleButtonClick(label)} />
+              <Button key={label} label={label} onClick={() => handleButtonClick(label)} disabled={!hasEmergencyOccurred} />
             ))}
           </div>
         </div>
@@ -2786,6 +2861,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
               {isCorrect === true || isCorrect === false ? '当前任务已结束，可关闭窗口' : '请重新完成当前任务'}
             </p>
             <button
+              disabled={!hasEmergencyOccurred}
               onClick={isCorrect === true || isCorrect === false ? () => {
                 setShowTaskComplete(false);
                 if (hasReachedSAOverallTotal || isSAAllCompleted) {
@@ -2805,7 +2881,8 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
                 border: '1px solid #0d4020',
                 color: '#00aa44',
                 padding: '8px 28px',
-                cursor: 'pointer',
+                cursor: hasEmergencyOccurred ? 'pointer' : 'not-allowed',
+                opacity: hasEmergencyOccurred ? 1 : 0.55,
                 borderRadius: '3px',
                 transition: 'background 0.15s',
               }}
