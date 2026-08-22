@@ -43,12 +43,48 @@ def test_wecare_adapter_start_marker_stop_requests():
     assert status["connected"] is True
     assert calls[1][0] == "POST"
     assert calls[1][1] == "http://collector.test/api/v1/providers/wecare/tasks/42/start"
+    assert calls[1][2]["run_id"] == "42"
     assert calls[1][2]["subject_id"] == "S001"
     assert calls[1][2]["scenario"] == "RADAR_TARGETING"
     assert calls[1][2]["metadata"]["source"] == "F18-Radar"
     assert calls[2][1] == "http://collector.test/api/v1/providers/wecare/tasks/42/markers"
     assert calls[2][2]["name"] == "task_start"
     assert calls[3][1] == "http://collector.test/api/v1/providers/wecare/tasks/42/stop"
+
+
+def test_wecare_adapter_uses_client_scoped_task_routes():
+    calls = []
+
+    def transport(method, url, body, timeout):
+        calls.append((method, url, body, timeout))
+        if url.endswith("/files"):
+            return {"ok": True, "files": []}
+        return {"ok": True}
+
+    adapter = WecareCollectorAdapter(
+        base_url="http://collector.test",
+        client_id="radar-main",
+        transport=transport,
+    )
+
+    adapter.start_task("RADAR_TARGETING", "S001", "59", {})
+    adapter.marker("task_start", {"f18_task_id": 59})
+    adapter.refresh_task_files("59")
+    adapter.stop_task("59")
+
+    assert calls[0][1] == (
+        "http://collector.test/api/v1/clients/radar-main/providers/wecare/tasks/59/start"
+    )
+    assert calls[0][2]["run_id"] == "59"
+    assert calls[1][1] == (
+        "http://collector.test/api/v1/clients/radar-main/providers/wecare/tasks/59/markers"
+    )
+    assert calls[2][1] == (
+        "http://collector.test/api/v1/clients/radar-main/providers/wecare/tasks/59/files"
+    )
+    assert calls[3][1] == (
+        "http://collector.test/api/v1/clients/radar-main/providers/wecare/tasks/59/stop"
+    )
 
 
 def test_wecare_adapter_status_reports_unreachable_service():
@@ -162,12 +198,14 @@ def test_create_external_collector_manager_from_env(monkeypatch):
     monkeypatch.setenv("WECARE_COLLECTOR_ENABLED", "true")
     monkeypatch.setenv("WECARE_COLLECTOR_BASE_URL", "http://127.0.0.1:8787")
     monkeypatch.setenv("WECARE_COLLECTOR_PROVIDER", "wecare")
+    monkeypatch.setenv("WECARE_COLLECTOR_CLIENT_ID", "radar-main")
 
     manager = create_external_collector_manager_from_env()
 
     assert manager is not None
     assert [adapter.name for adapter in manager.adapters] == ["wecare"]
     assert manager.adapters[0].base_url == "http://127.0.0.1:8787"
+    assert manager.adapters[0].client_id == "radar-main"
 
 
 def test_default_external_collectors_register_wecare_and_prime(monkeypatch):
