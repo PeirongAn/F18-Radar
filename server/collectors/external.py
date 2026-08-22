@@ -35,6 +35,7 @@ class WecareCollectorAdapter:
         name: str = "wecare",
         base_url: str = "http://127.0.0.1:8787",
         provider: str = "wecare",
+        client_id: str = "",
         marker_type: Optional[int] = None,
         timeout: float = 1.5,
         transport: Optional[Callable[[str, str, Optional[JsonDict], float], JsonDict]] = None,
@@ -44,6 +45,11 @@ class WecareCollectorAdapter:
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.provider = provider.strip("/") or "wecare"
+        self.client_id = client_id.strip("/")
+        api_root = f"{self.base_url}/api/v1"
+        if self.client_id:
+            api_root = f"{api_root}/clients/{_quote_path(self.client_id)}"
+        self.provider_base_url = f"{api_root}/providers/{_quote_path(self.provider)}"
         self.marker_type = marker_type
         self.timeout = max(0.1, float(timeout))
         self.transport = transport or self._request_json
@@ -75,6 +81,7 @@ class WecareCollectorAdapter:
                 "ok": bool((response or {}).get("ok", True)),
                 "name": self.name,
                 "provider": self.provider,
+                "client_id": self.client_id or "default",
                 "base_url": self.base_url,
                 "connected": bool(provider_status.get("connected") or provider_status.get("mqtt_connected")),
                 "state": provider_status.get("state"),
@@ -100,11 +107,12 @@ class WecareCollectorAdapter:
         if not task_id:
             raise ValueError("external collector task_id is required")
         body = {
+            "run_id": task_id,
             "subject_id": str(subject_id or ""),
             "scenario": str(task_name or ""),
             "metadata": metadata or {},
         }
-        path = f"{self.base_url}/api/v1/providers/{self.provider}/tasks/{_quote_path(task_id)}/start"
+        path = f"{self.provider_base_url}/tasks/{_quote_path(task_id)}/start"
         response = self._send("POST", path, body)
         if response.get("ok") is False:
             if self.db is not None:
@@ -152,7 +160,7 @@ class WecareCollectorAdapter:
         if self.marker_type is not None:
             body["type"] = self.marker_type
         path = (
-            f"{self.base_url}/api/v1/providers/{self.provider}/tasks/"
+            f"{self.provider_base_url}/tasks/"
             f"{_quote_path(self.active_task_id)}/markers"
         )
         response = self._send("POST", path, body)
@@ -188,7 +196,7 @@ class WecareCollectorAdapter:
         resolved = str(task_id or self.active_task_id or "").strip()
         if not resolved:
             return {"ok": False, "skipped": True, "reason": "no_active_task"}
-        path = f"{self.base_url}/api/v1/providers/{self.provider}/tasks/{_quote_path(resolved)}/stop"
+        path = f"{self.provider_base_url}/tasks/{_quote_path(resolved)}/stop"
         response = self._send("POST", path, None)
         if response.get("ok") is False:
             if self.db is not None:
@@ -254,7 +262,7 @@ class WecareCollectorAdapter:
         task_id = str(task_id).strip()
         if not task_id:
             return {"ok": False, "files": [], "error": "invalid_task_id"}
-        path = f"{self.base_url}/api/v1/providers/{self.provider}/tasks/{_quote_path(task_id)}/files"
+        path = f"{self.provider_base_url}/tasks/{_quote_path(task_id)}/files"
         response = self._send("GET", path, None)
         files = [str(item) for item in response.get("files") or []]
         if self.db is not None:
@@ -264,7 +272,7 @@ class WecareCollectorAdapter:
                 self.name,
                 task_id,
                 files,
-                f"{self.base_url}/api/v1/providers/{self.provider}/tasks/{_quote_path(task_id)}/files",
+                f"{self.provider_base_url}/tasks/{_quote_path(task_id)}/files",
                 response=response,
             )
         return response
@@ -274,6 +282,7 @@ class WecareCollectorAdapter:
             "ok": False,
             "name": self.name,
             "provider": self.provider,
+            "client_id": self.client_id or "default",
             "base_url": self.base_url,
             "connected": False,
             "state": "unavailable",
@@ -439,6 +448,7 @@ def create_external_collector_manager_from_env(logger: Any = None) -> Optional[E
                     name=name,
                     base_url=os.environ.get(f"{prefix}_BASE_URL", "http://127.0.0.1:8787"),
                     provider=os.environ.get(f"{prefix}_PROVIDER", "wecare"),
+                    client_id=os.environ.get(f"{prefix}_CLIENT_ID", ""),
                     timeout=float(os.environ.get(f"{prefix}_TIMEOUT_SEC", "1.5")),
                     logger=logger,
                     db=db,
@@ -450,6 +460,7 @@ def create_external_collector_manager_from_env(logger: Any = None) -> Optional[E
                     name=name,
                     base_url=os.environ.get(f"{prefix}_BASE_URL", "http://127.0.0.1:8789"),
                     provider=os.environ.get(f"{prefix}_PROVIDER", "prime"),
+                    client_id=os.environ.get(f"{prefix}_CLIENT_ID", ""),
                     marker_type=int(os.environ.get(f"{prefix}_MARKER_TYPE", "1")),
                     timeout=float(os.environ.get(f"{prefix}_TIMEOUT_SEC", "1.5")),
                     logger=logger,
@@ -485,7 +496,7 @@ def _summarize_body(body: Optional[JsonDict]) -> JsonDict:
     if not body:
         return {}
     summary: JsonDict = {}
-    for key in ("subject_id", "scenario", "name", "type"):
+    for key in ("run_id", "subject_id", "scenario", "name", "type"):
         if key in body:
             summary[key] = body.get(key)
     payload = body.get("payload")
