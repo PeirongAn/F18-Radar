@@ -3,6 +3,7 @@ import sys
 import sqlite3
 import json
 import logging
+import threading
 from contextlib import contextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -169,6 +170,42 @@ def test_task_setting_lookup_does_not_reuse_mode_one_for_mode_two(tmp_path):
         "RADAR_TARGETING",
         "normal",
     ) is None
+
+
+def test_retry_task_settings_append_new_id_and_lookup_prefers_latest(tmp_path):
+    db_path = tmp_path / "task-setting-retry.db"
+    manager = make_sync_database_manager(db_path)
+    manager._task_settings_lock = threading.Lock()
+    manager.initialize_database()
+    scenario = {
+        "difficulty_name": "high",
+        "difficulty_config": {},
+        "repetition_info": {"current": 1},
+        "is_ai_active": True,
+        "ai_level_config": {},
+        "ai_level_name": "L2",
+        "audio_enabled": False,
+        "control_mode": "1",
+    }
+    manager.record_retry_task_settings(
+        124, scenario, "user-a", "AI", False, "RADAR_TARGETING", ""
+    )
+    # Simulate the first task's asynchronous settings insert arriving late.
+    with manager.get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO task_settings (
+                task_id, user_id, task_type, event_owner, control_mode,
+                repetition_count, is_ai_active, difficulty_config,
+                audio_enabled, ai_level_name, difficulty_name, trust_state
+            ) VALUES (99, 'user-a', 'RADAR_TARGETING', 'AI', '1', 1, 1, '{}', 0, 'L2', 'high', '')
+            """
+        )
+        conn.commit()
+
+    assert manager.find_existing_task_setting_id(
+        scenario, "user-a", "AI", "RADAR_TARGETING", ""
+    ) == 124
 
 
 def test_task_settings_migration_backfills_legacy_ai_as_mode_one(tmp_path):

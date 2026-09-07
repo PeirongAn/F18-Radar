@@ -877,7 +877,7 @@ def test_overall_task_start_resumes_unfinished_task(monkeypatch):
     assert fake_db.events[-1]["event_type"] == "sub_start"
 
 
-def test_overall_resume_repairs_legacy_group_and_uses_current_mode(monkeypatch):
+def test_overall_resume_repairs_legacy_group_when_config_matches(monkeypatch):
     fake_db = setup_bridge(monkeypatch)
     bridge._handle_external_task(overall_start("1"), "platform_control")
     legacy_run = fake_db.runs[42]
@@ -890,19 +890,44 @@ def test_overall_resume_repairs_legacy_group_and_uses_current_mode(monkeypatch):
     bridge._active_external_tasks.clear()
 
     current = overall_start("1")
-    current["DefaultControlMode"] = "0"
-    current["AIAutonomyLeve"] = "3"
-    current["Difficulty"] = "3"
     replies = bridge._handle_external_task(current, "platform_control")
 
     repaired_config = json.loads(fake_db.runs[42]["config_json"])
     assert replies[0]["task_id"] == 42
     assert fake_db.runs[42]["group_id"] == 42
-    assert fake_db.groups[42]["control_mode"] == "0"
-    assert fake_db.groups[42]["is_ai_active"] is False
+    assert fake_db.groups[42]["control_mode"] == "1"
+    assert fake_db.groups[42]["is_ai_active"] is True
     assert repaired_config["overall_task_id"] == 42
-    assert repaired_config["normalized"]["control_mode"] == "0"
-    assert repaired_config["normalized"]["difficulty_raw"] == "3"
+    assert repaired_config["normalized"]["control_mode"] == "1"
+    assert repaired_config["normalized"]["difficulty_raw"] == "1"
+
+
+def test_overall_start_after_restart_with_changed_config_creates_new_group(monkeypatch):
+    fake_db = setup_bridge(monkeypatch)
+    bridge._handle_external_task(overall_start("3"), "platform_control")
+    bridge._handle_external_task(sub_end(), "platform_control")
+    assert fake_db.runs[43]["group_id"] == 42
+    bridge._active_external_tasks.clear()
+
+    changed = overall_start("3")
+    changed["DefaultControlMode"] = "0"
+    changed["Difficulty"] = "3"
+    replies = bridge._handle_external_task(changed, "platform_control")
+
+    assert replies[0]["status"] == "ok"
+    assert replies[0]["task_id"] == 44
+    assert fake_db.runs[43]["status"] == "completed"
+    assert fake_db.groups[42]["status"] == "completed"
+    assert fake_db.runs[44]["group_id"] == 44
+    assert fake_db.runs[44]["task_seq"] == 1
+    assert all(run.get("group_id") is not None for run in fake_db.runs.values())
+    assert fake_db.groups[44]["control_mode"] == "0"
+    assert fake_db.groups[44]["difficulty"] == "high"
+    assert fake_db.groups[44]["expected_task_count"] == 3
+    assert fake_db.events[-2]["event_type"] == "replaced_by_changed_overall"
+    active = bridge._active_external_tasks[("platform_control", "DefaultID")]
+    assert active["overall_task_id"] == 44
+    assert active["current_subtask_seq"] == 1
 
 
 def test_extra_identical_overall_task_start_records_replacement_event(monkeypatch):

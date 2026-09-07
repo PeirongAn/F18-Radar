@@ -28,3 +28,8 @@ radar_env/
 server/venv/
 server/data/
 server/.env
+/release/*
+/outputs/*
+/deliverables/*
+.codex-tmp/
+.codex-work/

@@ -36,6 +36,7 @@ class MessageHandler:
             'task_ids': {},
             'task_started_at_ms': None,
             'task_started_at_ms_by_type': {},
+            'task_active_by_type': {},
             'stage': 'init',
             'target_elevation': None,
             'operations': []
@@ -53,6 +54,7 @@ class MessageHandler:
         self.current_session.setdefault('task_ids', {})[task_type] = task_id
         self.current_session['task_started_at_ms'] = started_at_ms
         self.current_session.setdefault('task_started_at_ms_by_type', {})[task_type] = started_at_ms
+        self.current_session.setdefault('task_active_by_type', {})[task_type] = True
 
     def _get_current_task_id(self, task_type: str = ''):
         if task_type:
@@ -67,6 +69,64 @@ class MessageHandler:
             if task_type in started_by_type:
                 return started_by_type.get(task_type)
         return self.current_session.get('task_started_at_ms')
+
+    def _mark_current_task_inactive(self, task_type: str, task_id: Any) -> None:
+        current_task_id = self._get_current_task_id(task_type)
+        if current_task_id is not None and str(current_task_id) == str(task_id):
+            self.current_session.setdefault('task_active_by_type', {})[task_type] = False
+
+    def _prepare_task_start_identity(
+        self,
+        task_type: str,
+        existing_task_id: Any,
+        task_started_at_ms: int,
+    ) -> Tuple[int, Optional[int], int]:
+        """Create a new execution and identify any active run it replaces."""
+        current_task_id = self._get_current_task_id(task_type)
+        current_active = bool(
+            (self.current_session.get('task_active_by_type') or {}).get(task_type)
+        )
+        replacement_task_id = int(generate_task_id())
+        retry_candidate = current_task_id if current_active and current_task_id is not None else existing_task_id
+        retried_task_id = None
+        if retry_candidate is not None:
+            task_run = db_manager.get_task_run(int(retry_candidate))
+            if task_run and str(task_run.get('status') or '').lower() not in {
+                'completed', 'retried', 'aborted', 'cancelled'
+            }:
+                retried_task_id = int(retry_candidate)
+        return replacement_task_id, retried_task_id, task_started_at_ms
+
+    def _mark_task_run_retried(self, old_task_id: Optional[int], new_task_id: int,
+                               task_type: str, user_id: str,
+                               task_started_at_ms: int) -> None:
+        if old_task_id is None:
+            return
+        payload = json.dumps({
+            'replacement_task_id': int(new_task_id),
+            'reason': 'new_trial_execution',
+        }, ensure_ascii=False)
+        try:
+            db_manager.update_task_run_progress(
+                task_id=int(old_task_id),
+                status='retried',
+                completed_at_ms=task_started_at_ms,
+                raw_message_json=payload,
+            )
+            db_manager.record_task_event(
+                task_id=int(old_task_id),
+                task_type=task_type,
+                user_id=user_id or '',
+                event_type='task_retried',
+                timestamp_ms=task_started_at_ms,
+                payload_json=payload,
+                raw_message_json=payload,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                'mark task run retried failed: old_task_id=%s new_task_id=%s error=%s',
+                old_task_id, new_task_id, exc, exc_info=True,
+            )
 
     def _prepare_ai_accuracy(
         self,
@@ -844,12 +904,6 @@ class MessageHandler:
             task_type,
             trust_state,
         )
-        is_retrying_incomplete_task = bool(
-            existing_task_id and
-            current_scenario.get('repetition_info', {}).get('previous_task_completed') is False
-        )
-        if is_retrying_incomplete_task:
-            db_manager.clear_task_operations(existing_task_id)
         task_started_at_ms = int(time.time() * 1000)
         task_group_id, task_seq = self._ensure_current_task_group(
             task_manager,
@@ -864,7 +918,12 @@ class MessageHandler:
             platform_meta=platform_meta,
             force_new_group=overlay_source == "pending" and bool(platform_meta),
         )
-        task_id = existing_task_id or generate_task_id()
+        task_id, retried_task_id, task_started_at_ms = self._prepare_task_start_identity(
+            task_type,
+            existing_task_id,
+            task_started_at_ms,
+        )
+        self._set_current_task(task_type, task_id, task_started_at_ms)
         try:
             ai_accuracy, ai_decision = self._prepare_ai_accuracy(
                 session_state,
@@ -884,7 +943,6 @@ class MessageHandler:
                 "message": str(exc),
                 "timestamp": int(time.time() * 1000),
             }]
-        self._set_current_task(task_type, task_id, task_started_at_ms)
         session_state['radar_ai_selection'] = None
         self._ensure_unified_task_run(
             task_id,
@@ -898,12 +956,14 @@ class MessageHandler:
             platform_meta=platform_meta,
             group_id=task_group_id,
             task_seq=task_seq,
-            reactivate=is_retrying_incomplete_task,
+            reactivate=False,
+        )
+        self._mark_task_run_retried(
+            retried_task_id, task_id, task_type, user_id, task_started_at_ms
         )
         
         # 记录操作
-        should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
-        if not session_state.get('is_practice', False) and should_record_task_start:
+        if not session_state.get('is_practice', False):
             operation = {
                 'task_id': task_id,
                 'operationType': 'task_start',
@@ -915,17 +975,23 @@ class MessageHandler:
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
         else:
-            print("练习模式或重复启动，跳过 task_start 数据库记录。")
+            print("练习模式，跳过 task_start 数据库记录。")
 
-        db_manager.record_task_settings(
-            task_id,
-            current_scenario,
-            user_id,
-            event_owner,
-            session_state.get('is_practice', False),
-            task_type,
-            trust_state,
-        )
+        if retried_task_id is not None or existing_task_id is not None:
+            db_manager.record_retry_task_settings(
+                task_id, current_scenario, user_id, event_owner,
+                session_state.get('is_practice', False), task_type, trust_state,
+            )
+        else:
+            db_manager.record_task_settings(
+                task_id,
+                current_scenario,
+                user_id,
+                event_owner,
+                session_state.get('is_practice', False),
+                task_type,
+                trust_state,
+            )
         target_manager.initialize_targets(current_scenario['difficulty_config'])
         if ai_decision:
             radar_targets = target_manager.get_targets()
@@ -1629,6 +1695,7 @@ class MessageHandler:
             session_state,
         )
         self._gaze_stop(current_task_id)
+        self._mark_current_task_inactive(task_type or "", current_task_id)
         if group_completed and task_type in ("RADAR_TARGETING", "SA_THREAT_RESPONSE"):
             return [{
                 "type": "all_tasks_completed",
@@ -1773,12 +1840,6 @@ class MessageHandler:
             task_type,
             trust_state,
         )
-        is_retrying_incomplete_task = bool(
-            existing_task_id and
-            current_scenario.get('repetition_info', {}).get('previous_task_completed') is False
-        )
-        if is_retrying_incomplete_task:
-            db_manager.clear_task_operations(existing_task_id)
         task_started_at_ms = int(time.time() * 1000)
         task_group_id, task_seq = self._ensure_current_task_group(
             task_manager,
@@ -1793,7 +1854,12 @@ class MessageHandler:
             platform_meta=platform_meta,
             force_new_group=overlay_source == "pending" and bool(platform_meta),
         )
-        task_id = existing_task_id or generate_task_id()
+        task_id, retried_task_id, task_started_at_ms = self._prepare_task_start_identity(
+            task_type,
+            existing_task_id,
+            task_started_at_ms,
+        )
+        self._set_current_task(task_type, task_id, task_started_at_ms)
         try:
             ai_accuracy, ai_decision = self._prepare_ai_accuracy(
                 session_state,
@@ -1813,7 +1879,6 @@ class MessageHandler:
                 "message": str(exc),
                 "timestamp": int(time.time() * 1000),
             }]
-        self._set_current_task(task_type, task_id, task_started_at_ms)
         session_state['sa_ai_selection'] = None
         self.current_session[f'{task_type}_scenario'] = current_scenario
         self._ensure_unified_task_run(
@@ -1828,7 +1893,10 @@ class MessageHandler:
             platform_meta=platform_meta,
             group_id=task_group_id,
             task_seq=task_seq,
-            reactivate=is_retrying_incomplete_task,
+            reactivate=False,
+        )
+        self._mark_task_run_retried(
+            retried_task_id, task_id, task_type, user_id, task_started_at_ms
         )
 
         # 启动眼动追踪
@@ -1836,8 +1904,7 @@ class MessageHandler:
         self._physio_start_task(task_type, user_id, task_id, event_owner, current_scenario, session_state)
 
         # 记录操作
-        should_record_task_start = (not existing_task_id) or is_retrying_incomplete_task
-        if not session_state.get('is_practice', False) and should_record_task_start:
+        if not session_state.get('is_practice', False):
             operation = {
                 'task_id': task_id,
                 'operationType': message.get('type'),
@@ -1848,15 +1915,21 @@ class MessageHandler:
                 'event_owner': event_owner
             }
             db_manager.record_operation(operation, session_state.get('is_practice', False))
-        db_manager.record_task_settings(
-            task_id,
-            current_scenario,
-            user_id,
-            event_owner,
-            session_state.get('is_practice', False),
-            task_type,
-            trust_state,
-        )
+        if retried_task_id is not None or existing_task_id is not None:
+            db_manager.record_retry_task_settings(
+                task_id, current_scenario, user_id, event_owner,
+                session_state.get('is_practice', False), task_type, trust_state,
+            )
+        else:
+            db_manager.record_task_settings(
+                task_id,
+                current_scenario,
+                user_id,
+                event_owner,
+                session_state.get('is_practice', False),
+                task_type,
+                trust_state,
+            )
         if self.use_enhanced_protocol:
             # 使用增强协议生成完整威胁数据
             print("[MessageHandler] 使用增强协议生成威胁")

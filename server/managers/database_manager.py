@@ -295,7 +295,7 @@ class DatabaseManager:
                       AND difficulty_name = ?
                       AND audio_enabled = ?
                       AND IFNULL(trust_state, '') = ?
-                    ORDER BY task_id
+                    ORDER BY task_id DESC
                     LIMIT 1
                     """,
                     task_setting_key
@@ -306,18 +306,6 @@ class DatabaseManager:
             self.logger.warning(f"查找已有 task_settings 记录失败: {e}")
             return None
 
-    def clear_task_operations(self, task_id: int) -> None:
-        """清除某个 task_id 下的旧操作记录，用于重做未完成任务。"""
-        if not task_id:
-            return
-        with self._operation_lock:
-            self._pending_operation_keys = {
-                key for key in self._pending_operation_keys
-                if not key or key[0] != task_id
-            }
-        self.execute_async("DELETE FROM user_operations WHERE task_id = ?", (task_id,))
-        self.logger.info(f"已排队清除未完成任务的旧操作记录: task_id {task_id}")
-    
     def record_task_settings(self, task_id: int, scenario: Dict[str, Any], 
                            user_id: str, event_owner: str, is_practice: bool,
                            task_type: str = '', trust_state: str = '') -> None:
@@ -391,6 +379,64 @@ class DatabaseManager:
         )
         self.execute_async(sql, params)
         self.logger.info(f"记录任务设置: task_id {task_id}")
+
+    def record_retry_task_settings(self, task_id: int, scenario: Dict[str, Any],
+                                   user_id: str, event_owner: str, is_practice: bool,
+                                   task_type: str = '', trust_state: str = '') -> None:
+        """Synchronously append settings for a new execution of the same condition."""
+        if is_practice:
+            return
+        task_setting_key = self.build_task_setting_key(
+            scenario, user_id, event_owner, task_type, trust_state
+        )
+        sql = """
+            INSERT INTO task_settings (
+                task_id, task_type, user_id, event_owner, control_mode, repetition_count,
+                is_ai_active, ai_level_config, difficulty_config, audio_enabled,
+                ai_level_name, difficulty_name, trust_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            task_id,
+            task_type,
+            user_id,
+            event_owner,
+            task_setting_key[3],
+            scenario['repetition_info']['current'],
+            scenario['is_ai_active'],
+            json.dumps(scenario.get('ai_level_config')),
+            json.dumps(scenario['difficulty_config']),
+            scenario['audio_enabled'],
+            scenario.get('ai_level_name'),
+            self.normalize_difficulty_value(scenario['difficulty_name']),
+            trust_state or '',
+        )
+        with self._task_settings_lock:
+            with self.get_connection() as conn:
+                conn.execute(sql, params)
+                conn.commit()
+        self.logger.info("记录重试任务设置: task_id %s", task_id)
+
+    def get_task_run(self, task_id: int) -> Optional[Dict[str, Any]]:
+        """Return one concrete task execution by its globally unique task id."""
+        if task_id is None:
+            return None
+        try:
+            with self.get_connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT task_id, group_id, task_seq, task_type, user_id, status, expected_subtasks,
+                           completed_subtasks, current_subtask_seq, started_at_ms,
+                           completed_at_ms, config_json, last_raw_message_json
+                    FROM task_runs
+                    WHERE task_id = ?
+                    """,
+                    (int(task_id),),
+                ).fetchone()
+            return self._task_run_from_row(row)
+        except Exception as exc:
+            self.logger.warning("查询 task_run 失败: task_id=%s error=%s", task_id, exc)
+            return None
     
     def record_operation(
         self,

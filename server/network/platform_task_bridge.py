@@ -781,6 +781,20 @@ def _config_json_normalized(config_json: Any) -> Dict[str, Any]:
     return normalized if isinstance(normalized, dict) else {}
 
 
+def _persisted_run_matches_overall_start(
+    run: Dict[str, Any],
+    normalized: Dict[str, Any],
+) -> bool:
+    """Only resume a post-restart run when its stored task configuration matches."""
+    stored_normalized = _config_json_normalized(run.get("config_json"))
+    if not stored_normalized:
+        return False
+    return (
+        _normalized_task_signature(stored_normalized)
+        == _normalized_task_signature(normalized)
+    )
+
+
 def _config_json_raw(config_json: Any) -> Dict[str, Any]:
     if not config_json:
         return {}
@@ -1660,8 +1674,44 @@ def _handle_external_task(
 
             expected = _expected_subtasks_from_normalized(normalized)
             # Every task_runs row is a concrete subtask.  The group owns the
-            # aggregate lifecycle, so resume the latest active subtask.
+            # aggregate lifecycle.  After a server restart, only resume the
+            # latest active subtask when its durable configuration still
+            # describes this overall start.  Otherwise the old group must be
+            # closed before the new configuration gets a fresh group.
             run = db_manager.find_active_task_run(user_id, task_type)
+            if run and not _persisted_run_matches_overall_start(run, normalized):
+                stored_normalized = _config_json_normalized(run.get("config_json"))
+                logger.warning(
+                    "[REMOTE_TASK_COUNT] persisted active task config mismatch; "
+                    "close old group before new overall task_start "
+                    "category=%s user=%s old_task_id=%s old_group_id=%s "
+                    "old_signature=%s new_signature=%s",
+                    category,
+                    user_id,
+                    run.get("task_id"),
+                    run.get("group_id"),
+                    _normalized_task_signature(stored_normalized),
+                    _normalized_task_signature(normalized),
+                )
+                stale_active = _active_from_task_run(
+                    run,
+                    category,
+                    _config_json_raw(run.get("config_json")),
+                    stored_normalized,
+                )
+                _active_external_tasks[key] = stale_active
+                _close_external_active_task(
+                    key,
+                    stale_active,
+                    "replaced_by_changed_overall",
+                    message_data,
+                    timestamp_ms=ts,
+                    raw_message_json=raw,
+                    gaze_svc=gaze_svc,
+                    physio_svc=physio_svc,
+                    external_collectors=external_collectors,
+                )
+                run = None
             if run:
                 active = _active_from_task_run(run, category, raw_fields, normalized)
                 _active_external_tasks[key] = active
