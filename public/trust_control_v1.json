@@ -1,0 +1,20 @@
+{
+  "tendency": "over_trust",
+  "policies": {
+    "under_trust": {
+      "show_evidence": true,
+      "show_reliability": true,
+      "highlight": "observation"
+    },
+    "normal": {
+      "show_evidence": false,
+      "show_reliability": false,
+      "highlight": "none"
+    },
+    "over_trust": {
+      "show_evidence": true,
+      "show_reliability": true,
+      "highlight": "reliability"
+    }
+  }
+}

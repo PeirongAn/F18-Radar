@@ -18,6 +18,7 @@ import {
 } from './utils/taskGroupCompletion';
 import { SensorTrustDecision, ThreatTrustDecision, TrustControlTrigger } from './types/trustCalibration';
 import TrustControlPanel from './components/TrustControlPanel';
+import TrustConfigSettings from './components/TrustConfigSettings';
 import { useTrustAoiSnapshot } from './hooks/useTrustAoiSnapshot';
 import type { TrustTrialSnapshot } from './types/trustControl';
 interface TargetSelectParams {
@@ -456,6 +457,7 @@ const TaskTrustStatusBadge: React.FC<{
    App
 ══════════════════════════════════════════════════════ */
 const MainApp: React.FC = observer(() => {
+  const [showTrustConfig, setShowTrustConfig] = useState(false);
   const [selectedTarget] = useState<string | null>(null);
   const [userId, setUserId] = useState<string>('');
   const [includeAI, setIncludeAI] = useState<boolean>(false);
@@ -538,7 +540,7 @@ const MainApp: React.FC = observer(() => {
   const previousCompletionNoticeButton2Ref = useRef(false);
   const completionExitSentRef = useRef(false);
   const messageIdRef = useRef(0);
-  const suppressRadarJoystickActions = !!completionNoticeTask || isQuestionnaireVisible;
+  const suppressRadarJoystickActions = !!completionNoticeTask || isQuestionnaireVisible || showTrustConfig;
 
   const addMessage = useCallback((type: MessageType, content: string) => {
     setMessages(prev => [
@@ -1201,6 +1203,8 @@ const MainApp: React.FC = observer(() => {
         )}
 
         {/* 右侧任务标签 */}
+        <button type="button" className="trust-config-open" onClick={() => setShowTrustConfig(true)}>信任调控设置</button>
+        {showTrustConfig && <TrustConfigSettings onClose={() => setShowTrustConfig(false)} />}
         <Sep />
         <button
           type="button"
@@ -1313,6 +1317,7 @@ const MainApp: React.FC = observer(() => {
               flexShrink: 0,
             }}>
               <SAPage
+                suppressJoystickActions={showTrustConfig}
                 width={800}
                 height={600}
                 onAddMessage={addMessage}

@@ -179,7 +179,8 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
     control, aiRecommendation, candidates, focusedCandidate, humanSelection,
     manualReviewActive, manualReviewCandidate, manualReviewFeedback,
   } = snapshot;
-  const support = control.ui_mode === 'trust_support';
+  const policy = control.display_config?.policy;
+  const support = !policy && control.ui_mode === 'trust_support';
   const isSaTask = snapshot.taskType === 'SA_THREAT_RESPONSE';
   const detailCandidate = manualReviewActive ? manualReviewCandidate : focusedCandidate;
   const candidateRows = visibleCandidateRows(candidates, aiRecommendation);
@@ -191,16 +192,21 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
 
   return (
     <aside className={`trust-panel${support ? ' trust-panel--support' : ''}`} aria-label="AI 决策辅助面板">
-      <section className="trust-section trust-section--secondary" data-gaze-aoi="right_ai_history_accuracy">
+      <section className={`trust-section trust-section--secondary${policy?.highlight === 'reliability' ? ' trust-section--reliability-highlight' : ''}`} data-gaze-aoi="right_ai_history_accuracy">
+        {policy?.highlight === 'reliability' && <span className="trust-reliability-icon" role="img" aria-label="可靠性信息强调">⚠</span>}
         <AccuracyTrend control={control} />
+        {policy?.show_reliability && <div data-gaze-aoi="right_reliability_note" className="trust-reliability-notice">
+          <strong>系统局限 · 请核验建议</strong>
+          <p>AI建议可能出错，请结合当前观测核验</p>
+        </div>}
       </section>
 
-      <section className="trust-section" data-gaze-aoi="right_recommendation">
+      <section className={`trust-section${policy?.highlight === 'observation' ? ' trust-section--observation-highlight' : ''}`} data-gaze-aoi="right_recommendation">
         <div className="trust-section-heading">
           <span className="trust-eyebrow">AI 推荐结果</span>
           <span className="trust-count">实时决策辅助</span>
         </div>
-        <div className={`trust-hero${snapshot.glowActive ? ' trust-hero--glow' : ''}`}>
+        <div className={`trust-hero${!policy && snapshot.glowActive ? ' trust-hero--glow' : ''}`}>
           <div className="trust-hero-topline">
             <span className="trust-hero-label">{isSaTask ? '建议优先处置目标' : '建议优先锁定目标'}</span>
             <span className="trust-recommendation-state">当前推荐</span>
@@ -212,6 +218,19 @@ const TrustControlPanel: React.FC<{ snapshot: TrustTrialSnapshot | null }> = ({ 
           {renderObservation(aiRecommendation)}
         </div>
       </section>
+
+      {policy?.show_evidence && (
+        <section className={`trust-section trust-section--secondary${policy.highlight === 'observation' ? ' trust-section--observation-highlight' : ''}`} data-gaze-aoi="right_supplementary_evidence">
+          <div className="trust-section-heading"><span className="trust-eyebrow">补充观测依据</span></div>
+          <p className="trust-supplement">以下为当前候选观测，供人工核验。</p>
+          <div className="trust-evidence-grid">
+            {candidateRows.map(({ candidate }) => <div className="trust-evidence-item" key={candidate.id}>
+              <strong>{displayName(candidate)}</strong>{renderObservation(candidate, true)}
+            </div>)}
+            {candidateRows.length === 0 && <div className="trust-empty">暂无候选观测数据</div>}
+          </div>
+        </section>
+      )}
 
       {!isSaTask && (
         <section className="trust-section" data-gaze-aoi="right_candidate_list">

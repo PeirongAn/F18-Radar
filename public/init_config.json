@@ -1,42 +1,43 @@
 {
-  "userId": "DefaultID123",
+  "userId": "DefaultID",
   "includeAI": true,
   "taskType": "radar",
   "isPractice": false,
   "useJoystick": true,
-  "taskNumber": 2,
+  "taskNumber": 1,
   "platformTask": {
     "raw": {
       "TaskName": "传感器任务",
-      "ID": "DefaultID123",
+      "ID": "DefaultID",
       "Gender": "1",
       "DefaultControlMode": "1",
-      "AIAutonomyLeve": "1",
+      "AIAutonomyLeve": "2",
       "TaskMode": "1",
-      "Difficulty": "3",
-      "TaskNumber": "2",
-      "Action": "task_start"
+      "Difficulty": "1",
+      "TaskNumber": "1",
+      "Action": "sub_start"
     },
     "normalized": {
       "task_name": "传感器任务",
-      "platform_task_id": "DefaultID123",
+      "platform_task_id": "DefaultID",
       "task_type": "RADAR_TARGETING",
       "task_category": "radar",
       "gender": "1",
       "default_control_mode": "1",
-      "ai_autonomy_level": "L1",
-      "current_level": "L1",
+      "control_mode": "1",
+      "ai_autonomy_level": "L2",
+      "current_level": "L2",
       "task_mode": "1",
-      "difficulty_key": "low",
-      "difficulty_display": "low",
-      "difficulty_raw": "3",
-      "task_number": "2",
-      "ai_precision": null,
+      "difficulty_key": "high",
+      "difficulty_display": "high",
+      "difficulty_raw": "1",
+      "task_number": "1",
       "include_ai": true,
       "is_practice": false,
-      "repetition_total_override": 2,
+      "repetition_total_override": 1,
       "web_task_kind": "radar",
       "entry_mode": "web_overlay"
     }
-  }
+  },
+  "controlMode": "1"
 }

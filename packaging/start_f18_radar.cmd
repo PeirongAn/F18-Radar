@@ -5,7 +5,7 @@ chcp 65001 >nul
 set "F18_ROOT=%~dp0"
 set "F18_RADAR_HOME=%F18_ROOT%"
 set "F18_RADAR_WEB_DIR=%F18_ROOT%web"
-set "F18_RADAR_CONFIG_DIR=%F18_ROOT%web"
+if not defined F18_RADAR_CONFIG_DIR set "F18_RADAR_CONFIG_DIR=%F18_ROOT%web"
 set "F18_RADAR_DATA_DIR=%F18_ROOT%data"
 set "F18_RADAR_LOG_DIR=%F18_ROOT%logs"
 set "F18_RADAR_ENV_FILE=%F18_ROOT%config\portable.env"

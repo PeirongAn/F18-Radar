@@ -465,7 +465,10 @@ class HTTPServer:
                     # 发送响应
                     if isinstance(result, list):
                         for msg_data in result:
-                            await ws.send_str(json.dumps(msg_data))
+                            if msg_data.get('type') == 'trust_display_updated':
+                                await websocket_server.broadcast_to_clients_except(msg_data, None)
+                            else:
+                                await ws.send_str(json.dumps(msg_data))
                     elif isinstance(result, tuple) and len(result) == 2:
                         settings_updated, include_targets = result
                         if settings_updated:

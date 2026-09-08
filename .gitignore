@@ -33,3 +33,10 @@ server/.env
 release/
 build/pyinstaller-dist/
 build/pyinstaller-portable/
+deliverables/
+.codex-tmp/
+.codex-work/
+launcher_settings.json
+launcher.log
+launcher-server.log
+launcher-frontend.log

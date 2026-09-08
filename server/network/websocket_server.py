@@ -387,6 +387,12 @@ class WebSocketServer:
                                 await self.broadcast_to_clients_except(msg, None)
                         continue
                     
+                    if isinstance(result, list):
+                        for msg in result:
+                            if msg.get('type') == 'trust_display_updated':
+                                await self.broadcast_to_clients_except(msg, None)
+                        result = [msg for msg in result if msg.get('type') != 'trust_display_updated']
+
                     # 检查返回结果类型
                     if isinstance(result, list):
                         for msg in result:

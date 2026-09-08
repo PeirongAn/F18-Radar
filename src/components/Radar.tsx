@@ -168,7 +168,7 @@ const Radar: React.FC<RadarProps> = (({
     aiRecommendation: aiTrustRecommendation,
     candidates: trustCandidates,
     groundTruthId: radarGroundTruthId,
-    button3,
+    button3: button3 && !suppressJoystickActions,
     joystickConnected,
     sendMessage,
   });

@@ -159,6 +159,19 @@ class GlobalWebSocketManager {
       const messageSequence = ++this.messageSequence;
       rawData.__message_seq = messageSequence;
       rawData.__received_at = Date.now();
+      // Configuration replies must not enter task/radar normalization.
+      if (rawData.type === 'trust_config_result' || rawData.type === 'trust_display_updated') {
+        this.lastMessage = rawData;
+        const current = this.state.radarData;
+        const display = rawData.type === 'trust_display_updated' || rawData.ok
+          ? rawData.display_config : undefined;
+        this.updateState({ ...this.state,
+          radarData: display && current?.trustControl
+            ? { ...current, trustControl: { ...current.trustControl, display_config: display } }
+            : current,
+        });
+        return;
+      }
       
       // 详细记录所有消息，特别关注重复调用的原因
       console.log('【全局WS】handleMessage被调用:', {

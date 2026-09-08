@@ -215,7 +215,7 @@ export function useTrustTrial(input: UseTrustTrialInput) {
       display_target_number: aiRecommendation.displayNumber,
       observation_snapshot: observationSnapshot(aiRecommendation),
     });
-    if (control.ui_mode === 'trust_support') {
+    if (!control.display_config && control.ui_mode === 'trust_support') {
       setGlowActive(true);
       emit('glow_started', aiRecommendation.id);
     }

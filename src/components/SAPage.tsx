@@ -25,6 +25,7 @@ import { selectSAThreat } from '../utils/aiAccuracyDecision';
 // import SAButtons from './SAButtons';
 
 interface SAPageProps {
+  suppressJoystickActions?: boolean;
   width?: number;
   height?: number;
   onAddMessage?: (type: MessageType, content: string) => void;
@@ -369,7 +370,7 @@ const getStableAttackSource = (threat: any): string => {
   return ATTACK_SOURCES[stableHash(String(threat?.id ?? threat?.label ?? 'attack')) % ATTACK_SOURCES.length];
 };
 
-const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed, onTrustDecisionUpdate, onTrustActionsUpdate, onTrustTrialUpdate }) => {
+const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onAddMessage, onClearMessages, userId: originalUserId, onResetSA, onThreatListUpdate, onShowDetailedInfoChange, onResultConfirmed, onTrustDecisionUpdate, onTrustActionsUpdate, onTrustTrialUpdate, suppressJoystickActions = false }) => {
   // 删除本地 mock threats
   // const [threats] = useState<ThreatData[]>([ ... ]);
   const [userId, setUserId] = useState(originalUserId);
@@ -1503,7 +1504,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
     aiRecommendation: aiTrustRecommendation,
     candidates: unifiedTrustCandidates,
     groundTruthId: highestPriorityThreat?.id ?? null,
-    button3,
+    button3: button3 && !suppressJoystickActions,
     joystickConnected,
     sendMessage,
   });
@@ -2038,7 +2039,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
 
   // 摇杆 button1：选择光标附近最近的目标（弹窗期间屏蔽）
   React.useEffect(() => {
-    if (button1 && !prevButton1Ref.current && joystickEnabled && joystickCursorPos && !showTaskComplete) {
+    if (button1 && !prevButton1Ref.current && joystickEnabled && joystickCursorPos && !showTaskComplete && !suppressJoystickActions) {
       console.log('[SAPage] Button1按下，查找光标附近目标');
 
       // 构建带位置的威胁列表（与渲染逻辑一致）
@@ -2099,11 +2100,11 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     }
     prevButton1Ref.current = button1;
-  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, threatsWithScore, fanThreatPositions]);
+  }, [button1, joystickEnabled, joystickCursorPos, enhancedThreats, saThreats, threatPositions, missiles, useEnhancedProtocol, handleThreatIconClick, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, threatsWithScore, fanThreatPositions, suppressJoystickActions]);
 
   // 摇杆 button2：弹窗期间触发确认，否则触发"查看结果"
   React.useEffect(() => {
-    if (button2 && !prevButton2Ref.current && joystickEnabled) {
+    if (button2 && !prevButton2Ref.current && joystickEnabled && !suppressJoystickActions) {
       if (showTaskComplete) {
         console.log('[SAPage] Button2按下，确认任务评估弹窗');
         if (isCorrect === true || isCorrect === false) {
@@ -2124,7 +2125,7 @@ const SAPage: React.FC<SAPageProps> = observer(({ width = 900, height = 900, onA
       }
     }
     prevButton2Ref.current = button2;
-  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, onResultConfirmed, hasReachedSAOverallTotal, isSAAllCompleted]);
+  }, [button2, joystickEnabled, showTaskComplete, isCorrect, setShowTaskComplete, handleResetSA, onResultConfirmed, hasReachedSAOverallTotal, isSAAllCompleted, suppressJoystickActions]);
 
   // const [isStarted, setIsStarted] = useState(false);
   // const [antennaAdjustmentRequired, setAntennaAdjustmentRequired] = useState(false);

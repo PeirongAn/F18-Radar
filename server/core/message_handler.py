@@ -24,6 +24,7 @@ from services.trust_control import (
     resolve_human_final_selection,
 )
 from services.ai_accuracy_curve import resolve_curve
+from services.trust_tendency import TrustPolicyResolver, trust_tendency_source
 from services.ai_accuracy import (
     AIAccuracyConfigError,
     SELECTION_PROTOCOL_VERSION,
@@ -56,6 +57,7 @@ class MessageHandler:
         self._physio_svc = None
         self._external_collectors = None
         self.logger = get_logger("message_handler")
+        self.trust_policy_resolver = TrustPolicyResolver(trust_tendency_source)
 
     def _set_current_task(self, task_type: str, task_id, started_at_ms: int,
                           task_setting_key: Optional[Tuple[Any, ...]] = None) -> None:
@@ -548,6 +550,7 @@ class MessageHandler:
                 )
         return {
             "enabled": bool(config.get("enabled", True)),
+            "display_config": self.trust_policy_resolver.resolve(resolved_user_id, task_group_id),
             **build_trust_control_state(
                 task_group_id=task_group_id,
                 task_type=task_type,
@@ -952,7 +955,27 @@ class MessageHandler:
             client_event_owner = message.get('event_owner', '')
 
             # 路由到具体的处理方法
-            if message_type == 'task_start':
+            if message_type in ('trust_config_get', 'trust_config_save'):
+                response = {"type": "trust_config_result", "request_id": message.get("request_id")}
+                try:
+                    source = self.trust_policy_resolver.source
+                    config = (source.save_config(message.get("config"))
+                              if message_type == 'trust_config_save' else source.read_config())
+                    response.update(ok=True, config=config)
+                    if message_type == 'trust_config_save':
+                        display = self.trust_policy_resolver.apply_config(config)
+                        # Retried task-start responses must not restore the old policy.
+                        for cached in self.current_session.get('task_start_responses', {}).values():
+                            for payload in cached.get('responses', []):
+                                if isinstance(payload.get('trust_control'), dict):
+                                    payload['trust_control']['display_config'] = copy.deepcopy(display)
+                        response['display_config'] = display
+                        return [response, {"type": "trust_display_updated", "display_config": display}]
+                except (OSError, ValueError, TypeError) as exc:
+                    self.logger.warning("Trust config request failed: %s", exc)
+                    response.update(ok=False, error="配置读取或保存失败，请检查文件及配置内容")
+                return [response]
+            elif message_type == 'task_start':
                 return await self._handle_task_start(message, session_state)
             elif message_type == 'settings_update':
                 return await self._handle_settings_update(message, session_state, client_event_owner)

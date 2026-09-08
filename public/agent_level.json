@@ -15,9 +15,18 @@
         0.5
       ],
       "decision_probability_ranges_by_difficulty": {
-        "low": [0.4, 0.5],
-        "medium": [0.35, 0.45],
-        "high": [0.3, 0.4]
+        "low": [
+          0.4,
+          0.5
+        ],
+        "medium": [
+          0.35,
+          0.45
+        ],
+        "high": [
+          0.3,
+          0.4
+        ]
       }
     },
     {
@@ -30,9 +39,18 @@
         0.9
       ],
       "decision_probability_ranges_by_difficulty": {
-        "low": [0.8, 0.9],
-        "medium": [0.75, 0.85],
-        "high": [0.7, 0.8]
+        "low": [
+          0.8,
+          0.9
+        ],
+        "medium": [
+          0.75,
+          0.85
+        ],
+        "high": [
+          0.7,
+          0.8
+        ]
       }
     },
     {
@@ -45,9 +63,18 @@
         1.0
       ],
       "decision_probability_ranges_by_difficulty": {
-        "low": [0.99, 1.0],
-        "medium": [0.97, 0.99],
-        "high": [0.94, 0.97]
+        "low": [
+          0.99,
+          1.0
+        ],
+        "medium": [
+          0.97,
+          0.99
+        ],
+        "high": [
+          0.94,
+          0.97
+        ]
       }
     }
   ],

@@ -1,0 +1,21 @@
+.trust-config-dialog { width: min(520px, calc(100vw - 40px)); max-height: 85vh; overflow: auto; box-sizing: border-box; padding: 28px; border: 1px solid #37694c; border-radius: 8px; background: #07170f; color: #e6f3ea; font: 15px/1.6 'Microsoft YaHei', sans-serif; box-shadow: 0 24px 80px #0009; }
+.trust-config-dialog::backdrop { background: #000b; }
+.trust-config-dialog h2 { margin: 0; font-size: 23px; }
+.trust-config-intro, .trust-config-help { color: #a5bcae; font-size: 13px; }
+.trust-config-select { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.trust-config-dialog select { background: #10281b; color: #e6f3ea; border: 1px solid #47765a; padding: 8px 12px; min-width: 170px; font: inherit; }
+.trust-config-dialog fieldset { margin: 22px 0 0; border: 1px solid #32533e; padding: 14px 16px; }
+.trust-config-dialog legend { color: #b2e0c0; padding: 0 6px; }
+.trust-config-dialog small { color: #9aafa1; margin-left: 12px; }
+.trust-config-dialog fieldset > label { display: flex; align-items: center; gap: 10px; min-height: 38px; }
+.trust-config-dialog input { width: 17px; height: 17px; accent-color: #69d2e2; }
+.trust-config-classification { display: flex; justify-content: space-between; border-bottom: 1px solid #32533e; padding-bottom: 14px; }
+.trust-config-classification strong { color: #69d2e2; }
+.trust-config-status { color: #a8cfb5; font-size: 13px; min-height: 21px; }
+.trust-config-error { color: #ffd18c; }
+.trust-config-dialog footer { display: flex; justify-content: flex-end; gap: 12px; }
+.trust-config-dialog button, .trust-config-open { padding: 8px 18px; background: #10281b; color: #d9eddf; border: 1px solid #47765a; border-radius: 4px; cursor: pointer; font: inherit; }
+.trust-config-dialog .trust-config-save { background: #16444b; border-color: #69d2e2; }
+.trust-config-dialog :disabled { opacity: .55; cursor: default; }
+.trust-config-dialog :focus-visible, .trust-config-open:focus-visible { outline: 2px solid #69d2e2; outline-offset: 3px; }
+.trust-config-open { margin: 0 10px; font-size: 13px; white-space: nowrap; }

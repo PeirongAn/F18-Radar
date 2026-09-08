@@ -11,6 +11,7 @@ export interface TrustConditionKey {
 }
 
 export interface TrustControlState {
+  display_config?: import('./trustConfig').TrustDisplayConfig;
   enabled: boolean;
   condition_key: TrustConditionKey;
   history_count: number;
